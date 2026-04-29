@@ -17,6 +17,7 @@ let tokmonInstance = null;
 const $ = (sel) => document.querySelector(sel);
 const $content = () => $('#content');
 const $headerActions = () => $('#headerActions');
+const $scanStatus = () => $('#scanStatus');
 
 /* ── Nav ── */
 $('#navTabs').addEventListener('click', (e) => {
@@ -56,12 +57,131 @@ async function api(path, opts) {
   return res.json();
 }
 
+function renderScanStatus(status) {
+  const el = $scanStatus();
+  if (!el) return;
+  const isIdle = !status?.running && !status?.error;
+  const rebuildBtn = document.getElementById('btnRebuildDatabase');
+  if (rebuildBtn) {
+    rebuildBtn.disabled = !!status?.running;
+    rebuildBtn.classList.toggle('is-running', !!status?.running);
+  }
+  if (isIdle) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const percent = status.total ? Math.round((status.current / status.total) * 100) : 0;
+  el.hidden = false;
+  el.classList.toggle('idle', isIdle);
+  el.classList.toggle('error', !!status.error);
+  el.innerHTML = `
+    <div class="scan-status-main">
+      <span class="scan-dot"></span>
+      <span>${status.error ? 'Scan failed' : isIdle ? 'Local index ready' : 'Scanning local data'}</span>
+      <span class="scan-phase">${esc(status.error || status.phase || '')}</span>
+    </div>
+    <div class="scan-status-meta">
+      <span>${status.current || 0}/${status.total || 0}</span>
+      <span>${status.processed || 0} processed</span>
+    </div>
+    <div class="scan-progress" style="--scan-progress:${percent}%"><span></span></div>
+  `;
+}
+
+async function refreshScanStatus() {
+  try {
+    renderScanStatus(await api('/scan-status'));
+  } catch {
+    renderScanStatus(null);
+  }
+}
+
+refreshScanStatus();
+setInterval(refreshScanStatus, 1000);
+
+async function rebuildDatabase() {
+  openModal(`
+    <div class="modal-fixed confirm-modal">
+      <h3>Rebuild Database</h3>
+      <div class="modal-note">
+        This clears AgentMon's local index database and rescans Claude/Codex files. Original session, skill, MCP, and configuration files are not deleted.
+      </div>
+      <div class="modal-status" id="rebuildStatus"></div>
+      <div class="modal-actions">
+        <button class="btn" id="btnCancelRebuild">Cancel</button>
+        <button class="btn btn-accent" id="btnConfirmRebuild">Rebuild</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('btnCancelRebuild')?.addEventListener('click', closeModal);
+  document.getElementById('btnConfirmRebuild')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btnConfirmRebuild');
+    const status = document.getElementById('rebuildStatus');
+    btn.disabled = true;
+    status.textContent = 'Starting rebuild...';
+    status.className = 'modal-status';
+    try {
+      const res = await fetch('/api/rebuild-database', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to start rebuild.');
+      closeModal();
+      refreshScanStatus();
+    } catch (err) {
+      status.textContent = err.message || 'Failed to start rebuild.';
+      status.className = 'modal-status error';
+      btn.disabled = false;
+    }
+  });
+}
+
+document.getElementById('btnRebuildDatabase')?.addEventListener('click', rebuildDatabase);
+
 function openModal(html) {
   $('#modal').innerHTML = html;
   $('#modalOverlay').classList.add('open');
 }
 function closeModal() { $('#modalOverlay').classList.remove('open'); }
 $('#modalOverlay').addEventListener('click', (e) => { if (e.target === $('#modalOverlay')) closeModal(); });
+function showNotice(title, message, variant = '') {
+  openModal(`
+    <div class="modal-fixed confirm-modal">
+      <h3>${esc(title)}</h3>
+      <div class="modal-note ${variant ? esc(variant) : ''}">${esc(message)}</div>
+      <div class="modal-actions">
+        <button class="btn btn-accent" id="btnNoticeOk">OK</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('btnNoticeOk')?.addEventListener('click', closeModal);
+}
+function confirmAction({ title, message, confirmLabel = 'Confirm', danger = false, onConfirm }) {
+  openModal(`
+    <div class="modal-fixed confirm-modal">
+      <h3>${esc(title)}</h3>
+      <div class="modal-note">${esc(message)}</div>
+      <div class="modal-status" id="confirmActionStatus"></div>
+      <div class="modal-actions">
+        <button class="btn" id="btnConfirmCancel">Cancel</button>
+        <button class="btn ${danger ? 'btn-danger' : 'btn-accent'}" id="btnConfirmOk">${esc(confirmLabel)}</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('btnConfirmCancel')?.addEventListener('click', closeModal);
+  document.getElementById('btnConfirmOk')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btnConfirmOk');
+    const status = document.getElementById('confirmActionStatus');
+    btn.disabled = true;
+    try {
+      await onConfirm?.(status);
+      closeModal();
+    } catch (err) {
+      status.textContent = err.message || 'Operation failed.';
+      status.className = 'modal-status error';
+      btn.disabled = false;
+    }
+  });
+}
 
 /* ── TokMon View ── */
 function renderTokMon() {
@@ -444,22 +564,30 @@ async function renderSessions() {
 
   document.getElementById('btnBatchDelete')?.addEventListener('click', async () => {
     if (!selectedSessionIds.size) return;
-    if (!confirm(`Permanently delete ${selectedSessionIds.size} session(s) and their files?`)) return;
-    for (const id of selectedSessionIds) {
-      await api('/sessions/' + id, { method: 'DELETE' });
-    }
-    selectedSessionIds.clear();
-    renderSessions();
+    confirmAction({
+      title: 'Delete Sessions',
+      message: `Permanently delete ${selectedSessionIds.size} session(s) and their files? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        for (const id of selectedSessionIds) {
+          await api('/sessions/' + id, { method: 'DELETE' });
+        }
+        selectedSessionIds.clear();
+        renderSessions();
+      },
+    });
   });
 
   document.getElementById('btnMigrateProject')?.addEventListener('click', () => {
     if (!selectedSessionIds.size) return;
-    openMigrateProjectModal();
+    openMigrateProjectModal(rows.filter(r => selectedSessionIds.has(r.id)));
   });
 }
 
-function openMigrateProjectModal() {
+function openMigrateProjectModal(selectedRows = []) {
   const count = selectedSessionIds.size;
+  const liveCount = selectedRows.filter(r => r.is_active).length;
   openModal(`
     <div class="modal-fixed migrate-project-modal">
     <h3>Migrate Project</h3>
@@ -479,6 +607,7 @@ function openMigrateProjectModal() {
     <div class="modal-note">
       This updates selected session metadata and rewrites the original JSONL files. Claude Code sessions are also moved into the matching project directory.
     </div>
+    ${liveCount ? `<div class="modal-note warning">Selected sessions include ${liveCount} live session(s). Migration is allowed, but active tools may keep writing to the previous file until that session ends.</div>` : ''}
     <div class="modal-status" id="migrateStatus"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
@@ -495,7 +624,6 @@ function openMigrateProjectModal() {
       status.className = 'modal-status error';
       return;
     }
-    if (!confirm(`Migrate ${count} selected session(s) to:\n${projectPath}\n\nThis will modify local session files.`)) return;
 
     const btn = document.getElementById('btnDoMigrateProject');
     btn.disabled = true;
@@ -638,37 +766,47 @@ async function renderSkills() {
 
   const skillsByName = {};
   const uniqueSkills = [];
-  const seenNames = new Set();
+  const seenKeys = new Set();
+  const skillKey = (s) => (s.scope || 'user') === 'user'
+    ? `user:${s.name}`
+    : `${s.scope || 'user'}:${s.source}:${s.name}:${s.path}`;
+  const peerSlot = (s) => (s.scope || 'user') === 'user'
+    ? s.source
+    : `${s.source}:${s.scope || 'user'}:${s.path}`;
   for (const s of skills) {
-    if (!skillsByName[s.name]) skillsByName[s.name] = {};
-    skillsByName[s.name][s.source] = s;
-    if (!seenNames.has(s.name)) {
-      seenNames.add(s.name);
-      uniqueSkills.push(s);
+    const key = skillKey(s);
+    const slot = peerSlot(s);
+    if (!skillsByName[key]) skillsByName[key] = {};
+    skillsByName[key][slot] = s;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      uniqueSkills.push({ ...s, _key: key });
     }
   }
   const skillQuery = skillsSearch.trim().toLowerCase();
   const visibleSkills = skillQuery
     ? uniqueSkills.filter(s => {
-        const peers = skillsByName[s.name] || {};
+        const peers = skillsByName[s._key] || {};
         const haystack = [s.name, s.description, s.path, s.symlink_target, ...Object.keys(peers)].filter(Boolean).join(' ').toLowerCase();
         return haystack.includes(skillQuery);
       })
     : uniqueSkills;
 
-  if (selectedSkillName && !visibleSkills.some(s => s.name === selectedSkillName)) selectedSkillName = visibleSkills[0]?.name ?? null;
-  selectedSkillName = selectedSkillName || (visibleSkills[0]?.name ?? null);
+  if (selectedSkillName && !visibleSkills.some(s => s._key === selectedSkillName)) selectedSkillName = visibleSkills[0]?._key ?? null;
+  selectedSkillName = selectedSkillName || (visibleSkills[0]?._key ?? null);
   const peerMap = selectedSkillName ? (skillsByName[selectedSkillName] || {}) : {};
-  const detail = peerMap['claude-code'] || peerMap['codex'] || null;
+  const detail = peerMap['claude-code'] || peerMap['codex'] || Object.values(peerMap)[0] || null;
   const isBroken = detail && detail.description && detail.description.startsWith('Broken symlink');
+  const isReadOnlySkill = detail && (detail.scope || 'user') !== 'user';
   const brokenCount = skills.filter(s => (s.description || '').startsWith('Broken symlink')).length;
   const ccInstalled = !!peerMap['claude-code'];
   const codexInstalled = !!peerMap['codex'];
   const realTarget = detail ? (detail.symlink_target || detail.path) : '';
-  const selectedSkillCount = visibleSkills.filter(s => selectedSkillNames.has(s.name)).length;
+  const manageableVisibleSkills = visibleSkills.filter(s => Object.values(skillsByName[s._key] || {}).some(peer => (peer.scope || 'user') === 'user'));
+  const selectedSkillCount = manageableVisibleSkills.filter(s => selectedSkillNames.has(s._key)).length;
 
   function platformPillsHtml() {
-    if (!detail || isBroken) return '';
+    if (!detail || isBroken || isReadOnlySkill) return '';
     return `<div class="platform-pills">
       <span class="pill-label">Installed on:</span>
       <span class="platform-pill ${ccInstalled ? 'installed' : 'not-installed'}" data-platform="claude-code">
@@ -688,7 +826,7 @@ async function renderSkills() {
       <button class="btn ${skillsManageMode ? 'btn-accent' : ''}" id="btnManageSkills">${skillsManageMode ? 'Exit Manage' : 'Manage'}</button>
       ${skillsManageMode ? `
         <div class="manage-inline">
-          <label class="manage-check-all"><input type="checkbox" id="checkAllSkills" ${visibleSkills.length > 0 && selectedSkillCount === visibleSkills.length ? 'checked' : ''}> Select all</label>
+          <label class="manage-check-all"><input type="checkbox" id="checkAllSkills" ${manageableVisibleSkills.length > 0 && selectedSkillCount === manageableVisibleSkills.length ? 'checked' : ''}> Select all</label>
           <span class="manage-count">${selectedSkillNames.size} selected</span>
           <button class="btn btn-danger" id="btnBatchDeleteSkills" ${selectedSkillNames.size ? '' : 'disabled'}>Uninstall Selected</button>
           <button class="btn" id="btnClearSkillSelection" ${selectedSkillNames.size ? '' : 'disabled'}>Clear</button>
@@ -698,14 +836,17 @@ async function renderSkills() {
     <div class="split-layout">
       <div class="panel split-list" id="skillList">${visibleSkills.length === 0 ? '<div class="empty">No skills</div>' : visibleSkills.map(s => {
         const broken = s.description && s.description.startsWith('Broken symlink');
-        const peers = skillsByName[s.name] || {};
-        const platforms = Object.keys(peers);
+        const peers = skillsByName[s._key] || {};
+        const platforms = Array.from(new Set(Object.values(peers).map(peer => peer.source)));
+        const manageable = Object.values(peers).some(peer => (peer.scope || 'user') === 'user');
+        const scopes = Array.from(new Set(Object.values(peers).map(peer => peer.scope || 'user')));
+        const scopeLabel = scopes.includes('user') ? (scopes.length > 1 ? scopes.join('/') : 'user') : scopes.join('/');
         return `
-        <div class="split-item ${skillsManageMode ? 'with-check' : ''} ${s.name === selectedSkillName ? 'active' : ''} ${selectedSkillNames.has(s.name) ? 'row-selected' : ''}" data-name="${esc(s.name)}">
-          ${skillsManageMode ? `<input type="checkbox" class="split-check skill-check" data-name="${esc(s.name)}" ${selectedSkillNames.has(s.name) ? 'checked' : ''}>` : ''}
+        <div class="split-item ${skillsManageMode ? 'with-check' : ''} ${s._key === selectedSkillName ? 'active' : ''} ${selectedSkillNames.has(s._key) ? 'row-selected' : ''}" data-key="${esc(s._key)}">
+          ${skillsManageMode && manageable ? `<input type="checkbox" class="split-check skill-check" data-key="${esc(s._key)}" ${selectedSkillNames.has(s._key) ? 'checked' : ''}>` : ''}
           <div class="split-item-body">
             <div class="split-item-name">${platforms.map(p => sourceBadge(p)).join(' ')} ${esc(s.name)}</div>
-            <div class="split-item-meta">${broken ? '<span class="red">broken</span>' : s.enabled ? '<span class="green">enabled</span>' : '<span class="muted">disabled</span>'} · ${esc(s.is_symlink ? 'symlink' : 'local')}</div>
+            <div class="split-item-meta">${broken ? '<span class="red">broken</span>' : s.enabled ? '<span class="green">enabled</span>' : '<span class="muted">disabled</span>'} · ${esc(scopeLabel)} · ${esc(s.is_symlink ? 'symlink' : 'local')}</div>
           </div>
         </div>`;
       }).join('')}
@@ -714,11 +855,11 @@ async function renderSkills() {
         <div class="detail-header">
           <div class="detail-title">${esc(detail.name)}</div>
           <div class="detail-actions">
-            ${isBroken ? '' : `<label class="toggle"><input type="checkbox" id="toggleSkill" ${detail.enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>`}
+            ${isBroken || isReadOnlySkill ? '' : `<label class="toggle"><input type="checkbox" id="toggleSkill" ${detail.enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>`}
           </div>
         </div>
         <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">
-          ${esc(detail.is_symlink ? 'symlink' : 'local')}
+          ${esc(detail.scope || 'user')} · ${esc(detail.is_symlink ? 'symlink' : 'local')} · ${esc(detail.path)}
         </div>
         ${platformPillsHtml()}
         ${detail.description ? '<div style="color:var(--text-muted);font-size:0.82rem;margin-bottom:8px;">' + (isBroken ? '<span class="red">' + esc(detail.description) + '</span>' : esc(detail.description)) + '</div>' : ''}
@@ -741,8 +882,8 @@ async function renderSkills() {
   });
 
   document.getElementById('checkAllSkills')?.addEventListener('change', (e) => {
-    if (e.target.checked) visibleSkills.forEach(s => selectedSkillNames.add(s.name));
-    else visibleSkills.forEach(s => selectedSkillNames.delete(s.name));
+    if (e.target.checked) manageableVisibleSkills.forEach(s => selectedSkillNames.add(s._key));
+    else manageableVisibleSkills.forEach(s => selectedSkillNames.delete(s._key));
     renderSkills();
   });
 
@@ -753,16 +894,24 @@ async function renderSkills() {
 
   document.getElementById('btnBatchDeleteSkills')?.addEventListener('click', async () => {
     if (!selectedSkillNames.size) return;
-    if (!confirm(`Uninstall ${selectedSkillNames.size} selected skill(s) from all installed platforms?`)) return;
-    for (const name of selectedSkillNames) {
-      const peers = skillsByName[name] || {};
-      for (const peer of Object.values(peers)) {
-        await api('/skills/' + encodeURIComponent(peer.id), { method: 'DELETE' });
-      }
-    }
-    selectedSkillNames.clear();
-    selectedSkillName = null;
-    renderSkills();
+    confirmAction({
+      title: 'Uninstall Skills',
+      message: `Uninstall ${selectedSkillNames.size} selected skill(s) from all user-installed platforms? System, plugin, and curated skills are read-only and will be left untouched.`,
+      confirmLabel: 'Uninstall',
+      danger: true,
+      onConfirm: async () => {
+        for (const key of selectedSkillNames) {
+          const peers = skillsByName[key] || {};
+          for (const peer of Object.values(peers)) {
+            if ((peer.scope || 'user') !== 'user') continue;
+            await api('/skills/' + encodeURIComponent(peer.id), { method: 'DELETE' });
+          }
+        }
+        selectedSkillNames.clear();
+        selectedSkillName = null;
+        renderSkills();
+      },
+    });
   });
 
   $content().querySelectorAll('.platform-pill').forEach(pill => {
@@ -771,7 +920,7 @@ async function renderSkills() {
       const isInstalled = pill.classList.contains('installed');
       const bothInstalled = ccInstalled && codexInstalled;
       if (isInstalled) {
-        if (!bothInstalled) { alert('At least one platform must have this skill installed.'); return; }
+        if (!bothInstalled) { showNotice('Skill Required', 'At least one platform must have this skill installed.'); return; }
         const peerId = platform + ':' + detail.name;
         await api('/skills/' + encodeURIComponent(peerId), { method: 'DELETE' });
       } else {
@@ -783,24 +932,27 @@ async function renderSkills() {
 
   $content().querySelectorAll('.split-item').forEach(el => {
     el.addEventListener('click', (e) => {
-      const name = el.dataset.name;
+      const key = el.dataset.key;
       if (skillsManageMode) {
         if (e.target.closest('input')) return;
-        if (selectedSkillNames.has(name)) selectedSkillNames.delete(name);
-        else selectedSkillNames.add(name);
+        const peers = skillsByName[key] || {};
+        const manageable = Object.values(peers).some(peer => (peer.scope || 'user') === 'user');
+        if (!manageable) return;
+        if (selectedSkillNames.has(key)) selectedSkillNames.delete(key);
+        else selectedSkillNames.add(key);
         renderSkills();
         return;
       }
-      selectedSkillName = name;
+      selectedSkillName = key;
       renderSkills();
     });
   });
 
   $content().querySelectorAll('.skill-check').forEach(input => {
     input.addEventListener('change', () => {
-      const name = input.dataset.name;
-      if (input.checked) selectedSkillNames.add(name);
-      else selectedSkillNames.delete(name);
+      const key = input.dataset.key;
+      if (input.checked) selectedSkillNames.add(key);
+      else selectedSkillNames.delete(key);
       renderSkills();
     });
   });
@@ -814,10 +966,17 @@ async function renderSkills() {
   }
 
   document.getElementById('btnCleanupBroken')?.addEventListener('click', async () => {
-    if (!confirm(`Remove ${brokenCount} broken symlink skill(s)?`)) return;
-    const result = await api('/skills/cleanup-broken', { method: 'POST' });
-    selectedSkillName = null;
-    renderSkills();
+    confirmAction({
+      title: 'Clean Broken Skills',
+      message: `Remove ${brokenCount} broken symlink skill(s)? This only removes broken links from the local skills directory.`,
+      confirmLabel: 'Clean',
+      danger: true,
+      onConfirm: async () => {
+        await api('/skills/cleanup-broken', { method: 'POST' });
+        selectedSkillName = null;
+        renderSkills();
+      },
+    });
   });
 
   document.getElementById('btnInstallSkill')?.addEventListener('click', () => {
@@ -1006,16 +1165,23 @@ async function renderMcp() {
 
   document.getElementById('btnBatchDeleteMcp')?.addEventListener('click', async () => {
     if (!selectedMcpNames.size) return;
-    if (!confirm(`Delete ${selectedMcpNames.size} selected MCP server(s) from all installed platforms?`)) return;
-    for (const name of selectedMcpNames) {
-      const peers = mcpByName[name] || {};
-      for (const peer of Object.values(peers)) {
-        await api('/mcp/' + encodeURIComponent(peer.id), { method: 'DELETE' });
-      }
-    }
-    selectedMcpNames.clear();
-    selectedMcpName = null;
-    renderMcp();
+    confirmAction({
+      title: 'Delete MCP Servers',
+      message: `Delete ${selectedMcpNames.size} selected MCP server(s) from all installed platforms?`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        for (const name of selectedMcpNames) {
+          const peers = mcpByName[name] || {};
+          for (const peer of Object.values(peers)) {
+            await api('/mcp/' + encodeURIComponent(peer.id), { method: 'DELETE' });
+          }
+        }
+        selectedMcpNames.clear();
+        selectedMcpName = null;
+        renderMcp();
+      },
+    });
   });
 
   $content().querySelectorAll('.platform-pill').forEach(pill => {
@@ -1024,7 +1190,7 @@ async function renderMcp() {
       const isInstalled = pill.classList.contains('installed');
       const bothInstalled = mcpCcInstalled && mcpCodexInstalled;
       if (isInstalled) {
-        if (!bothInstalled) { alert('At least one platform must have this MCP server.'); return; }
+        if (!bothInstalled) { showNotice('MCP Required', 'At least one platform must have this MCP server.'); return; }
         const peerId = platform + ':' + detail.name;
         await api('/mcp/' + encodeURIComponent(peerId), { method: 'DELETE' });
       } else {
@@ -1147,15 +1313,15 @@ async function renderSettings() {
   document.getElementById('saveClaude').addEventListener('click', async () => {
     try {
       await api('/settings/claude', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: $('#claudeEditor').value });
-      alert('Claude settings saved');
-    } catch { alert('Invalid JSON'); }
+      showNotice('Settings Saved', 'Claude settings saved.');
+    } catch { showNotice('Invalid JSON', 'Claude settings could not be saved because the JSON is invalid.', 'error'); }
   });
 
   document.getElementById('saveCodex').addEventListener('click', async () => {
     try {
       await api('/settings/codex', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: $('#codexEditor').value });
-      alert('Codex settings saved');
-    } catch { alert('Invalid JSON'); }
+      showNotice('Settings Saved', 'Codex settings saved.');
+    } catch { showNotice('Invalid JSON', 'Codex settings could not be saved because the JSON is invalid.', 'error'); }
   });
 }
 

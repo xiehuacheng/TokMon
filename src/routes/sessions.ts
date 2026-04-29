@@ -84,14 +84,6 @@ sessionsRoutes.post("/migrate-project", async (c) => {
   const missingIds = ids.filter(id => !foundIds.has(id));
   if (missingIds.length) return c.json({ error: "Some sessions were not found", missingIds }, 404);
 
-  const liveRows = rows.filter(row => row.is_active);
-  if (liveRows.length) {
-    return c.json({
-      error: "Live sessions cannot be migrated",
-      liveIds: liveRows.map(row => row.id),
-    }, 409);
-  }
-
   const fileErrors = rows.filter(row => !row.file_path || !existsSync(row.file_path));
   if (fileErrors.length) {
     return c.json({

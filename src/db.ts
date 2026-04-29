@@ -48,6 +48,7 @@ function initSchema() {
       path TEXT NOT NULL,
       is_symlink INTEGER DEFAULT 0,
       symlink_target TEXT,
+      scope TEXT DEFAULT 'user',
       skill_md TEXT,
       enabled INTEGER DEFAULT 1,
       scanned_at TEXT NOT NULL
@@ -117,6 +118,9 @@ function initSchema() {
   try {
     db.exec("ALTER TABLE sessions ADD COLUMN last_prompt TEXT");
   } catch {}
+  try {
+    db.exec("ALTER TABLE skills ADD COLUMN scope TEXT DEFAULT 'user'");
+  } catch {}
 }
 
 export function getScanState(filePath: string): { offset: number; mtime: string | null } {
@@ -129,6 +133,19 @@ export function setScanState(filePath: string, offset: number, mtime?: string) {
     INSERT INTO scan_state (file_path, last_offset, last_mtime) VALUES (?, ?, ?)
     ON CONFLICT(file_path) DO UPDATE SET last_offset = excluded.last_offset, last_mtime = excluded.last_mtime, updated_at = datetime('now')
   `).run(filePath, offset, mtime ?? null);
+}
+
+export function rebuildRuntimeDatabase() {
+  const d = getDb();
+  d.transaction(() => {
+    d.prepare("DELETE FROM sessions").run();
+    d.prepare("DELETE FROM skills").run();
+    d.prepare("DELETE FROM mcp_servers").run();
+    d.prepare("DELETE FROM plugins").run();
+    d.prepare("DELETE FROM scan_state").run();
+    d.prepare("DELETE FROM usage_records").run();
+    d.prepare("DELETE FROM tokmon_scan_state").run();
+  })();
 }
 
 export interface SessionRecord {
@@ -201,6 +218,7 @@ export interface SkillRecord {
   path: string;
   isSymlink: number;
   symlinkTarget: string | null;
+  scope?: string;
   skillMd: string | null;
   enabled: number;
   scannedAt: string;
@@ -208,8 +226,8 @@ export interface SkillRecord {
 
 export function upsertSkill(record: SkillRecord) {
   getDb().prepare(`
-    INSERT INTO skills (id, source, name, description, path, is_symlink, symlink_target, skill_md, enabled, scanned_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO skills (id, source, name, description, path, is_symlink, symlink_target, scope, skill_md, enabled, scanned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       source = excluded.source,
       name = excluded.name,
@@ -217,6 +235,7 @@ export function upsertSkill(record: SkillRecord) {
       path = excluded.path,
       is_symlink = excluded.is_symlink,
       symlink_target = excluded.symlink_target,
+      scope = excluded.scope,
       skill_md = excluded.skill_md,
       enabled = excluded.enabled,
       scanned_at = excluded.scanned_at
@@ -228,6 +247,7 @@ export function upsertSkill(record: SkillRecord) {
     record.path,
     record.isSymlink,
     record.symlinkTarget,
+    record.scope || "user",
     record.skillMd,
     record.enabled,
     record.scannedAt,

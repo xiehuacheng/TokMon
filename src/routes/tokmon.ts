@@ -69,7 +69,7 @@ tokmonRoutes.get("/summary", (c) => {
   const model = c.req.query("model");
   const db = getDb();
 
-  let where = "WHERE datetime(created_at, 'localtime') BETWEEN ? AND ?";
+  let where = "WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)";
   const params: any[] = [from, to];
   if (source) { where += " AND source = ?"; params.push(source); }
   if (model) { where += " AND model = ?"; params.push(model); }
@@ -125,7 +125,7 @@ tokmonRoutes.get("/trend", (c) => {
            SUM(cache_read) as cache_read,
            COUNT(*) as requests
     FROM usage_records
-    WHERE datetime(created_at, 'localtime') BETWEEN ? AND ? ${extraFilter}
+    WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?) ${extraFilter}
     GROUP BY bucket ORDER BY bucket
   `).all(...params);
 
@@ -170,12 +170,14 @@ tokmonRoutes.get("/models", (c) => {
 tokmonRoutes.get("/records", (c) => {
   const page = parseInt(c.req.query("page") || "0");
   const limit = parseInt(c.req.query("limit") || "20");
+  const from = c.req.query("from") || "2000-01-01";
+  const to = c.req.query("to") || "2099-12-31";
   const source = c.req.query("source");
   const model = c.req.query("model");
   const db = getDb();
 
-  let where = "WHERE 1=1";
-  const params: any[] = [];
+  let where = "WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)";
+  const params: any[] = [from, to];
   if (source) { where += " AND source = ?"; params.push(source); }
   if (model) { where += " AND model = ?"; params.push(model); }
 

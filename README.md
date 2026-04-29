@@ -78,6 +78,8 @@ npm run dev
 
 打开：`http://localhost:3388`
 
+`npm run dev` 会启动本地服务并保持终端运行；使用 `Ctrl+C` 停止。
+
 ## 配置
 
 项目可以零配置运行，默认读取 `~/.claude` 和 `~/.codex`。如需自定义路径，复制示例文件后修改：

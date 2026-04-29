@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "node --import tsx/esm --watch src/index.ts"
+    "start": "node --import tsx/esm src/index.ts",
+    "dev": "node --import tsx/esm src/index.ts"
   },
   "dependencies": {
     "hono": "^4.12.0",

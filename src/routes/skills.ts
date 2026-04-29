@@ -51,6 +51,9 @@ skillsRoutes.patch("/:id", async (c) => {
 
   const body = await c.req.json<{ enabled?: boolean }>();
   if (body.enabled !== undefined) {
+    if ((row.scope || "user") !== "user") {
+      return c.json({ error: "read-only skill" }, 409);
+    }
     const currentPath = row.path as string;
     const dir = dirname(currentPath);
     const name = row.name as string;
@@ -95,6 +98,9 @@ skillsRoutes.delete("/:id", (c) => {
   const id = c.req.param("id");
   const row = db.prepare("SELECT * FROM skills WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
+  if ((row.scope || "user") !== "user") {
+    return c.json({ error: "read-only skill" }, 409);
+  }
 
   const path = row.path as string;
   try {

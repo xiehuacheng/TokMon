@@ -9,10 +9,10 @@ AgentMon 是一个本地 Web 管理面板，用于统一管理 Claude Code 与 C
 ## 构建、测试与本地开发命令
 
 - `npm install`：安装运行依赖和 TypeScript 工具链。
-- `npm run dev`：以 watch 模式启动 Hono 服务，默认端口为 `3388`。
-- `npm start`：不带 watch 模式启动服务。
+- `npm run dev`：启动 Hono 服务，默认端口为 `3388`。
+- `npm start`：同样启动服务，适合脚本化运行。
 
-启动后打开 `http://localhost:3388`。当前没有独立 build 脚本，TypeScript 通过 `tsx` 直接运行。
+启动后打开 `http://localhost:3388`。当前没有独立 build 脚本，TypeScript 通过 Node 的 `tsx/esm` loader 直接运行。
 
 ## 代码风格与命名约定
 

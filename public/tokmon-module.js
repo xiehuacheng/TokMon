@@ -842,7 +842,7 @@ async function refresh() {
   cachedSummary = summary;
   renderBreakdown();
   pinPageBottom(wasNearBottom);
-  await loadRecords();
+  await loadRecords({ from, to, source });
   pinPageBottom(wasNearBottom);
   keepPageBottomAfterLayout(wasNearBottom);
 }
@@ -1112,18 +1112,32 @@ startAutoRefresh();
 
 let recordsPage = 0;
 const RECORDS_PER_PAGE = 20;
+let lastRecordsQueryKey = '';
 
-async function loadRecords() {
+async function loadRecords(range = null) {
   if (destroyed) return;
-  let q = `page=${recordsPage}&limit=${RECORDS_PER_PAGE}`;
-  if (activeFilter) {
-    if (activeFilter.type === 'model') q += `&model=${encodeURIComponent(activeFilter.value)}`;
-    else if (activeFilter.type === 'source') q += `&source=${encodeURIComponent(activeFilter.value)}`;
-  }
-  const source = $('#source').value;
-  if (source) q += `&source=${encodeURIComponent(source)}`;
+  const params = new URLSearchParams();
+  const fromInput = range?.from || ($('#dateFrom').value.replace('T', ' ') + ':00');
+  const toInput = range?.to || ($('#dateTo').value.replace('T', ' ') + ':59');
+  params.set('from', fromInput);
+  params.set('to', toInput);
 
-  const data = await fetch(`/api/tokmon/records?${q}`).then(r => r.json());
+  const source = range?.source ?? $('#source').value;
+  if (source) params.set('source', source);
+  if (activeFilter) {
+    if (activeFilter.type === 'model') params.set('model', activeFilter.value);
+    else if (activeFilter.type === 'source') params.set('source', activeFilter.value);
+  }
+
+  const queryKey = params.toString();
+  if (queryKey !== lastRecordsQueryKey) {
+    recordsPage = 0;
+    lastRecordsQueryKey = queryKey;
+  }
+  params.set('page', String(recordsPage));
+  params.set('limit', String(RECORDS_PER_PAGE));
+
+  const data = await fetch(`/api/tokmon/records?${params.toString()}`).then(r => r.json());
   const tbody = $('#recordsTable tbody');
   tbody.innerHTML = data.rows.map(r => {
     const srcCls = r.source === 'claude-code' ? 'orange' : 'accent';
