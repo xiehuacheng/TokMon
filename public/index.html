@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentMon</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">A</div>
+        <div>
+          <h1>AgentMon</h1>
+          <div class="subtitle"><span class="pulse-dot"></span>Token Monitor &amp; Agent Manager</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <nav class="tab-btns" id="navTabs">
+          <button class="tbtn active" data-tab="tokmon">Tokens</button>
+          <button class="tbtn" data-tab="sessions">Sessions</button>
+          <button class="tbtn" data-tab="skills">Skills</button>
+          <button class="tbtn" data-tab="mcp">MCP</button>
+          <button class="tbtn" data-tab="settings">Settings</button>
+        </nav>
+        <a class="github-link" href="https://github.com/xiehuacheng/AgentMon" target="_blank" rel="noreferrer">GitHub</a>
+        <div class="header-actions" id="headerActions"></div>
+      </div>
+    </header>
+    <div id="content"></div>
+  </div>
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal" id="modal"></div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script src="tokmon-module.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

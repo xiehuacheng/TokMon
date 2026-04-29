@@ -1,0 +1,20 @@
+{
+  "name": "agentmon",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "node --import tsx/esm --watch src/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.12.0",
+    "@hono/node-server": "^1.13.0",
+    "better-sqlite3": "^12.9.0",
+    "smol-toml": "^1.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "port": 3388,
+  "sources": {
+    "claude-code": {
+      "home": "~/.claude"
+    },
+    "codex": {
+      "home": "~/.codex"
+    }
+  }
+}

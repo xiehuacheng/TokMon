@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+
+# Runtime databases and local scan state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local configuration
+agentmon.config.json
+tokmon.config.json
+.claude/
+
+# Logs and OS/editor noise
+*.log
+.DS_Store
+.env
+.env.*
+.vscode/
+.idea/
