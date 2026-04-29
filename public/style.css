@@ -77,13 +77,13 @@ body {
 .tbtn:hover { color: var(--text); }
 .tbtn.active { background: var(--bg-card-hover); color: var(--text); border-color: var(--border-hover); }
 .github-link {
-  height: 29px; display: inline-flex; align-items: center;
-  padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+  width: 29px; height: 29px; display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid var(--border); border-radius: 6px;
   background: transparent; color: var(--text-muted); text-decoration: none;
-  font-family: var(--font-mono); font-size: 0.75rem; font-weight: 500;
   transition: all 0.15s;
 }
 .github-link:hover { color: var(--text); border-color: var(--border-hover); background: var(--bg-card-hover); }
+.github-link svg { width: 17px; height: 17px; fill: currentColor; display: block; }
 
 .panel {
   background: var(--bg-card); border: 1px solid var(--border);
