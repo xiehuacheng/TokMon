@@ -2,6 +2,12 @@
 
 AgentMon 是一个用于管理 Claude Code 与 Codex 本地数据的 Web 看板，提供 token 用量监控，以及 sessions、skills、MCP servers 和配置文件的统一管理界面。首页集成 TokMon，用于查看本地 token、缓存和费用估算。
 
+## 界面预览
+
+![AgentMon Tokens dashboard showing token usage cards, trend chart, and activity heatmap](docs/images/agentmon-dashboard.png)
+
+Tokens 首页展示 token 用量卡片、趋势图、活动热力图和请求明细。
+
 ## 技术栈
 
 - 后端：Hono + @hono/node-server
