@@ -253,12 +253,14 @@ body {
 .pricing-modal {
   display: none; position: fixed; inset: 0; z-index: 200;
   background: rgba(0,0,0,0.6); align-items: center; justify-content: center;
+  overscroll-behavior: contain;
 }
 .pricing-modal.open { display: flex; }
 .pricing-dialog {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
   width: 720px; max-width: 90vw; height: min(80vh, 720px); display: flex; flex-direction: column;
   box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  overscroll-behavior: contain;
 }
 .pricing-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -332,7 +334,7 @@ body {
 }
 .source-dialog { width: 720px; height: min(90vh, 760px); max-height: 90vh; }
 .source-content {
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1; min-height: 0; overflow: hidden; overscroll-behavior: contain;
   padding: 18px; display: grid; gap: 12px;
   grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 1fr) auto;
 }
@@ -437,7 +439,7 @@ body {
 .panel.full { grid-column: 1 / -1; }
 .chart { width: 100%; height: 300px; }
 .breakdown-grid { display: grid; grid-template-columns: 380px 1fr; gap: 16px; align-items: start; }
-.breakdown-table, .records-table-wrap { overflow-x: auto; }
+.breakdown-table, .records-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; }
 .tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tbl .pink { color: var(--pink); }
 .tbl .orange { color: var(--orange); }
@@ -447,7 +449,7 @@ body {
 .tbl tr.clickable-row { cursor: pointer; }
 .tbl tr.clickable-row:hover td { background: var(--bg-card-hover); }
 
-.heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
+.heatmap-wrap { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 4px; }
 .heatmap-wrap svg { display: block; }
 .heatmap-wrap .month-label {
   fill: var(--text-muted); font-size: 10px; font-family: var(--font-mono);
@@ -607,7 +609,7 @@ body {
 }
 
 .split-layout { display: grid; grid-template-columns: 300px 1fr; gap: 12px; }
-.split-list { max-height: 70vh; overflow-y: auto; }
+.split-list { max-height: 70vh; overflow-y: auto; overscroll-behavior: contain; }
 .split-item {
   padding: 10px 14px 10px 38px; border-bottom: 1px solid #21262d; cursor: pointer; transition: background 0.15s;
   position: relative;
@@ -635,7 +637,7 @@ body {
 .skill-md {
   font-size: 0.82rem; line-height: 1.6; color: var(--text-muted);
   white-space: pre-wrap; font-family: var(--font-mono);
-  max-height: 400px; overflow-y: auto;
+  max-height: 400px; overflow-y: auto; overscroll-behavior: contain;
   background: var(--bg-deep); border-radius: 6px; padding: 12px; margin-top: 12px;
 }
 
@@ -643,17 +645,20 @@ body {
   width: 100%; min-height: 300px; font-family: var(--font-mono); font-size: 0.78rem;
   background: var(--bg-deep); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 12px; resize: vertical; outline: none;
+  overscroll-behavior: contain;
 }
 .config-editor:focus { border-color: var(--accent); }
 
 .modal-overlay {
   display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
   z-index: 100; align-items: center; justify-content: center;
+  overscroll-behavior: contain;
 }
 .modal-overlay.open { display: flex; }
 .modal {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
   padding: 24px; min-width: 400px; max-width: 600px;
+  max-height: calc(100vh - 48px); overflow-y: auto; overscroll-behavior: contain;
 }
 .modal-fixed {
   display: flex; flex-direction: column; min-height: 0;
@@ -746,7 +751,7 @@ body {
 }
 .source-dir-picker { min-height: 0; }
 
-.msg-list { max-height: 500px; overflow-y: auto; }
+.msg-list { max-height: 500px; overflow-y: auto; overscroll-behavior: contain; }
 .msg-scroll-btns {
   display: flex; gap: 6px; margin-bottom: 8px;
 }

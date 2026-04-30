@@ -13,6 +13,9 @@ let mcpManageMode = false;
 let selectedMcpNames = new Set();
 let mcpSearch = '';
 let tokmonInstance = null;
+let sessionsAutoRefreshInFlight = false;
+let sessionsLastSignature = '';
+const SESSIONS_AUTO_REFRESH_MS = 3000;
 
 const $ = (sel) => document.querySelector(sel);
 const $content = () => $('#content');
@@ -36,7 +39,8 @@ function render() {
     clearHeaderActions();
   }
   const views = { tokmon: renderTokMon, sessions: renderSessions, skills: renderSkills, mcp: renderMcp, settings: renderSettings };
-  (views[currentTab] || views.tokmon)();
+  const rendered = (views[currentTab] || views.tokmon)();
+  Promise.resolve(rendered).then(() => containScrollWithinAll(document));
 }
 
 /* ── Helpers ── */
@@ -56,6 +60,57 @@ async function api(path, opts) {
   const res = await fetch('/api' + path, opts);
   return res.json();
 }
+
+function sessionsQueryParams() {
+  const f = sessionsFilters;
+  const params = new URLSearchParams({ page: sessionsPage, limit: sessionsPageSize });
+  if (f.source) params.set('source', f.source);
+  if (f.q) params.set('q', f.q);
+  params.set('archived', f.archived);
+  return params;
+}
+
+function sessionsSignature(data) {
+  const rows = data?.rows || [];
+  return JSON.stringify({
+    total: data?.total || 0,
+    page: data?.page || sessionsPage,
+    limit: data?.limit || sessionsPageSize,
+    rows: rows.map(r => [r.id, r.last_active_at, r.message_count, r.is_active, r.archived, r.project_path, r.model, r.last_prompt]),
+  });
+}
+
+function canAutoRefreshSessions() {
+  if (currentTab !== 'sessions' || sessionsManageMode || document.hidden) return false;
+  if ($('#modalOverlay')?.classList.contains('open')) return false;
+  const active = document.activeElement;
+  if (active?.closest?.('#content .filters input, #content .filters select')) return false;
+  return true;
+}
+
+async function pollSessionsAutoRefresh() {
+  if (!canAutoRefreshSessions() || sessionsAutoRefreshInFlight) return;
+  sessionsAutoRefreshInFlight = true;
+  const query = sessionsQueryParams().toString();
+  try {
+    await fetch('/api/scan', { method: 'POST' }).catch(() => null);
+    const data = await api('/sessions?' + query);
+    if (!canAutoRefreshSessions() || query !== sessionsQueryParams().toString()) return;
+    const nextSignature = sessionsSignature(data);
+    if (sessionsLastSignature && nextSignature !== sessionsLastSignature) {
+      await renderSessions(data);
+    } else {
+      sessionsLastSignature = nextSignature;
+    }
+  } finally {
+    sessionsAutoRefreshInFlight = false;
+  }
+}
+
+setInterval(pollSessionsAutoRefresh, SESSIONS_AUTO_REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pollSessionsAutoRefresh();
+});
 
 function renderScanStatus(status) {
   const el = $scanStatus();
@@ -140,6 +195,7 @@ document.getElementById('btnRebuildDatabase')?.addEventListener('click', rebuild
 function openModal(html) {
   $('#modal').innerHTML = html;
   $('#modalOverlay').classList.add('open');
+  containScrollWithinAll($('#modalOverlay'));
 }
 function closeModal() { $('#modalOverlay').classList.remove('open'); }
 $('#modalOverlay').addEventListener('click', (e) => { if (e.target === $('#modalOverlay')) closeModal(); });
@@ -182,6 +238,93 @@ function confirmAction({ title, message, confirmLabel = 'Confirm', danger = fals
     }
   });
 }
+const VERTICAL_SCROLL_LOCK_SELECTOR = [
+  '.scroll-contained',
+  '.tokens-control-menu',
+  '.pricing-modal',
+  '.pricing-dialog',
+  '.pricing-left',
+  '.pricing-config-list',
+  '.source-content',
+  '.split-list',
+  '.skill-md',
+  '.config-editor',
+  '.modal-overlay',
+  '.modal',
+  '.dir-picker-list',
+  '.msg-list',
+].join(', ');
+const HORIZONTAL_SCROLL_LOCK_SELECTOR = [
+  '.records-table-wrap',
+  '.breakdown-table',
+  '.heatmap-wrap',
+].join(', ');
+const INTERNAL_SCROLL_LOCK_SELECTOR = [
+  VERTICAL_SCROLL_LOCK_SELECTOR,
+  HORIZONTAL_SCROLL_LOCK_SELECTOR,
+].join(', ');
+
+function isScrollableOnAxis(el, axis) {
+  return axis === 'y'
+    ? el.scrollHeight > el.clientHeight + 1
+    : el.scrollWidth > el.clientWidth + 1;
+}
+
+function isScrollBoundary(el, axis, delta) {
+  if (!delta) return false;
+  const scrollPos = axis === 'y' ? el.scrollTop : el.scrollLeft;
+  const clientSize = axis === 'y' ? el.clientHeight : el.clientWidth;
+  const scrollSize = axis === 'y' ? el.scrollHeight : el.scrollWidth;
+  if (delta < 0) return scrollPos <= 0;
+  return scrollPos + clientSize >= scrollSize - 1;
+}
+
+function handleContainedScroll(e, el) {
+  if (!el) return;
+  const deltaX = e.deltaX || 0;
+  const deltaY = e.deltaY || 0;
+  if (!deltaX && !deltaY) return;
+
+  const axes = [];
+  const locksVertical = el.matches?.(VERTICAL_SCROLL_LOCK_SELECTOR);
+  const locksHorizontal = el.matches?.(HORIZONTAL_SCROLL_LOCK_SELECTOR);
+  const canScrollY = isScrollableOnAxis(el, 'y');
+  const canScrollX = isScrollableOnAxis(el, 'x');
+
+  if (deltaY && (locksVertical || canScrollY)) {
+    axes.push({ axis: 'y', delta: deltaY, canScroll: canScrollY });
+  }
+  if (deltaX && (locksHorizontal || canScrollX)) {
+    axes.push({ axis: 'x', delta: deltaX, canScroll: canScrollX });
+  }
+  if (!axes.length) return;
+
+  e.stopPropagation();
+  const canMoveInside = axes.some(({ axis, delta, canScroll }) => (
+    canScroll && !isScrollBoundary(el, axis, delta)
+  ));
+  if (!canMoveInside) e.preventDefault();
+}
+
+function containScrollWithin(el) {
+  if (!el) return;
+  el.classList.add('scroll-contained');
+}
+
+function containScrollWithinAll(root = document) {
+  const nodes = [];
+  if (root?.matches?.(VERTICAL_SCROLL_LOCK_SELECTOR)) nodes.push(root);
+  root?.querySelectorAll?.(VERTICAL_SCROLL_LOCK_SELECTOR).forEach(el => nodes.push(el));
+  nodes.forEach(containScrollWithin);
+}
+
+document.addEventListener('wheel', (e) => {
+  const el = e.target?.closest?.(INTERNAL_SCROLL_LOCK_SELECTOR);
+  if (el) handleContainedScroll(e, el);
+}, { passive: false, capture: true });
+
+window.AgentMonContainScrollWithin = containScrollWithin;
+window.AgentMonContainScrollWithinAll = containScrollWithinAll;
 
 /* ── TokMon View ── */
 function renderTokMon() {
@@ -425,15 +568,11 @@ function destroyTokMon() {
 }
 
 /* ── Sessions View ── */
-async function renderSessions() {
+async function renderSessions(prefetchedData = null) {
   renderSessionsHeaderActions();
   const f = sessionsFilters;
-  const params = new URLSearchParams({ page: sessionsPage, limit: sessionsPageSize });
-  if (f.source) params.set('source', f.source);
-  if (f.q) params.set('q', f.q);
-  params.set('archived', f.archived);
-
-  const data = await api('/sessions?' + params);
+  const data = prefetchedData || await api('/sessions?' + sessionsQueryParams());
+  sessionsLastSignature = sessionsSignature(data);
   const rows = data.rows || [];
   const total = data.total || 0;
   const pages = Math.ceil(total / sessionsPageSize);
@@ -707,20 +846,7 @@ async function initDirectoryPicker(options) {
     const item = e.target.closest('[data-path]');
     if (item) loadDir(item.dataset.path);
   });
-  onDirPicker(listEl, 'wheel', (e) => {
-    const canScroll = listEl.scrollHeight > listEl.clientHeight;
-    if (!canScroll) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const atTop = listEl.scrollTop <= 0;
-    const atBottom = listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 1;
-    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }, { passive: false });
+  containScrollWithin(listEl);
   root._agentMonDirPickerCleanup = cleanup;
 
   loadDir(currentPath);
@@ -753,6 +879,7 @@ async function showSessionDetail(id) {
   `);
 
   const list = document.getElementById('msgList');
+  containScrollWithin(list);
   document.getElementById('msgScrollTop')?.addEventListener('click', () => { if (list) list.scrollTop = 0; });
   document.getElementById('msgScrollBottom')?.addEventListener('click', () => { if (list) list.scrollTop = list.scrollHeight; });
 }

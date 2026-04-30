@@ -74,6 +74,7 @@ function setControlsMenuOpen(open) {
   btn.classList.toggle('open', open);
   menu.classList.toggle('open', open);
   btn.setAttribute('aria-expanded', String(open));
+  if (open) window.AgentMonContainScrollWithin?.(menu);
 }
 
 on($('#btnTokensControls'), 'click', (e) => {
@@ -404,6 +405,7 @@ async function openSourcesModal() {
   setSourceStatus('Loading source configuration...');
   $('#sourcesModal').classList.add('open');
   document.body.style.overflow = 'hidden';
+  window.AgentMonContainScrollWithinAll?.($('#sourcesModal'));
 
   try {
     const config = await fetch('/api/tokmon/config').then(r => {
@@ -484,6 +486,7 @@ async function openPricingModal() {
   renderPricingRight();
   $('#pricingModal').classList.add('open');
   document.body.style.overflow = 'hidden';
+  window.AgentMonContainScrollWithinAll?.($('#pricingModal'));
 }
 
 function renderPricingLeft() {
@@ -686,26 +689,23 @@ function renderTrend() {
   }, true);
 }
 
-function isNearPageBottom(threshold = 24) {
+function capturePageScroll() {
   const scroller = document.scrollingElement || document.documentElement;
-  const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-  return maxScroll > 0 && maxScroll - scroller.scrollTop <= threshold;
+  return { scroller, top: scroller.scrollTop };
 }
 
-function pinPageBottom(wasNearBottom) {
-  if (!wasNearBottom) return;
-  const scroller = document.scrollingElement || document.documentElement;
-  scroller.scrollTop = scroller.scrollHeight;
+function restorePageScroll(snapshot) {
+  if (!snapshot?.scroller) return;
+  snapshot.scroller.scrollTop = snapshot.top;
 }
 
-function keepPageBottomAfterLayout(wasNearBottom) {
-  if (!wasNearBottom) return;
-  requestAnimationFrame(() => pinPageBottom(true));
+function restorePageScrollAfterLayout(snapshot) {
+  requestAnimationFrame(() => restorePageScroll(snapshot));
 }
 
 async function refresh() {
   if (destroyed) return;
-  const wasNearBottom = isNearPageBottom();
+  const pageScroll = capturePageScroll();
   if (liveMode) {
     const now = new Date();
     $('#dateTo').value = fmtDateTime(now);
@@ -787,7 +787,7 @@ async function refresh() {
     const act = k === activeSeries ? ' active' : '';
     return `<div class="card clickable${act}" style="--card-color:${d.color}" data-series="${k}"><span class="icon">${d.icon}</span><div class="label">${d.label}</div><div class="value ${d.cls}">${cardValues[k]}</div></div>`;
   }).join('');
-  pinPageBottom(wasNearBottom);
+  restorePageScroll(pageScroll);
 
   const trendLookup = {};
   trend.forEach(r => { trendLookup[r.bucket] = r; });
@@ -834,17 +834,17 @@ async function refresh() {
   }
 
   renderTrend();
-  pinPageBottom(wasNearBottom);
+  restorePageScroll(pageScroll);
   cachedHeatmap = compareHeatmap || heatmap;
   renderHeatmap(cachedHeatmap);
-  pinPageBottom(wasNearBottom);
+  restorePageScroll(pageScroll);
 
   cachedSummary = summary;
   renderBreakdown();
-  pinPageBottom(wasNearBottom);
+  restorePageScroll(pageScroll);
   await loadRecords({ from, to, source });
-  pinPageBottom(wasNearBottom);
-  keepPageBottomAfterLayout(wasNearBottom);
+  restorePageScroll(pageScroll);
+  restorePageScrollAfterLayout(pageScroll);
 }
 
 function getMetricValue(r) {

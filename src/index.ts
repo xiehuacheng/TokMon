@@ -42,6 +42,15 @@ let tokmonScanTimer: ReturnType<typeof setInterval> | undefined;
 
 const app = new Hono();
 app.get("/api/scan-status", (c) => c.json(scanStatus));
+app.post("/api/scan", (c) => {
+  try {
+    const count = scanAll();
+    return c.json({ ok: true, count });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
 app.post("/api/rebuild-database", (c) => {
   if (scanStatus.running) return c.json({ error: "Scan is already running" }, 409);
   setTimeout(() => { void runInitialScan({ rebuild: true }); }, 50);
