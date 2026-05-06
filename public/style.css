@@ -54,9 +54,11 @@ body {
 .logo { display: flex; align-items: center; gap: 14px; }
 .logo-icon {
   width: 36px; height: 36px; border-radius: 8px;
-  background: var(--accent-dim); display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono); font-weight: 800; font-size: 16px; color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; background: var(--bg-card);
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.24), 0 8px 24px rgba(0, 0, 0, 0.26);
 }
+.logo-icon img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .logo h1 { font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700; }
 .logo .subtitle { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; letter-spacing: 0.3px; }
 
@@ -163,6 +165,13 @@ body {
 .rbtn:hover { color: var(--text); background: var(--bg-card-hover); }
 .rbtn.active { background: var(--accent); color: var(--bg-deep); border-color: var(--accent); }
 .rbtn:disabled { opacity: 1; cursor: default; }
+.tokens-control-menu .rbtn.active,
+.tokens-control-menu .tokens-range-grid .rbtn.active {
+  background: var(--accent);
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
 
 .btn-now {
   font-family: var(--font-mono); font-size: 0.72rem; font-weight: 500;
@@ -411,7 +420,13 @@ body {
 }
 .card.clickable { cursor: pointer; }
 .card.clickable:hover { border-color: var(--border-hover); }
-.card.active { border-color: var(--card-color, var(--accent)); background: #161b22; }
+.card.active {
+  border-color: var(--card-color, var(--accent));
+  background: rgba(88, 166, 255, 0.08);
+  background: color-mix(in srgb, var(--card-color, var(--accent)) 12%, var(--bg-card));
+  box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-color, var(--accent)) 38%, transparent);
+}
 .card.active .label { color: var(--text); }
 .card .label {
   font-size: 0.7rem; font-weight: 500; color: var(--text-muted);

@@ -22,3 +22,8 @@ tokmon.config.json
 .env.*
 .vscode/
 .idea/
+
+# macOS app prototype build output
+macos-app/.build/
+macos-app/.swiftpm/
+macos-app/release/

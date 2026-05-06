@@ -4,6 +4,136 @@ import { expandPath, getTokMonConfig, saveTokMonConfig, scanTokMonAll } from "..
 
 export const tokmonRoutes = new Hono();
 
+type TokMonDashboardState = {
+  source: string;
+  from: string;
+  to: string;
+  interval: "hour" | "day";
+  liveMode: boolean;
+  rangeMode: "exact" | "round";
+  rangeLabel: string | null;
+  rangeHours: number | null;
+  rangeDays: number | null;
+  refreshRate: number;
+  activeSeries: string;
+  estimatedCost: number;
+  costRates: {
+    input: number;
+    output: number;
+    cache_create: number;
+    cache_read: number;
+  };
+  updatedAt: string;
+};
+
+let dashboardState: TokMonDashboardState = {
+  source: "",
+  from: "",
+  to: "",
+  interval: "day",
+  liveMode: true,
+  rangeMode: "exact",
+  rangeLabel: "7D",
+  rangeHours: null,
+  rangeDays: 7,
+  refreshRate: 3000,
+  activeSeries: "total",
+  estimatedCost: 0,
+  costRates: {
+    input: 0,
+    output: 0,
+    cache_create: 0,
+    cache_read: 0,
+  },
+  updatedAt: new Date().toISOString(),
+};
+
+function fmtDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function fmtDateTime(d: Date, seconds: number) {
+  return `${fmtDate(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function currentDashboardState(): TokMonDashboardState {
+  if (!dashboardState.liveMode || (!dashboardState.rangeHours && !dashboardState.rangeDays)) {
+    return dashboardState;
+  }
+
+  const to = new Date();
+  const from = new Date(to);
+
+  if (dashboardState.rangeHours) {
+    if (dashboardState.rangeMode === "round") {
+      from.setHours(to.getHours() - dashboardState.rangeHours + 1, 0, 0, 0);
+    } else {
+      from.setHours(from.getHours() - dashboardState.rangeHours);
+    }
+  } else if (dashboardState.rangeDays) {
+    if (dashboardState.rangeMode === "round") {
+      from.setDate(to.getDate() - dashboardState.rangeDays + 1);
+      from.setHours(0, 0, 0, 0);
+    } else {
+      from.setDate(to.getDate() - dashboardState.rangeDays);
+    }
+  }
+
+  return {
+    ...dashboardState,
+    from: fmtDateTime(from, 0),
+    to: fmtDateTime(to, 59),
+  };
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+tokmonRoutes.get("/dashboard-state", (c) => {
+  return c.json(currentDashboardState());
+});
+
+tokmonRoutes.post("/dashboard-state", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: "Invalid dashboard state" }, 400);
+
+  const interval = body.interval === "hour" ? "hour" : "day";
+  const rangeMode = body.rangeMode === "round" ? "round" : "exact";
+  const source = ["", "claude-code", "codex"].includes(String(body.source || ""))
+    ? String(body.source || "")
+    : "";
+
+  dashboardState = {
+    source,
+    from: String(body.from || dashboardState.from),
+    to: String(body.to || dashboardState.to),
+    interval,
+    liveMode: Boolean(body.liveMode),
+    rangeMode,
+    rangeLabel: body.rangeLabel ? String(body.rangeLabel) : null,
+    rangeHours: optionalNumber(body.rangeHours),
+    rangeDays: optionalNumber(body.rangeDays),
+    refreshRate: Number.isFinite(Number(body.refreshRate)) ? Number(body.refreshRate) : 3000,
+    activeSeries: String(body.activeSeries || "total"),
+    estimatedCost: Number.isFinite(Number(body.estimatedCost)) ? Number(body.estimatedCost) : 0,
+    costRates: {
+      input: optionalNumber(body.costRates?.input) ?? 0,
+      output: optionalNumber(body.costRates?.output) ?? 0,
+      cache_create: optionalNumber(body.costRates?.cache_create) ?? 0,
+      cache_read: optionalNumber(body.costRates?.cache_read) ?? 0,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  return c.json(currentDashboardState());
+});
+
 tokmonRoutes.get("/scan", (c) => {
   const count = scanTokMonAll();
   return c.json({ inserted: count });

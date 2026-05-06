@@ -200,6 +200,14 @@ function clearRangeBtn() {
   lastRangeBtn = null;
 }
 
+function syncDashboardState(state) {
+  fetch('/api/tokmon/dashboard-state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state),
+  }).catch(() => {});
+}
+
 function toggleFilter(type, value) {
   if (!type || (activeFilter && activeFilter.type === type && activeFilter.value === value)) {
     activeFilter = null;
@@ -742,7 +750,23 @@ async function refresh() {
 
   const t = summary.total;
   const costVal = calcCost(summary.byModel);
-  cachedAvgRates = calcAvgRates(summary.byModel);
+  const avgRates = calcAvgRates(summary.byModel);
+  syncDashboardState({
+    source,
+    from,
+    to,
+    interval,
+    liveMode,
+    rangeMode: timeMode,
+    rangeLabel: lastRangeBtn?.textContent?.trim() || null,
+    rangeHours: lastRangeBtn?.dataset.hours ? parseInt(lastRangeBtn.dataset.hours) : null,
+    rangeDays: lastRangeBtn?.dataset.days ? parseInt(lastRangeBtn.dataset.days) : null,
+    refreshRate: parseInt($('#refreshRate')?.value || '3000'),
+    activeSeries,
+    estimatedCost: costVal,
+    costRates: avgRates,
+  });
+  cachedAvgRates = avgRates;
   cachedRawValues = {
     total: t.total_input + t.total_output,
     reqs: t.total_requests,
