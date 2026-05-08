@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { getDb } from "../db.js";
 import { expandPath, getTokMonConfig, saveTokMonConfig, scanTokMonAll } from "../tokmon/scanner.js";
+import { dataPath } from "../runtime-paths.js";
 
 export const tokmonRoutes = new Hono();
 
@@ -26,7 +28,7 @@ type TokMonDashboardState = {
   updatedAt: string;
 };
 
-let dashboardState: TokMonDashboardState = {
+const defaultDashboardState: TokMonDashboardState = {
   source: "",
   from: "",
   to: "",
@@ -47,6 +49,38 @@ let dashboardState: TokMonDashboardState = {
   },
   updatedAt: new Date().toISOString(),
 };
+
+const dashboardStatePath = dataPath("tokmon-dashboard-state.json");
+let dashboardState: TokMonDashboardState = loadDashboardState();
+
+function loadDashboardState(): TokMonDashboardState {
+  if (!existsSync(dashboardStatePath)) return defaultDashboardState;
+
+  try {
+    const state = JSON.parse(readFileSync(dashboardStatePath, "utf-8")) as Partial<TokMonDashboardState>;
+    return {
+      ...defaultDashboardState,
+      ...state,
+      interval: state.interval === "hour" ? "hour" : "day",
+      liveMode: Boolean(state.liveMode),
+      rangeMode: state.rangeMode === "round" ? "round" : "exact",
+      rangeHours: optionalNumber(state.rangeHours),
+      rangeDays: optionalNumber(state.rangeDays),
+      refreshRate: Number.isFinite(Number(state.refreshRate)) ? Number(state.refreshRate) : defaultDashboardState.refreshRate,
+      costRates: {
+        ...defaultDashboardState.costRates,
+        ...(state.costRates || {}),
+      },
+      updatedAt: state.updatedAt || defaultDashboardState.updatedAt,
+    };
+  } catch {
+    return defaultDashboardState;
+  }
+}
+
+function saveDashboardState() {
+  writeFileSync(dashboardStatePath, JSON.stringify(currentDashboardState(), null, 2) + "\n");
+}
 
 function fmtDate(d: Date) {
   const y = d.getFullYear();
@@ -130,6 +164,7 @@ tokmonRoutes.post("/dashboard-state", async (c) => {
     },
     updatedAt: new Date().toISOString(),
   };
+  saveDashboardState();
 
   return c.json(currentDashboardState());
 });
@@ -306,18 +341,33 @@ tokmonRoutes.get("/records", (c) => {
   const model = c.req.query("model");
   const db = getDb();
 
-  let where = "WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)";
+  let where = "WHERE datetime(u.created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)";
   const params: any[] = [from, to];
-  if (source) { where += " AND source = ?"; params.push(source); }
-  if (model) { where += " AND model = ?"; params.push(model); }
+  if (source) { where += " AND u.source = ?"; params.push(source); }
+  if (model) { where += " AND u.model = ?"; params.push(model); }
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM usage_records ${where}`).get(...params) as any).c;
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM usage_records u ${where}`).get(...params) as any).c;
   const rows = db.prepare(`
-    SELECT source, session_id, model, input_tokens, output_tokens,
-           cache_creation, cache_read, reasoning_tokens,
-           datetime(created_at, 'localtime') as created_at
-    FROM usage_records ${where}
-    ORDER BY created_at DESC
+    SELECT u.source,
+           u.session_id,
+           COALESCE(s_exact.id, s_file.id, u.session_id) as linked_session_id,
+           u.model,
+           u.input_tokens,
+           u.output_tokens,
+           u.cache_creation,
+           u.cache_read,
+           u.reasoning_tokens,
+           datetime(u.created_at, 'localtime') as created_at
+    FROM usage_records u
+    LEFT JOIN sessions s_exact
+      ON s_exact.source = u.source
+      AND s_exact.id = u.session_id
+    LEFT JOIN sessions s_file
+      ON s_file.source = u.source
+      AND s_exact.id IS NULL
+      AND substr(s_file.file_path, -length(u.session_id || '.jsonl')) = u.session_id || '.jsonl'
+    ${where}
+    ORDER BY u.created_at DESC
     LIMIT ? OFFSET ?
   `).all(...params, limit, page * limit);
 

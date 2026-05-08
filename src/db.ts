@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
-import { resolve } from "path";
+import { dataPath } from "./runtime-paths.js";
 
-const DB_PATH = resolve(process.cwd(), "agentmon.db");
+const DB_PATH = dataPath("agentmon.db");
 
 let db: Database.Database;
 

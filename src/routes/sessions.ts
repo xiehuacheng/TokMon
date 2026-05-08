@@ -25,8 +25,8 @@ sessionsRoutes.get("/", (c) => {
   if (project) { where += " AND project_path LIKE ?"; params.push(`%${project}%`); }
   if (model) { where += " AND model LIKE ?"; params.push(`%${model}%`); }
   if (q) {
-    where += " AND (project_path LIKE ? OR model LIKE ? OR first_prompt LIKE ? OR last_prompt LIKE ? OR summary LIKE ?)";
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where += " AND (id LIKE ? OR project_path LIKE ? OR model LIKE ? OR first_prompt LIKE ? OR last_prompt LIKE ? OR summary LIKE ?)";
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
   if (archived === "1") { where += " AND archived = 1"; }
   else { where += " AND archived = 0"; }

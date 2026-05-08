@@ -34,6 +34,14 @@ final class AgentMonServer: ObservableObject {
     }
   }
 
+  func restart() {
+    startTask?.cancel()
+    startTask = nil
+    stop(waitUntilExit: true)
+    detail = "Restarting AgentMon server..."
+    start()
+  }
+
   func stop(waitUntilExit: Bool = false) {
     startTask?.cancel()
     startTask = nil
@@ -93,9 +101,11 @@ final class AgentMonServer: ObservableObject {
 
     do {
       let projectRoot = try AgentMonProjectLocator.projectRoot()
-      detail = "Starting AgentMon from \(projectRoot.path)..."
-      agentMonLog("AgentMon project root: \(projectRoot.path)")
-      process = try launchServer(projectRoot: projectRoot)
+      let dataDir = try AgentMonProjectLocator.appDataDir()
+      detail = "Starting AgentMon..."
+      agentMonLog("AgentMon server root: \(projectRoot.path)")
+      agentMonLog("AgentMon data dir: \(dataDir.path)")
+      process = try launchServer(projectRoot: projectRoot, dataDir: dataDir)
     } catch {
       fail("Unable to launch AgentMon: \(error.localizedDescription)")
       return
@@ -113,14 +123,14 @@ final class AgentMonServer: ObservableObject {
     startTask = nil
   }
 
-  private func launchServer(projectRoot: URL) throws -> Process {
+  private func launchServer(projectRoot: URL, dataDir: URL) throws -> Process {
     let process = Process()
     let nodeURL = try nodeExecutableURL(projectRoot: projectRoot)
     agentMonLog("AgentMon using node: \(nodeURL.path)")
     process.executableURL = nodeURL
     process.arguments = ["--import", "tsx/esm", "src/index.ts"]
     process.currentDirectoryURL = projectRoot
-    process.environment = launchEnvironment(projectRoot: projectRoot)
+    process.environment = launchEnvironment(projectRoot: projectRoot, dataDir: dataDir)
 
     let pipe = Pipe()
     outputPipe = pipe
@@ -146,6 +156,16 @@ final class AgentMonServer: ObservableObject {
   }
 
   private func nodeExecutableURL(projectRoot: URL) throws -> URL {
+    if let bundledNodeURL = AgentMonProjectLocator.bundledNodeURL(projectRoot: projectRoot) {
+      if nodeCanLoadProjectModules(bundledNodeURL, projectRoot: projectRoot) {
+        return bundledNodeURL
+      }
+
+      throw AgentMonAppError(
+        "Bundled Node cannot load AgentMon's native modules. Rebuild the standalone app with matching dependencies.",
+      )
+    }
+
     let fileManager = FileManager.default
     let environment = ProcessInfo.processInfo.environment
     let pathEntries = (environment["PATH"] ?? "")
@@ -204,7 +224,7 @@ final class AgentMonServer: ObservableObject {
       "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.close();",
     ]
     process.currentDirectoryURL = projectRoot
-    process.environment = launchEnvironment(projectRoot: projectRoot)
+    process.environment = launchEnvironment(projectRoot: projectRoot, dataDir: nil)
     process.standardOutput = Pipe()
     process.standardError = Pipe()
 
@@ -236,16 +256,22 @@ final class AgentMonServer: ObservableObject {
       .map { $0.appendingPathComponent("bin/node").path }
   }
 
-  private func launchEnvironment(projectRoot: URL) -> [String: String] {
+  private func launchEnvironment(projectRoot: URL, dataDir: URL?) -> [String: String] {
     var environment = ProcessInfo.processInfo.environment
     let existingPath = environment["PATH"] ?? ""
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    var commonNodePaths = [
+    var commonNodePaths: [String] = []
+
+    if let bundledNodeURL = AgentMonProjectLocator.bundledNodeURL(projectRoot: projectRoot) {
+      commonNodePaths.append(bundledNodeURL.deletingLastPathComponent().path)
+    }
+
+    commonNodePaths.append(contentsOf: [
       "/opt/homebrew/bin",
       "/usr/local/bin",
       "/usr/bin",
       projectRoot.appendingPathComponent("node_modules/.bin").path,
-    ]
+    ])
 
     commonNodePaths.append(contentsOf: nvmNodeCandidates(home: URL(fileURLWithPath: home)).map {
       URL(fileURLWithPath: $0).deletingLastPathComponent().path
@@ -254,6 +280,9 @@ final class AgentMonServer: ObservableObject {
     environment["PATH"] = (commonNodePaths + [existingPath])
       .filter { !$0.isEmpty }
       .joined(separator: ":")
+    if let dataDir {
+      environment["AGENTMON_DATA_DIR"] = dataDir.path
+    }
     environment.removeValue(forKey: "FORCE_COLOR")
     return environment
   }

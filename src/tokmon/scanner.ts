@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { basename, join, resolve } from "path";
 import { homedir } from "os";
 import { getTokmonScanOffset, insertUsage, setTokmonScanOffset } from "../db.js";
+import { dataPath } from "../runtime-paths.js";
 
 export function expandPath(path: string): string {
   return resolve(path.replace(/^~/, homedir()));
@@ -29,7 +30,7 @@ function defaultConfig(): TokMonConfig {
 }
 
 function configPath(): string {
-  return resolve(process.cwd(), "tokmon.config.json");
+  return dataPath("tokmon.config.json");
 }
 
 function normalizeConfig(input: Partial<TokMonConfig>): TokMonConfig {
@@ -219,12 +220,16 @@ function scanCodexFile(filePath: string, sessionId: string): number {
   const seenUsage = new Set<string>();
 
   let lastModel = "unknown";
+  let resolvedSessionId = sessionId;
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
     try {
       const obj = JSON.parse(line);
       if (obj.type === "session_meta" || obj.type === "turn_context") {
         const payload = parsePayload(obj.payload);
+        if (obj.type === "session_meta" && typeof payload?.id === "string" && payload.id.trim()) {
+          resolvedSessionId = payload.id;
+        }
         if (payload?.model) lastModel = payload.model;
       }
     } catch {}
@@ -251,7 +256,7 @@ function scanCodexFile(filePath: string, sessionId: string): number {
       seenUsage.add(usageKey);
       if (insertUsage({
         source: "codex",
-        sessionId,
+        sessionId: resolvedSessionId,
         model: lastModel,
         inputTokens: Math.max((u.input_tokens || 0) - (u.cached_input_tokens || 0), 0),
         outputTokens: u.output_tokens || 0,

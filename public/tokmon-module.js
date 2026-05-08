@@ -32,11 +32,23 @@ function fmtDate(d) {
 function fmtDateTime(d) {
   return `${fmtDate(d)}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
+function stateDateTime(value) {
+  if (!value || typeof value !== 'string') return '';
+  return value.replace(' ', 'T').slice(0, 16);
+}
 function num(n) {
   if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return String(n);
+}
+function shortSessionId(id) {
+  const value = String(id || '');
+  if (!value) return '-';
+  return value.length > 12 ? value.slice(-8) : value;
+}
+function sessionSourceLabel(source) {
+  return source === 'claude-code' ? 'Claude Code' : source === 'codex' ? 'Codex' : source || '';
 }
 
 const tt = { backgroundColor: '#161b22', borderColor: '#30363d',
@@ -44,24 +56,162 @@ const tt = { backgroundColor: '#161b22', borderColor: '#30363d',
 const ax = { color: '#484f58', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" };
 const sp = { lineStyle: { color: '#21262d', type: 'dashed' } };
 
-const trendChart = echarts.init($('#trendChart'));
-const pieChart = echarts.init($('#pieChart'));
+const trendChartEl = $('#trendChart');
+const pieChartEl = $('#pieChart');
+const trendChart = echarts.init(trendChartEl);
+const pieChart = echarts.init(pieChartEl);
+const chartTooltip = { ...tt, triggerOn: 'mousemove|click', enterable: false, alwaysShowContent: false };
 let cachedHeatmap = null;
-let resizeTimer;
+let heatmapWindowResizeTimer;
+let heatmapPanelResizeTimer;
+let heroResizeTimer;
+let refreshSeq = 0;
+let recordsRequestSeq = 0;
+let lastScrollInputAt = 0;
+let trendHoverState = { inside: false, clientX: 0, clientY: 0 };
+let trendPointerState = { valid: false, clientX: 0, clientY: 0 };
+let trendHoverRestoreTimer = null;
+function alignHeroForResize() {
+  if (destroyed || (!cachedRawValues && !cachedCompareRawValues)) return;
+  updateHero(false, { forceLayout: true });
+}
+function scheduleHeatmapRender(delay = 100, source = 'window') {
+  clearTimeout(source === 'panel' ? heatmapPanelResizeTimer : heatmapWindowResizeTimer);
+  const timer = setTimeout(() => {
+    if (!destroyed && cachedHeatmap) renderHeatmap(cachedHeatmap);
+  }, delay);
+  if (source === 'panel') heatmapPanelResizeTimer = timer;
+  else heatmapWindowResizeTimer = timer;
+}
 function onResize() {
+  if (destroyed) return;
   trendChart.resize(); pieChart.resize();
-  updateHero(false);
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (cachedHeatmap) renderHeatmap(cachedHeatmap); }, 100);
+  scheduleTrendHoverRestore();
+  if (sessionPopover && !sessionPopover.hidden && sessionPopoverAnchor?.isConnected) {
+    positionSessionPopover(sessionPopover, sessionPopoverAnchor);
+  }
+  alignHeroForResize();
+  clearTimeout(heroResizeTimer);
+  heroResizeTimer = setTimeout(alignHeroForResize, 120);
+  scheduleHeatmapRender(100, 'window');
 }
 on(window, 'resize', onResize);
+on(window, 'wheel', () => { lastScrollInputAt = Date.now(); });
+on(window, 'touchmove', () => { lastScrollInputAt = Date.now(); });
+on(window, 'keydown', (event) => {
+  const scrollKeys = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+  const target = event.target;
+  if (!scrollKeys.has(event.key) || target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  lastScrollInputAt = Date.now();
+});
+
+function activate() {
+  if (destroyed) return;
+  requestAnimationFrame(() => {
+    if (destroyed) return;
+    trendChart.resize();
+    pieChart.resize();
+    updateHero(false, { forceLayout: true });
+    scheduleTrendHoverRestore();
+    if (cachedHeatmap) renderHeatmap(cachedHeatmap);
+  });
+}
+
+function chartLocalPoint(el, event) {
+  const rect = el.getBoundingClientRect();
+  return [event.clientX - rect.left, event.clientY - rect.top];
+}
+
+function showTrendTip(clientX, clientY, { force = false } = {}) {
+  if (destroyed || !trendChartEl) return;
+  const [x, y] = chartLocalPoint(trendChartEl, { clientX, clientY });
+  if (!force && !trendChart.containPixel?.('grid', [x, y])) return;
+  trendChart.dispatchAction({ type: 'updateAxisPointer', currTrigger: 'mousemove', x, y });
+  trendChart.dispatchAction({ type: 'showTip', x, y });
+}
+
+function rememberTrendHover(event) {
+  trendHoverState.inside = true;
+  trendHoverState.clientX = event.clientX;
+  trendHoverState.clientY = event.clientY;
+  trendPointerState.valid = true;
+  trendPointerState.clientX = event.clientX;
+  trendPointerState.clientY = event.clientY;
+}
+
+function updateTrendPointer(event) {
+  if (!event) return;
+  trendPointerState.valid = true;
+  trendPointerState.clientX = event.clientX;
+  trendPointerState.clientY = event.clientY;
+}
+
+function isTrendPointerOverChart() {
+  if (!trendChartEl || !trendPointerState.valid) return false;
+  const target = document.elementFromPoint(trendPointerState.clientX, trendPointerState.clientY);
+  return !!target && trendChartEl.contains(target);
+}
+
+function scheduleTrendHoverRestore(delay = 0) {
+  clearTimeout(trendHoverRestoreTimer);
+  if (!trendHoverState.inside && !isTrendPointerOverChart()) return;
+  trendHoverRestoreTimer = setTimeout(() => {
+    if (destroyed) return;
+    if (!trendHoverState.inside && !isTrendPointerOverChart()) return;
+    const clientX = trendHoverState.inside ? trendHoverState.clientX : trendPointerState.clientX;
+    const clientY = trendHoverState.inside ? trendHoverState.clientY : trendPointerState.clientY;
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+    showTrendTip(clientX, clientY);
+  }, delay);
+}
+
+function clearTrendHover() {
+  trendHoverState.inside = false;
+  clearTimeout(trendHoverRestoreTimer);
+  trendHoverRestoreTimer = null;
+  if (!destroyed) trendChart.dispatchAction({ type: 'hideTip' });
+}
+
+function bindChartActivation(chart, el, mode = 'item') {
+  if (!chart || !el) return;
+  on(el, 'mouseenter', () => {
+    if (!destroyed) requestAnimationFrame(() => chart.resize());
+  });
+  on(el, 'mousemove', (event) => {
+    if (destroyed) return;
+    const [x, y] = chartLocalPoint(el, event);
+    if (mode === 'axis' && !chart.containPixel?.('grid', [x, y])) return;
+    chart.dispatchAction({ type: 'showTip', x, y });
+  });
+}
+bindChartActivation(pieChart, pieChartEl, 'item');
+on(trendChartEl, 'mouseenter', (event) => {
+  if (destroyed) return;
+  rememberTrendHover(event);
+  requestAnimationFrame(() => {
+    if (destroyed) return;
+    trendChart.resize();
+    scheduleTrendHoverRestore();
+  });
+});
+on(trendChartEl, 'mousemove', (event) => {
+  if (destroyed) return;
+  rememberTrendHover(event);
+  showTrendTip(event.clientX, event.clientY);
+});
+on(trendChartEl, 'mouseleave', clearTrendHover);
+on(window, 'mousemove', (event) => {
+  if (destroyed) return;
+  updateTrendPointer(event);
+  if (!trendHoverState.inside) return;
+  showTrendTip(event.clientX, event.clientY);
+});
 
 setTimeout(() => {
   const heatWrap = $('#heatmapWrap');
   if (heatWrap) {
     resizeObserver = new ResizeObserver(() => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { if (cachedHeatmap) renderHeatmap(cachedHeatmap); }, 100);
+      scheduleHeatmapRender(100, 'panel');
     });
     resizeObserver.observe(heatWrap.closest('.panel'));
   }
@@ -94,6 +244,7 @@ on(document, 'keydown', (e) => {
 
 let currentInterval = 'day';
 function setIntervalMode(mode) {
+  mode = mode === 'hour' ? 'hour' : 'day';
   currentInterval = mode;
   $('#btnHourly').classList.toggle('active', mode === 'hour');
   $('#btnDaily').classList.toggle('active', mode === 'day');
@@ -123,6 +274,12 @@ function setLiveMode(on) {
   $('#btnNow').disabled = on;
 }
 
+function setRangeMode(mode) {
+  timeMode = mode === 'round' ? 'round' : 'exact';
+  $('#btnExact').classList.toggle('active', timeMode === 'exact');
+  $('#btnRound').classList.toggle('active', timeMode === 'round');
+}
+
 on($('#btnNow'), 'click', () => {
   if (liveMode) return;
   setLiveMode(true);
@@ -132,16 +289,12 @@ on($('#btnNow'), 'click', () => {
 
 on($('#btnExact'), 'click', (e) => {
   e.stopPropagation();
-  timeMode = 'exact';
-  $('#btnExact').classList.add('active');
-  $('#btnRound').classList.remove('active');
+  setRangeMode('exact');
   reapplyRange();
 });
 on($('#btnRound'), 'click', (e) => {
   e.stopPropagation();
-  timeMode = 'round';
-  $('#btnRound').classList.add('active');
-  $('#btnExact').classList.remove('active');
+  setRangeMode('round');
   reapplyRange();
 });
 
@@ -200,6 +353,64 @@ function clearRangeBtn() {
   lastRangeBtn = null;
 }
 
+function rangeButtonForState(state) {
+  if (Number.isInteger(state?.rangeHours)) {
+    return $(`.range-btns .rbtn[data-hours="${state.rangeHours}"]`);
+  }
+  if (Number.isInteger(state?.rangeDays)) {
+    return $(`.range-btns .rbtn[data-days="${state.rangeDays}"]`);
+  }
+  return null;
+}
+
+function applyDashboardState(state) {
+  if (!state || typeof state !== 'object') return false;
+
+  $('#source').value = state.source || '';
+  setRangeMode(state.rangeMode);
+  setIntervalMode(state.interval);
+  setLiveMode(Boolean(state.liveMode));
+
+  const refreshRate = String(state.refreshRate || '');
+  if (refreshRate && Array.from($('#refreshRate').options).some(option => option.value === refreshRate)) {
+    $('#refreshRate').value = refreshRate;
+  }
+
+  const rangeBtn = rangeButtonForState(state);
+  clearRangeBtn();
+  if (rangeBtn) {
+    lastRangeBtn = rangeBtn;
+    rangeBtn.classList.add('active');
+  }
+
+  if (state.liveMode && rangeBtn) {
+    const { from, to } = getRangeWindow(rangeBtn);
+    $('#dateFrom').value = fmtDateTime(from);
+    $('#dateTo').value = fmtDateTime(to);
+  } else {
+    const from = stateDateTime(state.from);
+    const to = stateDateTime(state.to);
+    if (from) $('#dateFrom').value = from;
+    if (to) $('#dateTo').value = to;
+  }
+
+  if (SERIES_DEF[state.activeSeries]) {
+    activeSeries = state.activeSeries;
+  }
+
+  return true;
+}
+
+async function restoreDashboardState() {
+  try {
+    const res = await fetch('/api/tokmon/dashboard-state');
+    if (!res.ok) return false;
+    return applyDashboardState(await res.json());
+  } catch {
+    return false;
+  }
+}
+
 function syncDashboardState(state) {
   fetch('/api/tokmon/dashboard-state', {
     method: 'POST',
@@ -227,6 +438,8 @@ let prevDigits = [];
 let lastHeroValue = -1;
 let lastHeroCell = 0;
 let lastHeroIsCost = false;
+let heroAnimatingUntil = 0;
+let queuedHeroRoll = null;
 function getHeroCellSize() {
   const sample = $('#heroDigits .hero-digit-num');
   const height = sample?.getBoundingClientRect().height || (sample ? parseFloat(getComputedStyle(sample).height) : 0);
@@ -247,10 +460,17 @@ function alignHeroDigits() {
 }
 function rollToNumber(n, isCost, options = {}) {
   const container = $('#heroDigits');
+  const forceLayout = options.forceLayout || false;
+  const immediate = options.immediate || forceLayout;
   if (n === lastHeroValue && isCost === lastHeroIsCost && container?.querySelector('.hero-digit-inner')) {
-    alignHeroDigits();
+    if (forceLayout) alignHeroDigits();
     return;
   }
+  if (!immediate && Date.now() < heroAnimatingUntil && container?.querySelector('.hero-digit-inner')) {
+    queuedHeroRoll = { n, isCost, options: { ...options, immediate: true } };
+    return;
+  }
+  queuedHeroRoll = null;
   lastHeroValue = n;
   lastHeroIsCost = isCost;
 
@@ -284,10 +504,10 @@ function rollToNumber(n, isCost, options = {}) {
   }).join('');
 
   const CELL = getHeroCellSize();
-  const forceLayout = options.forceLayout || false;
   const digitEls = container.querySelectorAll('.hero-digit-inner');
   const digits = groups.filter(c => c !== ',' && c !== '.' && c !== '$');
   let di = 0;
+  let maxDuration = 0;
   digits.forEach((d, i) => {
     const el = digitEls[di++];
     const target = parseInt(d);
@@ -303,6 +523,7 @@ function rollToNumber(n, isCost, options = {}) {
     if (!forceLayout && (prev !== target || prevDigits.length === 0)) {
       const dist = Math.abs(target - prev);
       const duration = 0.8 + dist * 0.12 + i * 0.04;
+      maxDuration = Math.max(maxDuration, duration);
       el.style.transition = 'none';
       el.style.transform = `translateY(${prevOffset}px)`;
       requestAnimationFrame(() => {
@@ -319,6 +540,17 @@ function rollToNumber(n, isCost, options = {}) {
 
   prevDigits = digits;
   lastHeroCell = CELL;
+  if (!forceLayout && maxDuration > 0) {
+    heroAnimatingUntil = Date.now() + maxDuration * 1000 + 80;
+    window.setTimeout(() => {
+      if (!queuedHeroRoll || Date.now() < heroAnimatingUntil) return;
+      const queued = queuedHeroRoll;
+      queuedHeroRoll = null;
+      rollToNumber(queued.n, queued.isCost, queued.options);
+    }, maxDuration * 1000 + 90);
+  } else {
+    heroAnimatingUntil = 0;
+  }
 }
 
 let breakdownTab = 'model';
@@ -615,6 +847,11 @@ function updateHero(forceReset, options = {}) {
   wrap.style.setProperty('--hero-color', def.color);
   wrap.style.setProperty('--hero-glow', def.color + '66');
   wrap.style.setProperty('--hero-glow2', def.color + '26');
+  if (forceReset) {
+    heroAnimatingUntil = 0;
+    queuedHeroRoll = null;
+    options = { ...options, immediate: true };
+  }
   if (activeSeries === 'cost') {
     const cents = Math.round(val * 100);
     if (forceReset) { lastHeroValue = -1; prevDigits = []; lastHeroCell = 0; }
@@ -662,20 +899,20 @@ function renderTrend() {
     }
   } else {
     series.push({
-      type: 'line', smooth: true, symbol: 'circle', symbolSize: 1, showSymbol: false,
+      type: 'line', smooth: true, symbol: 'circle', symbolSize: 6, showSymbol: false,
       lineStyle: { width: 2, color: activeFilter ? '#6e7681' : def.color },
       areaStyle: { color: activeFilter ? '#6e7681' : def.color, opacity: 0.08 },
       itemStyle: { color: activeFilter ? '#6e7681' : def.color },
-      emphasis: { itemStyle: { borderWidth: 2, borderColor: '#e6edf3' } },
+      emphasis: { scale: 1.4, itemStyle: { borderWidth: 2, borderColor: '#e6edf3' } },
       data,
     });
     if (compareData) {
       series.push({
-        type: 'line', smooth: true, symbol: 'circle', symbolSize: 1, showSymbol: false,
+        type: 'line', smooth: true, symbol: 'circle', symbolSize: 6, showSymbol: false,
         lineStyle: { width: 2, color: def.color },
         areaStyle: { color: def.color, opacity: 0.08 },
         itemStyle: { color: def.color },
-        emphasis: { itemStyle: { borderWidth: 2, borderColor: '#e6edf3' } },
+        emphasis: { scale: 1.4, itemStyle: { borderWidth: 2, borderColor: '#e6edf3' } },
         data: compareData,
       });
     }
@@ -688,32 +925,85 @@ function renderTrend() {
 
   trendChart.setOption({
     backgroundColor: 'transparent',
-    tooltip: { trigger: useBar ? 'item' : 'axis', confine: true, ...tt, axisPointer: useBar ? { type: 'none' } : { type: 'cross', crossStyle: { color: '#21262d' }, lineStyle: { color: '#30363d' } } },
+    tooltip: { ...chartTooltip, trigger: useBar ? 'item' : 'axis', confine: true, axisPointer: useBar ? { type: 'shadow' } : { type: 'cross', crossStyle: { color: '#21262d' }, lineStyle: { color: '#30363d' } } },
     legend: { show: false },
     grid: { left: 10, right: 16, top: 16, bottom: 28, containLabel: true },
     xAxis,
     yAxis: { type: 'value', splitLine: sp, axisLabel: { ...ax, formatter: v => activeSeries === 'cost' ? fmtCost(v) : num(v) } },
     series,
   }, true);
+  trendChart.resize();
+  scheduleTrendHoverRestore();
+}
+
+function findScrollAnchor(scroller) {
+  const selectors = [
+    '#recordsTable',
+    '#recordsPager',
+    '#breakdownTable',
+    '#pieChart',
+    '#heatmapWrap',
+    '#trendChart',
+    '#summaryCards',
+    '#heroDigits',
+  ];
+  const viewportTop = scroller === document.scrollingElement || scroller === document.documentElement
+    ? 0
+    : scroller.getBoundingClientRect().top;
+  for (const selector of selectors) {
+    const el = root.querySelector(selector);
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom >= viewportTop && rect.top <= window.innerHeight) {
+      return { selector, offset: rect.top - viewportTop };
+    }
+  }
+  return null;
 }
 
 function capturePageScroll() {
   const scroller = document.scrollingElement || document.documentElement;
-  return { scroller, top: scroller.scrollTop };
+  return {
+    scroller,
+    top: scroller.scrollTop,
+    left: scroller.scrollLeft,
+    anchor: findScrollAnchor(scroller),
+    capturedAt: Date.now(),
+  };
 }
 
 function restorePageScroll(snapshot) {
   if (!snapshot?.scroller) return;
-  snapshot.scroller.scrollTop = snapshot.top;
+  if (lastScrollInputAt > snapshot.capturedAt) return;
+  if (snapshot.anchor?.selector) {
+    const anchorEl = root.querySelector(snapshot.anchor.selector);
+    if (anchorEl) {
+      const viewportTop = snapshot.scroller === document.scrollingElement || snapshot.scroller === document.documentElement
+        ? 0
+        : snapshot.scroller.getBoundingClientRect().top;
+      const delta = anchorEl.getBoundingClientRect().top - viewportTop - snapshot.anchor.offset;
+      snapshot.scroller.scrollTop += delta;
+    } else {
+      snapshot.scroller.scrollTop = snapshot.top;
+    }
+  } else {
+    snapshot.scroller.scrollTop = snapshot.top;
+  }
+  snapshot.scroller.scrollLeft = snapshot.left || 0;
 }
 
 function restorePageScrollAfterLayout(snapshot) {
-  requestAnimationFrame(() => restorePageScroll(snapshot));
+  restorePageScroll(snapshot);
+  requestAnimationFrame(() => {
+    restorePageScroll(snapshot);
+    requestAnimationFrame(() => restorePageScroll(snapshot));
+  });
+  setTimeout(() => restorePageScroll(snapshot), 80);
 }
 
 async function refresh() {
   if (destroyed) return;
-  const pageScroll = capturePageScroll();
+  const seq = ++refreshSeq;
   if (liveMode) {
     const now = new Date();
     $('#dateTo').value = fmtDateTime(now);
@@ -747,6 +1037,8 @@ async function refresh() {
     activeFilter ? fetch(`/api/tokmon/trend?interval=${interval}&from=${from}&to=${to}${baseQ}${compareQ}`).then(r => r.json()) : Promise.resolve(null),
     activeFilter ? fetch(`/api/tokmon/heatmap?${baseQ.slice(1)}${compareQ.slice(1)}`).then(r => r.json()) : Promise.resolve(null),
   ]);
+  if (destroyed || seq !== refreshSeq) return;
+  const pageScroll = capturePageScroll();
 
   const t = summary.total;
   const costVal = calcCost(summary.byModel);
@@ -866,7 +1158,8 @@ async function refresh() {
   cachedSummary = summary;
   renderBreakdown();
   restorePageScroll(pageScroll);
-  await loadRecords({ from, to, source });
+  await loadRecords({ from, to, source }, seq);
+  if (destroyed || seq !== refreshSeq) return;
   restorePageScroll(pageScroll);
   restorePageScrollAfterLayout(pageScroll);
 }
@@ -906,7 +1199,7 @@ function renderBreakdown() {
     const total = data.reduce((s, r) => s + getMetricValue(r), 0) || 1;
     pieChart.setOption({
       backgroundColor: 'transparent',
-      tooltip: { trigger: 'item', confine: true, ...tt },
+      tooltip: { ...chartTooltip, trigger: 'item', confine: true },
       series: [{
         type: 'pie', radius: ['45%', '70%'], center: ['50%', '55%'],
         label: { color: '#8b949e', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
@@ -937,7 +1230,7 @@ function renderBreakdown() {
     const total = data.reduce((s, r) => s + getMetricValue(r), 0) || 1;
     pieChart.setOption({
       backgroundColor: 'transparent',
-      tooltip: { trigger: 'item', confine: true, ...tt },
+      tooltip: { ...chartTooltip, trigger: 'item', confine: true },
       series: [{
         type: 'pie', radius: ['45%', '70%'], center: ['50%', '55%'],
         label: { color: '#8b949e', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
@@ -1099,13 +1392,7 @@ function renderHeatmap(data) {
   let tip = root.querySelector('.heatmap-tooltip');
   if (!tip) { tip = document.createElement('div'); tip.className = 'heatmap-tooltip'; root.appendChild(tip); }
 
-  wrap.onmouseover = e => {
-    const rect = e.target.closest('rect');
-    if (!rect) return;
-    tip.innerHTML = `<b>${num(parseInt(rect.dataset.count))}</b> ${SERIES_DEF[activeSeries].label.toLowerCase()} on ${rect.dataset.date}`;
-    tip.style.display = 'block';
-  };
-  wrap.onmousemove = e => {
+  const moveTip = e => {
     const tipW = tip.offsetWidth || 150;
     const tipH = tip.offsetHeight || 30;
     let x = e.clientX + 12;
@@ -1115,12 +1402,20 @@ function renderHeatmap(data) {
     tip.style.left = x + 'px';
     tip.style.top = y + 'px';
   };
-  wrap.onmouseout = e => {
-    if (e.target.tagName === 'rect') tip.style.display = 'none';
+  const showTip = (rect, e) => {
+    tip.innerHTML = `<b>${num(parseInt(rect.dataset.count))}</b> ${SERIES_DEF[activeSeries].label.toLowerCase()} on ${rect.dataset.date}`;
+    tip.style.display = 'block';
+    moveTip(e);
   };
-}
+  const hideTip = () => { tip.style.display = 'none'; };
 
-$('.rbtn[data-days="7"]').click();
+  wrap.querySelectorAll('rect').forEach(rect => {
+    rect.addEventListener('pointerenter', e => showTip(rect, e));
+    rect.addEventListener('pointermove', e => showTip(rect, e));
+    rect.addEventListener('pointerleave', hideTip);
+  });
+  wrap.onpointerleave = hideTip;
+}
 
 let refreshTimer = null;
 function startAutoRefresh() {
@@ -1132,14 +1427,198 @@ function startAutoRefresh() {
   }, ms);
 }
 on($('#refreshRate'), 'change', startAutoRefresh);
-startAutoRefresh();
+
+async function initializeDashboard() {
+  const restored = await restoreDashboardState();
+  if (destroyed) return;
+
+  if (!restored) {
+    const defaultRange = $('.rbtn[data-days="7"]');
+    if (defaultRange) {
+      applyRange(defaultRange);
+    } else {
+      refresh();
+    }
+  } else {
+    refresh();
+  }
+
+  startAutoRefresh();
+}
 
 let recordsPage = 0;
 const RECORDS_PER_PAGE = 20;
 let lastRecordsQueryKey = '';
+let sessionPopover = null;
+let sessionPopoverFor = '';
+let sessionPopoverAnchor = null;
+let sessionPopoverRecordKey = '';
 
-async function loadRecords(range = null) {
+function setActiveSessionLink(anchor = null) {
+  $$('.session-link').forEach(link => {
+    link.classList.toggle('active', !!anchor && link === anchor);
+  });
+}
+
+function tokenRecordKey(record) {
+  return JSON.stringify([
+    record.source || '',
+    record.session_id || '',
+    record.created_at || '',
+    record.input_tokens ?? '',
+    record.output_tokens ?? '',
+  ]);
+}
+
+function findSessionPopoverAnchor() {
+  if (!sessionPopoverRecordKey) return null;
+  return $$('.session-link').find(link => link.dataset.recordKey === sessionPopoverRecordKey) || null;
+}
+
+function getSessionPopover() {
+  if (sessionPopover && root.contains(sessionPopover)) return sessionPopover;
+  sessionPopover = document.createElement('div');
+  sessionPopover.className = 'token-session-popover';
+  sessionPopover.hidden = true;
+  root.appendChild(sessionPopover);
+  window.AgentMonContainScrollWithin?.(sessionPopover);
+  return sessionPopover;
+}
+
+function safeJsonArray(value) {
+  if (!value || value === '[]') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sourceBadgeHtml(source) {
+  return source === 'claude-code'
+    ? '<span class="badge badge-claude">CC</span>'
+    : '<span class="badge badge-codex">Codex</span>';
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  if (!Number.isFinite(diff)) return '';
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return d.toLocaleDateString('zh-CN');
+}
+
+function trunc(value, size) {
+  const text = String(value || '');
+  return text.length > size ? text.slice(0, size) + '...' : text;
+}
+
+function renderSessionCard(sessionId, data) {
+  const msgs = data.messages || [];
+  const title = trunc((data.last_prompt || data.first_prompt || data.id || sessionId), 96);
+  const tags = safeJsonArray(data.tags);
+  const previewMessages = msgs.slice(0, 4);
+  const project = data.project_path ? data.project_path.split('/').filter(Boolean).pop() : '?';
+  return `
+    <div class="token-session-popover-head">
+      <div class="token-session-title">
+        ${sourceBadgeHtml(data.source)}
+        <span>${escAttr(title)}</span>
+      </div>
+    </div>
+    <div class="token-session-meta">
+      <div>ID: <span title="${escAttr(data.id || sessionId)}">${escAttr(shortSessionId(data.id || sessionId))}</span></div>
+      <div>Model: <span>${escAttr(data.model || '?')}</span></div>
+      <div>Project: <span title="${escAttr(data.project_path || '')}">${escAttr(trunc(project || '?', 34))}</span></div>
+      <div>Messages: <span>${escAttr(data.message_count ?? msgs.length)}</span> · Started: <span>${escAttr(relTime(data.started_at))}</span></div>
+      ${tags.length ? `<div>Tags: ${tags.map(t => `<span class="tag">${escAttr(t)}</span>`).join('')}</div>` : ''}
+    </div>
+    <div class="token-session-preview">
+      ${previewMessages.length === 0 ? '<div class="empty">No messages</div>' : previewMessages.map(m => `
+        <div class="token-session-preview-row">
+          <span class="msg-role ${escAttr(m.type)}">${escAttr(m.type)}</span>
+          <span class="token-session-preview-text">${escAttr(trunc(m.text, 130))}</span>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+function positionSessionPopover(popover, anchor) {
+  const rect = anchor?.getBoundingClientRect?.();
+  popover.hidden = false;
+  const popW = popover.offsetWidth || 360;
+  const popH = popover.offsetHeight || 300;
+  const gap = 10;
+  const pad = 12;
+  const viewportLeft = rect ? rect.left : (window.innerWidth - popW) / 2;
+  const sideRight = rect ? rect.right + gap : viewportLeft;
+  const sideLeft = rect ? rect.left - popW - gap : sideRight;
+  let left = sideRight + popW <= window.innerWidth - pad ? sideRight : sideLeft;
+  if (left < pad) left = Math.max(pad, window.innerWidth - popW - pad);
+  let top = rect ? rect.top - 12 : 96;
+  if (top + popH > window.innerHeight - pad) top = window.innerHeight - popH - pad;
+  if (top < pad) top = pad;
+  popover.style.left = `${left + window.scrollX}px`;
+  popover.style.top = `${top + window.scrollY}px`;
+}
+
+function closeSessionPopover() {
+  const popover = getSessionPopover();
+  popover.hidden = true;
+  sessionPopoverFor = '';
+  sessionPopoverAnchor = null;
+  sessionPopoverRecordKey = '';
+  setActiveSessionLink(null);
+}
+
+async function openSessionPopover(sessionId, anchor) {
+  const id = String(sessionId || '').trim();
+  if (!id) return;
+  const popover = getSessionPopover();
+  sessionPopoverFor = id;
+  sessionPopoverAnchor = anchor || null;
+  sessionPopoverRecordKey = anchor?.dataset.recordKey || '';
+  setActiveSessionLink(sessionPopoverAnchor);
+  popover.classList.remove('error');
+  popover.innerHTML = `
+    <div class="token-session-popover-head">
+      <div class="token-session-title">
+        <span class="badge badge-codex">Session</span>
+        <span>${escAttr(shortSessionId(id))}</span>
+      </div>
+    </div>
+    <div class="token-session-meta">Loading conversation...</div>
+  `;
+  positionSessionPopover(popover, anchor);
+
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}?limit=8`);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Session not found.');
+    if (sessionPopoverFor !== id) return;
+    popover.innerHTML = renderSessionCard(id, data);
+    window.AgentMonContainScrollWithin?.(popover.querySelector('.token-session-preview'));
+    positionSessionPopover(popover, anchor);
+  } catch (err) {
+    if (sessionPopoverFor !== id) return;
+    popover.classList.add('error');
+    popover.innerHTML = `
+      <div class="token-session-popover-head">
+        <div class="token-session-title"><span class="badge badge-codex">Session</span><span>${escAttr(shortSessionId(id))}</span></div>
+      </div>
+      <div class="token-session-meta">${escAttr(err.message || 'This token record points to a session that is not indexed in Sessions.')}</div>
+    `;
+    positionSessionPopover(popover, anchor);
+  }
+}
+
+async function loadRecords(range = null, expectedRefreshSeq = null) {
   if (destroyed) return;
+  const requestSeq = ++recordsRequestSeq;
   const params = new URLSearchParams();
   const fromInput = range?.from || ($('#dateFrom').value.replace('T', ' ') + ':00');
   const toInput = range?.to || ($('#dateTo').value.replace('T', ' ') + ':59');
@@ -1162,20 +1641,39 @@ async function loadRecords(range = null) {
   params.set('limit', String(RECORDS_PER_PAGE));
 
   const data = await fetch(`/api/tokmon/records?${params.toString()}`).then(r => r.json());
+  if (
+    destroyed ||
+    requestSeq !== recordsRequestSeq ||
+    (expectedRefreshSeq !== null && expectedRefreshSeq !== refreshSeq)
+  ) return;
   const tbody = $('#recordsTable tbody');
   tbody.innerHTML = data.rows.map(r => {
     const srcCls = r.source === 'claude-code' ? 'orange' : 'accent';
     const time = r.created_at.replace('T', ' ').slice(0, 16);
+    const sessionId = String(r.linked_session_id || r.session_id || '');
+    const rawSessionId = String(r.session_id || sessionId);
+    const recordKey = tokenRecordKey(r);
+    const sessionCell = sessionId
+      ? `<button class="session-link" data-session-id="${escAttr(sessionId)}" data-record-key="${escAttr(recordKey)}" data-session-source="${escAttr(r.source || '')}" title="${escAttr(rawSessionId)}">${escAttr(shortSessionId(sessionId))}</button>`
+      : '<span class="muted">-</span>';
     return `<tr>
       <td>${time}</td>
       <td><span class="${srcCls}">${r.source}</span></td>
+      <td>${sessionCell}</td>
       <td>${r.model}</td>
       <td class="num">${num(r.input_tokens)}</td>
       <td class="num">${num(r.output_tokens)}</td>
       <td class="num">${num(r.cache_creation)}</td>
       <td class="num">${num(r.cache_read)}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text-dim)">No records</td></tr>';
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text-dim)">No records</td></tr>';
+  if (sessionPopover && !sessionPopover.hidden) {
+    sessionPopoverAnchor = findSessionPopoverAnchor();
+    setActiveSessionLink(sessionPopoverAnchor);
+    if (sessionPopoverAnchor) positionSessionPopover(sessionPopover, sessionPopoverAnchor);
+  } else {
+    setActiveSessionLink(null);
+  }
 
   const totalPages = Math.ceil(data.total / RECORDS_PER_PAGE);
   const pager = $('#recordsPager');
@@ -1210,7 +1708,21 @@ on($('#recordsJump'), 'keydown', (e) => {
     if (v >= 1) { goRecordsPage(v - 1); e.target.value = ''; }
   }
 });
+on(document, 'pointerdown', (e) => {
+  const popover = sessionPopover;
+  if (!popover || popover.hidden) return;
+  if (popover.contains(e.target) || e.target.closest?.('.session-link')) return;
+  closeSessionPopover();
+});
+on(document, 'keydown', (e) => {
+  if (e.key === 'Escape' && sessionPopover && !sessionPopover.hidden) closeSessionPopover();
+});
+on(window, 'scroll', () => {
+  if (!sessionPopover || sessionPopover.hidden) return;
+  closeSessionPopover();
+});
 
+initializeDashboard();
 
   on(root, 'click', (e) => {
     const series = e.target.closest('[data-series]');
@@ -1220,14 +1732,36 @@ on($('#recordsJump'), 'keydown', (e) => {
     const page = e.target.closest('[data-page]');
     if (page && root.contains(page) && !page.disabled) { goPage(parseInt(page.dataset.page, 10)); return; }
     const recordsPageBtn = e.target.closest('[data-records-page]');
-    if (recordsPageBtn && root.contains(recordsPageBtn) && !recordsPageBtn.disabled) { goRecordsPage(parseInt(recordsPageBtn.dataset.recordsPage, 10)); }
+    if (recordsPageBtn && root.contains(recordsPageBtn) && !recordsPageBtn.disabled) { goRecordsPage(parseInt(recordsPageBtn.dataset.recordsPage, 10)); return; }
+    const scrollBtn = e.target.closest('[data-session-scroll]');
+    if (scrollBtn && root.contains(scrollBtn)) {
+      const popover = scrollBtn.closest('.token-session-popover');
+      const list = popover?.querySelector('.token-session-preview');
+      if (list) list.scrollTop = scrollBtn.dataset.sessionScroll === 'top' ? 0 : list.scrollHeight;
+      return;
+    }
+    const sessionLink = e.target.closest('[data-session-id]');
+    if (sessionLink && root.contains(sessionLink)) {
+      if (sessionPopover && !sessionPopover.hidden && sessionPopoverAnchor === sessionLink) {
+        closeSessionPopover();
+        return;
+      }
+      openSessionPopover(sessionLink.dataset.sessionId, sessionLink);
+      return;
+    }
   });
 
   return {
+    activate,
     destroy() {
       destroyed = true;
       if (typeof refreshTimer !== 'undefined' && refreshTimer) clearInterval(refreshTimer);
-      if (resizeTimer) clearTimeout(resizeTimer);
+      if (heatmapWindowResizeTimer) clearTimeout(heatmapWindowResizeTimer);
+      if (heatmapPanelResizeTimer) clearTimeout(heatmapPanelResizeTimer);
+      if (heroResizeTimer) clearTimeout(heroResizeTimer);
+      if (trendHoverRestoreTimer) clearTimeout(trendHoverRestoreTimer);
+      trendHoverState.inside = false;
+      trendPointerState.valid = false;
       if (resizeObserver) resizeObserver.disconnect();
       cleanup.splice(0).forEach(fn => fn());
       try { trendChart.dispose(); } catch {}

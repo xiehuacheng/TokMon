@@ -77,16 +77,19 @@ struct StatusPopoverView: View {
       .help("Quit AgentMon")
 
       Button {
-        Task { await stats.refresh() }
+        server.restart()
       } label: {
-        Image(systemName: stats.isRefreshing ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
+        Label("Restart Dashboard Service", systemImage: server.phase == .starting ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
+          .labelStyle(.iconOnly)
           .font(.system(size: 14, weight: .semibold))
           .frame(width: 24, height: 24)
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .focusable(false)
-      .help("Refresh")
+      .disabled(server.phase == .starting)
+      .accessibilityLabel("Restart Dashboard Service")
+      .help("Restart Dashboard Service")
     }
   }
 
@@ -150,10 +153,15 @@ struct StatusPopoverView: View {
   private var dashboardStatePanel: some View {
     Group {
       if let state = stats.snapshot.dashboardState {
-        HStack(spacing: 6) {
-          StatePill(label: "Range", value: state.rangeDisplay)
-          StatePill(label: "Source", value: state.sourceLabel)
-          StatePill(label: "Mode", value: "\(state.liveMode ? "Live" : "Fixed") · \(state.interval.capitalized)")
+        VStack(spacing: 6) {
+          HStack(spacing: 6) {
+            StatePill(label: "Range", value: state.rangeDisplay)
+            StatePill(label: "Source", value: state.sourceLabel)
+          }
+          HStack(spacing: 6) {
+            StatePill(label: "Mode", value: "\(state.liveMode ? "Live" : "Fixed") · \(state.interval.capitalized)")
+            StatePill(label: "Time", value: state.rangeModeLabel)
+          }
         }
       } else {
         Text("Waiting for dashboard settings...")
@@ -225,7 +233,7 @@ struct StatusPopoverView: View {
           color: selectedSeries.color.swiftUIColor,
           valueFormatter: selectedSeries.isCost ? formatCost : formatChartValue,
         )
-        .frame(height: 118)
+        .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132)
       }
     }
     .padding(10)
@@ -254,7 +262,7 @@ struct StatusPopoverView: View {
             Spacer()
             Text(formatMetricValue(source.value(for: selectedKey, costRates: costRates)))
               .font(.caption.monospacedDigit())
-              .foregroundStyle(selectedSeries.color.swiftUIColor)
+              .foregroundStyle(.primary)
           }
         }
       }
@@ -290,7 +298,7 @@ struct StatusPopoverView: View {
             Spacer()
             Text(formatMetricValue(model.value(for: selectedKey, costRates: costRates)))
               .font(.caption.monospacedDigit())
-              .foregroundStyle(selectedSeries.color.swiftUIColor)
+              .foregroundStyle(.primary)
           }
         }
       }
@@ -471,89 +479,136 @@ private struct TrendLineChart: View {
     let minValue = values.min() ?? 0
     let hasVariation = maxValue > minValue
 
-    VStack(alignment: .leading, spacing: 6) {
-      GeometryReader { proxy in
-        let size = proxy.size
-        let axisWidth: CGFloat = 42
-        let chartRect = CGRect(
-          x: axisWidth,
-          y: 0,
-          width: max(size.width - axisWidth, 1),
-          height: size.height,
+    GeometryReader { proxy in
+      let size = proxy.size
+      let yAxisWidth: CGFloat = 44
+      let trailingInset: CGFloat = 2
+      let xAxisHeight: CGFloat = 22
+      let plotRect = CGRect(
+        x: yAxisWidth,
+        y: 0,
+        width: max(size.width - yAxisWidth - trailingInset, 1),
+        height: max(size.height - xAxisHeight, 1),
+      )
+      let chartPoints = pathPoints(in: plotRect.size, minValue: minValue, maxValue: maxValue, hasVariation: hasVariation)
+        .map { CGPoint(x: $0.x + plotRect.minX, y: $0.y + plotRect.minY) }
+      let xAxisRect = CGRect(
+        x: plotRect.minX,
+        y: plotRect.maxY,
+        width: plotRect.width,
+        height: xAxisHeight,
+      )
+
+      ZStack {
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color(nsColor: .windowBackgroundColor).opacity(0.35))
+
+        ChartGrid(horizontalLines: 3, verticalLines: 4)
+          .stroke(Color.secondary.opacity(0.16), style: StrokeStyle(lineWidth: 0.7, dash: [3, 4]))
+          .frame(width: plotRect.width, height: plotRect.height)
+          .position(x: plotRect.midX, y: plotRect.midY)
+
+        ChartYAxisLabels(
+          minValue: minValue,
+          maxValue: maxValue,
+          formatter: valueFormatter,
+          horizontalLines: 3,
         )
-        let chartPoints = pathPoints(in: chartRect.size, minValue: minValue, maxValue: maxValue, hasVariation: hasVariation)
-          .map { CGPoint(x: $0.x + axisWidth, y: $0.y) }
+        .frame(width: yAxisWidth - 8, height: plotRect.height)
+        .position(x: (yAxisWidth - 8) / 2, y: plotRect.midY)
 
-        ZStack {
-          RoundedRectangle(cornerRadius: 6)
-            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.35))
-
-          ChartGrid(horizontalLines: 3, verticalLines: 4)
-            .stroke(Color.secondary.opacity(0.16), style: StrokeStyle(lineWidth: 0.7, dash: [3, 4]))
-            .frame(width: chartRect.width, height: chartRect.height)
-            .position(x: chartRect.midX, y: chartRect.midY)
-
-          ChartYAxisLabels(
-            minValue: minValue,
-            maxValue: maxValue,
-            formatter: valueFormatter,
-            horizontalLines: 3,
-          )
-          .frame(width: axisWidth - 6, height: chartRect.height)
-          .position(x: (axisWidth - 6) / 2, y: chartRect.midY)
-
-          Path { path in
-            guard !chartPoints.isEmpty else { return }
-            path.move(to: chartPoints[0])
-            if chartPoints.count == 2 {
-              path.addLine(to: chartPoints[1])
-            } else {
-              for index in 0..<(chartPoints.count - 1) {
-                let previous = chartPoints[max(index - 1, 0)]
-                let current = chartPoints[index]
-                let next = chartPoints[index + 1]
-                let nextNext = chartPoints[min(index + 2, chartPoints.count - 1)]
-                let controlScale: CGFloat = 0.18
-                let control1 = CGPoint(
-                  x: current.x + (next.x - previous.x) * controlScale,
-                  y: current.y + (next.y - previous.y) * controlScale,
-                )
-                let control2 = CGPoint(
-                  x: next.x - (nextNext.x - current.x) * controlScale,
-                  y: next.y - (nextNext.y - current.y) * controlScale,
-                )
-                path.addCurve(to: next, control1: control1, control2: control2)
-              }
+        Path { path in
+          guard !chartPoints.isEmpty else { return }
+          path.move(to: chartPoints[0])
+          if chartPoints.count == 2 {
+            path.addLine(to: chartPoints[1])
+          } else {
+            for index in 0..<(chartPoints.count - 1) {
+              let previous = chartPoints[max(index - 1, 0)]
+              let current = chartPoints[index]
+              let next = chartPoints[index + 1]
+              let nextNext = chartPoints[min(index + 2, chartPoints.count - 1)]
+              let controlScale: CGFloat = 0.18
+              let rawControl1 = CGPoint(
+                x: current.x + (next.x - previous.x) * controlScale,
+                y: current.y + (next.y - previous.y) * controlScale,
+              )
+              let rawControl2 = CGPoint(
+                x: next.x - (nextNext.x - current.x) * controlScale,
+                y: next.y - (nextNext.y - current.y) * controlScale,
+              )
+              let control1 = boundedControlPoint(rawControl1, from: current, to: next)
+              let control2 = boundedControlPoint(rawControl2, from: current, to: next)
+              path.addCurve(to: next, control1: control1, control2: control2)
             }
           }
-          .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+        .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-          if let lastPoint = chartPoints.last {
-            Circle()
-              .fill(color)
-              .frame(width: 6, height: 6)
-              .position(lastPoint)
-          }
+        if let lastPoint = chartPoints.last {
+          Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .position(lastPoint)
+        }
+
+        ChartXAxisLabels(ticks: xAxisTicks)
+          .frame(width: xAxisRect.width, height: xAxisRect.height)
+          .position(x: xAxisRect.midX, y: xAxisRect.midY)
+      }
+    }
+    .frame(maxWidth: .infinity)
+  }
+
+  private var xAxisTicks: [(index: Int, label: String, alignment: Alignment)] {
+    guard !points.isEmpty else { return [] }
+    let maxTicks = min(points.count, 5)
+    let indexes: [Int]
+
+    if maxTicks == 1 {
+      indexes = [0]
+    } else {
+      indexes = (0..<maxTicks).reduce(into: []) { result, tick in
+        let rawIndex = Double(tick) * Double(points.count - 1) / Double(maxTicks - 1)
+        let index = Int(rawIndex.rounded())
+        if result.last != index {
+          result.append(index)
         }
       }
-
-      HStack {
-        Text(points.first?.label ?? "")
-          .truncationMode(.middle)
-        Spacer()
-        Text(points.last?.label ?? "")
-          .truncationMode(.middle)
-      }
-      .font(.caption2.monospacedDigit())
-      .foregroundStyle(.secondary)
-      .lineLimit(1)
     }
+
+    return indexes.enumerated().map { position, index in
+      let alignment: Alignment
+      if position == 0 {
+        alignment = .leading
+      } else if position == indexes.count - 1 {
+        alignment = .trailing
+      } else {
+        alignment = .center
+      }
+
+      return (index, compactXAxisLabel(points[index].label), alignment)
+    }
+  }
+
+  private func compactXAxisLabel(_ label: String) -> String {
+    if let hourRange = label.range(of: #" \d{2}:00$"#, options: .regularExpression) {
+      return String(label[hourRange].dropFirst())
+    }
+
+    if label.count >= 10 {
+      let start = label.index(label.startIndex, offsetBy: 5)
+      let end = label.index(label.startIndex, offsetBy: 10)
+      return String(label[start..<end])
+    }
+
+    return label
   }
 
   private func pathPoints(in size: CGSize, minValue: Double, maxValue: Double, hasVariation: Bool) -> [CGPoint] {
     guard !points.isEmpty, size.width > 0, size.height > 0 else { return [] }
     let horizontalStep = points.count > 1 ? size.width / CGFloat(points.count - 1) : 0
-    let verticalPadding: CGFloat = 10
+    let verticalPadding: CGFloat = 3
     let drawableHeight = max(size.height - verticalPadding * 2, 1)
 
     return points.enumerated().map { index, point in
@@ -562,6 +617,17 @@ private struct TrendLineChart: View {
       let y = verticalPadding + CGFloat(1 - normalized) * drawableHeight
       return CGPoint(x: x, y: y)
     }
+  }
+
+  private func boundedControlPoint(_ point: CGPoint, from current: CGPoint, to next: CGPoint) -> CGPoint {
+    CGPoint(
+      x: clamp(point.x, min(current.x, next.x), max(current.x, next.x)),
+      y: clamp(point.y, min(current.y, next.y), max(current.y, next.y)),
+    )
+  }
+
+  private func clamp(_ value: CGFloat, _ lowerBound: CGFloat, _ upperBound: CGFloat) -> CGFloat {
+    min(max(value, lowerBound), upperBound)
   }
 }
 
@@ -624,6 +690,24 @@ private struct ChartYAxisLabels: View {
       let value = maxValue - range * fraction
       return (offset, value)
     }
+  }
+}
+
+private struct ChartXAxisLabels: View {
+  let ticks: [(index: Int, label: String, alignment: Alignment)]
+
+  var body: some View {
+    HStack(spacing: 0) {
+      ForEach(ticks, id: \.index) { tick in
+        Text(tick.label)
+          .font(.system(size: 8, weight: .medium, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+          .frame(maxWidth: .infinity, alignment: tick.alignment)
+      }
+    }
+    .padding(.top, 5)
   }
 }
 

@@ -15,6 +15,8 @@ let mcpSearch = '';
 let tokmonInstance = null;
 let sessionsAutoRefreshInFlight = false;
 let sessionsLastSignature = '';
+let sessionsSearchDebounceTimer = null;
+let sessionsSearchRequestSeq = 0;
 const SESSIONS_AUTO_REFRESH_MS = 3000;
 
 const $ = (sel) => document.querySelector(sel);
@@ -26,12 +28,17 @@ const $scanStatus = () => $('#scanStatus');
 $('#navTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('.tbtn');
   if (!btn) return;
-  document.querySelectorAll('#navTabs .tbtn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  currentTab = btn.dataset.tab;
-  sessionsPage = 1;
-  render();
+  switchTab(btn.dataset.tab);
 });
+
+function switchTab(tab) {
+  currentTab = tab || 'tokmon';
+  sessionsPage = 1;
+  document.querySelectorAll('#navTabs .tbtn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === currentTab);
+  });
+  render();
+}
 
 function render() {
   if (currentTab !== 'tokmon') {
@@ -45,7 +52,24 @@ function render() {
 
 /* ── Helpers ── */
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function trunc(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s || ''; }
+function filterSearchRows(listId, emptyId, query) {
+  const list = document.getElementById(listId);
+  if (!list) return { visibleCount: 0, activeVisible: false };
+  const needle = (query || '').trim().toLowerCase();
+  let visibleCount = 0;
+  let activeVisible = false;
+  list.querySelectorAll('.split-item[data-search]').forEach(row => {
+    const matches = !needle || (row.dataset.search || '').includes(needle);
+    row.hidden = !matches;
+    if (matches) visibleCount += 1;
+    if (matches && row.classList.contains('active')) activeVisible = true;
+  });
+  const empty = document.getElementById(emptyId);
+  if (empty) empty.hidden = visibleCount > 0;
+  return { visibleCount, activeVisible };
+}
 function relTime(iso) {
   if (!iso) return '';
   const d = new Date(iso), now = Date.now(), diff = now - d.getTime();
@@ -116,6 +140,9 @@ function renderScanStatus(status) {
   const el = $scanStatus();
   if (!el) return;
   const isIdle = !status?.running && !status?.error;
+  const wasHidden = el.hidden;
+  const oldHeight = wasHidden ? 0 : el.getBoundingClientRect().height;
+  const oldTop = window.scrollY;
   const rebuildBtn = document.getElementById('btnRebuildDatabase');
   if (rebuildBtn) {
     rebuildBtn.disabled = !!status?.running;
@@ -123,7 +150,9 @@ function renderScanStatus(status) {
   }
   if (isIdle) {
     el.hidden = true;
+    el.classList.remove('idle', 'error');
     el.innerHTML = '';
+    compensateScanStatusScroll(oldHeight, oldTop);
     return;
   }
   const percent = status.total ? Math.round((status.current / status.total) * 100) : 0;
@@ -142,6 +171,15 @@ function renderScanStatus(status) {
     </div>
     <div class="scan-progress" style="--scan-progress:${percent}%"><span></span></div>
   `;
+  compensateScanStatusScroll(oldHeight, oldTop);
+}
+
+function compensateScanStatusScroll(oldHeight, oldTop) {
+  const el = $scanStatus();
+  if (!el || oldTop <= 0) return;
+  const newHeight = el.hidden ? 0 : el.getBoundingClientRect().height;
+  const delta = newHeight - oldHeight;
+  if (delta) window.scrollBy(0, delta);
 }
 
 async function refreshScanStatus() {
@@ -253,6 +291,8 @@ const VERTICAL_SCROLL_LOCK_SELECTOR = [
   '.modal',
   '.dir-picker-list',
   '.msg-list',
+  '.token-session-popover',
+  '.token-session-preview',
 ].join(', ');
 const HORIZONTAL_SCROLL_LOCK_SELECTOR = [
   '.records-table-wrap',
@@ -328,8 +368,12 @@ window.AgentMonContainScrollWithinAll = containScrollWithinAll;
 
 /* ── TokMon View ── */
 function renderTokMon() {
-  if (tokmonInstance) return;
+  if (tokmonInstance && document.getElementById('tokmonView')) {
+    tokmonInstance.activate?.();
+    return;
+  }
   renderTokensHeaderActions();
+  destroyTokMon();
   $content().innerHTML = `
     <div class="tokmon-view" id="tokmonView">
       <div class="pricing-modal" id="pricingModal">
@@ -446,7 +490,7 @@ function renderTokMon() {
             <table class="tbl" id="recordsTable">
               <thead>
                 <tr>
-                  <th>Time</th><th>Source</th><th>Model</th>
+                  <th>Time</th><th>Source</th><th>Session</th><th>Model</th>
                   <th class="num">Input</th><th class="num">Output</th>
                   <th class="num">Cache W</th><th class="num">Cache R</th>
                 </tr>
@@ -464,6 +508,7 @@ function renderTokMon() {
     </div>
   `;
   tokmonInstance = window.AgentMonTokMon?.mount(document.getElementById('tokmonView')) || null;
+  tokmonInstance?.activate?.();
 }
 
 function renderTokensHeaderActions() {
@@ -568,43 +613,34 @@ function destroyTokMon() {
 }
 
 /* ── Sessions View ── */
-async function renderSessions(prefetchedData = null) {
-  renderSessionsHeaderActions();
-  const f = sessionsFilters;
-  const data = prefetchedData || await api('/sessions?' + sessionsQueryParams());
-  sessionsLastSignature = sessionsSignature(data);
-  const rows = data.rows || [];
-  const total = data.total || 0;
-  const pages = Math.ceil(total / sessionsPageSize);
-  const selectedCount = rows.filter(r => selectedSessionIds.has(r.id)).length;
-  const batchLabel = f.archived === '1' ? 'Restore Selected' : 'Archive Selected';
+function sessionsBatchLabel() {
+  return sessionsFilters.archived === '1' ? 'Restore Selected' : 'Archive Selected';
+}
 
-  $content().innerHTML = `
-    <div class="filters">
-      <select id="fSource"><option value="">All Sources</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select>
-      <input id="fSearch" placeholder="Search project, model, prompt..." value="${esc(f.q)}">
-      <button class="btn ${sessionsManageMode ? 'btn-accent' : ''}" id="btnManageSessions">${sessionsManageMode ? 'Exit Manage' : 'Manage'}</button>
-      ${sessionsManageMode ? `
-        <div class="manage-inline">
-          <label class="manage-check-all"><input type="checkbox" id="checkAllSessions" ${rows.length > 0 && selectedCount === rows.length ? 'checked' : ''}> Select page</label>
-          <span class="manage-count">${selectedSessionIds.size} selected</span>
-          <button class="btn" id="btnMigrateProject" ${selectedSessionIds.size ? '' : 'disabled'}>Migrate Project</button>
-          <button class="btn" id="btnBatchArchive" ${selectedSessionIds.size ? '' : 'disabled'}>${batchLabel}</button>
-          <button class="btn btn-danger" id="btnBatchDelete" ${selectedSessionIds.size ? '' : 'disabled'}>Delete Selected</button>
-          <button class="btn" id="btnClearSelection" ${selectedSessionIds.size ? '' : 'disabled'}>Clear</button>
-        </div>
-      ` : ''}
-    </div>
-    <div class="panel">
-      ${rows.length === 0 ? '<div class="empty">No sessions found</div>' : `
+function sessionsManageInlineHtml(rows, selectedCount, batchLabel) {
+  if (!sessionsManageMode) return '';
+  return `
+    <label class="manage-check-all"><input type="checkbox" id="checkAllSessions" ${rows.length > 0 && selectedCount === rows.length ? 'checked' : ''}> Select page</label>
+    <span class="manage-count">${selectedSessionIds.size} selected</span>
+    <button class="btn" id="btnMigrateProject" ${selectedSessionIds.size ? '' : 'disabled'}>Migrate Project</button>
+    <button class="btn" id="btnBatchArchive" ${selectedSessionIds.size ? '' : 'disabled'}>${batchLabel}</button>
+    <button class="btn btn-danger" id="btnBatchDelete" ${selectedSessionIds.size ? '' : 'disabled'}>Delete Selected</button>
+    <button class="btn" id="btnClearSelection" ${selectedSessionIds.size ? '' : 'disabled'}>Clear</button>
+  `;
+}
+
+function sessionsResultsHtml(rows, total, pages, selectedCount, batchLabel) {
+  return `
+    ${rows.length === 0 ? '<div class="empty">No sessions found</div>' : `
+    <div class="table-scroll sessions-table-wrap">
       <table class="tbl sessions-table ${sessionsManageMode ? 'manage-mode' : ''}">
         <thead><tr>
           <th class="check-col"></th>
           <th>Source</th><th>Project</th><th class="prompt-th">${showLastPrompt ? 'Last Prompt' : 'First Prompt'} <button class="btn-switch-prompt" id="btnSwitchPrompt">${showLastPrompt ? '← first' : 'last →'}</button></th><th>Model</th><th>Msgs</th><th>Last Active</th><th>Status</th>
         </tr></thead>
         <tbody>${rows.map(r => `
-          <tr data-id="${esc(r.id)}" class="${selectedSessionIds.has(r.id) ? 'row-selected' : ''}">
-            <td class="check-col">${sessionsManageMode ? `<input type="checkbox" class="session-check" data-id="${esc(r.id)}" ${selectedSessionIds.has(r.id) ? 'checked' : ''}>` : ''}</td>
+          <tr data-id="${escAttr(r.id)}" class="${selectedSessionIds.has(r.id) ? 'row-selected' : ''}">
+            <td class="check-col">${sessionsManageMode ? `<input type="checkbox" class="session-check" data-id="${escAttr(r.id)}" ${selectedSessionIds.has(r.id) ? 'checked' : ''}>` : ''}</td>
             <td>${sourceBadge(r.source)}</td>
             <td class="muted">${esc(trunc(r.project_path?.split('/').pop(), 20))}</td>
             <td class="prompt-cell">${esc(trunc(showLastPrompt ? (r.last_prompt || r.first_prompt) : r.first_prompt, 50))}</td>
@@ -614,13 +650,14 @@ async function renderSessions(prefetchedData = null) {
             <td>${r.is_active ? '<span class="badge badge-active">Live</span>' : ''}${r.archived ? '<span class="badge badge-archived">Archived</span>' : ''}</td>
           </tr>`).join('')}
         </tbody>
-      </table>`}
-      ${pages > 1 ? `<div class="pager">${Array.from({length: pages}, (_, i) => `<button class="${i + 1 === sessionsPage ? 'active' : ''}" data-page="${i + 1}">${i + 1}</button>`).join('')}</div>` : ''}
-      <div class="pager"><span class="pager-info">${total} total</span><select id="fPageSize">${[10,15,25,50].map(n => `<option value="${n}" ${n === sessionsPageSize ? 'selected' : ''}>${n} / page</option>`).join('')}</select></div>
-    </div>`;
+      </table>
+    </div>`}
+    ${pages > 1 ? `<div class="pager">${Array.from({length: pages}, (_, i) => `<button class="${i + 1 === sessionsPage ? 'active' : ''}" data-page="${i + 1}">${i + 1}</button>`).join('')}</div>` : ''}
+    <div class="pager"><span class="pager-info">${total} total</span><select id="fPageSize">${[10,15,25,50].map(n => `<option value="${n}" ${n === sessionsPageSize ? 'selected' : ''}>${n} / page</option>`).join('')}</select></div>
+  `;
+}
 
-  $('#fSource').value = f.source;
-
+function bindSessionsResultsEvents(rows) {
   document.getElementById('fPageSize')?.addEventListener('change', (e) => {
     sessionsPageSize = parseInt(e.target.value, 10);
     sessionsPage = 1;
@@ -629,25 +666,6 @@ async function renderSessions(prefetchedData = null) {
 
   document.getElementById('btnSwitchPrompt')?.addEventListener('click', () => {
     showLastPrompt = !showLastPrompt;
-    renderSessions();
-  });
-
-  for (const id of ['fSource', 'fSearch']) {
-    const el = document.getElementById(id);
-    el.addEventListener('change', () => {
-      sessionsFilters = {
-        source: $('#fSource').value, project: '', model: '',
-        q: $('#fSearch').value, archived: sessionsFilters.archived,
-      };
-      sessionsPage = 1;
-      selectedSessionIds.clear();
-      renderSessions();
-    });
-  }
-
-  document.getElementById('btnManageSessions')?.addEventListener('click', () => {
-    sessionsManageMode = !sessionsManageMode;
-    if (!sessionsManageMode) selectedSessionIds.clear();
     renderSessions();
   });
 
@@ -667,7 +685,6 @@ async function renderSessions(prefetchedData = null) {
         if (selectedSessionIds.has(id)) selectedSessionIds.delete(id);
         else selectedSessionIds.add(id);
         renderSessions();
-        return;
       }
     });
   });
@@ -686,14 +703,16 @@ async function renderSessions(prefetchedData = null) {
     else rows.forEach(r => selectedSessionIds.delete(r.id));
     renderSessions();
   });
+}
 
+function bindSessionsManageEvents(rows) {
   document.getElementById('btnClearSelection')?.addEventListener('click', () => {
     selectedSessionIds.clear();
     renderSessions();
   });
 
   document.getElementById('btnBatchArchive')?.addEventListener('click', async () => {
-    const archived = f.archived === '1' ? 0 : 1;
+    const archived = sessionsFilters.archived === '1' ? 0 : 1;
     for (const id of selectedSessionIds) {
       await api('/sessions/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived }) });
     }
@@ -722,6 +741,85 @@ async function renderSessions(prefetchedData = null) {
     if (!selectedSessionIds.size) return;
     openMigrateProjectModal(rows.filter(r => selectedSessionIds.has(r.id)));
   });
+}
+
+async function updateSessionsSearchResults() {
+  const requestSeq = ++sessionsSearchRequestSeq;
+  const data = await api('/sessions?' + sessionsQueryParams());
+  if (currentTab !== 'sessions' || requestSeq !== sessionsSearchRequestSeq) return;
+  sessionsLastSignature = sessionsSignature(data);
+  const rows = data.rows || [];
+  const total = data.total || 0;
+  const pages = Math.ceil(total / sessionsPageSize);
+  const selectedCount = rows.filter(r => selectedSessionIds.has(r.id)).length;
+  const batchLabel = sessionsBatchLabel();
+  const results = document.getElementById('sessionsResults');
+  if (!results) return;
+  results.innerHTML = sessionsResultsHtml(rows, total, pages, selectedCount, batchLabel);
+  const manageInline = document.getElementById('sessionsManageInline');
+  if (manageInline) manageInline.innerHTML = sessionsManageInlineHtml(rows, selectedCount, batchLabel);
+  bindSessionsResultsEvents(rows);
+  bindSessionsManageEvents(rows);
+  containScrollWithinAll(results);
+}
+
+async function renderSessions(prefetchedData = null) {
+  renderSessionsHeaderActions();
+  const f = sessionsFilters;
+  const data = prefetchedData || await api('/sessions?' + sessionsQueryParams());
+  if (currentTab !== 'sessions') return;
+  sessionsLastSignature = sessionsSignature(data);
+  const rows = data.rows || [];
+  const total = data.total || 0;
+  const pages = Math.ceil(total / sessionsPageSize);
+  const selectedCount = rows.filter(r => selectedSessionIds.has(r.id)).length;
+  const batchLabel = sessionsBatchLabel();
+
+  $content().innerHTML = `
+    <div class="filters">
+      <select id="fSource"><option value="">All Sources</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select>
+      <input id="fSearch" placeholder="Search project, model, prompt..." value="${esc(f.q)}">
+      <button class="btn ${sessionsManageMode ? 'btn-accent' : ''}" id="btnManageSessions">${sessionsManageMode ? 'Exit Manage' : 'Manage'}</button>
+      ${sessionsManageMode ? `
+        <div class="manage-inline" id="sessionsManageInline">${sessionsManageInlineHtml(rows, selectedCount, batchLabel)}</div>
+      ` : ''}
+    </div>
+    <div class="panel" id="sessionsResults">${sessionsResultsHtml(rows, total, pages, selectedCount, batchLabel)}</div>`;
+
+  $('#fSource').value = f.source;
+
+  for (const id of ['fSource', 'fSearch']) {
+    const el = document.getElementById(id);
+    const updateFilters = () => {
+      sessionsFilters = {
+        source: $('#fSource').value, project: '', model: '',
+        q: $('#fSearch').value, archived: sessionsFilters.archived,
+      };
+      sessionsPage = 1;
+      selectedSessionIds.clear();
+    };
+    if (id === 'fSearch') {
+      el.addEventListener('input', () => {
+        updateFilters();
+        clearTimeout(sessionsSearchDebounceTimer);
+        sessionsSearchDebounceTimer = setTimeout(updateSessionsSearchResults, 180);
+      });
+    } else {
+      el.addEventListener('change', () => {
+        updateFilters();
+        renderSessions();
+      });
+    }
+  }
+
+  document.getElementById('btnManageSessions')?.addEventListener('click', () => {
+    sessionsManageMode = !sessionsManageMode;
+    if (!sessionsManageMode) selectedSessionIds.clear();
+    renderSessions();
+  });
+
+  bindSessionsResultsEvents(rows);
+  bindSessionsManageEvents(rows);
 }
 
 function openMigrateProjectModal(selectedRows = []) {
@@ -855,6 +953,7 @@ window.AgentMonDirectoryPicker = initDirectoryPicker;
 
 async function showSessionDetail(id) {
   const data = await api('/sessions/' + id + '?limit=99999');
+  if (data.error) throw new Error(data.error || 'Session not found.');
   const msgs = data.messages || [];
   openModal(`
     <h3>${sourceBadge(data.source)} ${esc(trunc((showLastPrompt ? data.last_prompt : data.first_prompt) || data.first_prompt, 60))}</h3>
@@ -884,10 +983,42 @@ async function showSessionDetail(id) {
   document.getElementById('msgScrollBottom')?.addEventListener('click', () => { if (list) list.scrollTop = list.scrollHeight; });
 }
 
+async function openSessionFromUsageLog(id, options = {}) {
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return;
+
+  let archived = '0';
+  let source = options.source || '';
+  try {
+    const session = await api('/sessions/' + encodeURIComponent(sessionId) + '?limit=1');
+    if (!session.error) {
+      archived = session.archived ? '1' : '0';
+      source = session.source || source;
+    }
+  } catch {}
+
+  sessionsFilters = {
+    source,
+    project: '',
+    model: '',
+    q: sessionId,
+    archived,
+  };
+  selectedSessionIds.clear();
+  sessionsManageMode = false;
+  switchTab('sessions');
+  try {
+    await showSessionDetail(sessionId);
+  } catch (err) {
+    showNotice('Session Not Found', err.message || 'This token record points to a session that is not indexed in Sessions.', 'error');
+  }
+}
+window.AgentMonOpenSession = openSessionFromUsageLog;
+
 /* ── Skills View ── */
 let selectedSkillName = null;
-async function renderSkills() {
-  const skills = await api('/skills');
+async function renderSkills(options = {}) {
+  const skills = Array.isArray(options.skills) ? options.skills : await api('/skills');
 
   const prevScroll = $content().querySelector('.split-list')?.scrollTop ?? 0;
 
@@ -911,16 +1042,18 @@ async function renderSkills() {
     }
   }
   const skillQuery = skillsSearch.trim().toLowerCase();
-  const visibleSkills = skillQuery
-    ? uniqueSkills.filter(s => {
-        const peers = skillsByName[s._key] || {};
-        const haystack = [s.name, s.description, s.path, s.symlink_target, ...Object.keys(peers)].filter(Boolean).join(' ').toLowerCase();
-        return haystack.includes(skillQuery);
-      })
-    : uniqueSkills;
+  const skillMatchesSearch = (s) => {
+    const peers = skillsByName[s._key] || {};
+    const haystack = [s.name, s.description, s.path, s.symlink_target, ...Object.keys(peers)].filter(Boolean).join(' ').toLowerCase();
+    return !skillQuery || haystack.includes(skillQuery);
+  };
+  const skillSearchText = (s) => {
+    const peers = skillsByName[s._key] || {};
+    return [s.name, s.description, s.path, s.symlink_target, ...Object.keys(peers)].filter(Boolean).join(' ').toLowerCase();
+  };
+  const visibleSkills = uniqueSkills.filter(skillMatchesSearch);
 
-  if (selectedSkillName && !visibleSkills.some(s => s._key === selectedSkillName)) selectedSkillName = visibleSkills[0]?._key ?? null;
-  selectedSkillName = selectedSkillName || (visibleSkills[0]?._key ?? null);
+  if (selectedSkillName && !visibleSkills.some(s => s._key === selectedSkillName)) selectedSkillName = null;
   const peerMap = selectedSkillName ? (skillsByName[selectedSkillName] || {}) : {};
   const detail = peerMap['claude-code'] || peerMap['codex'] || Object.values(peerMap)[0] || null;
   const isBroken = detail && detail.description && detail.description.startsWith('Broken symlink');
@@ -961,7 +1094,7 @@ async function renderSkills() {
       ` : ''}
     </div>
     <div class="split-layout">
-      <div class="panel split-list" id="skillList">${visibleSkills.length === 0 ? '<div class="empty">No skills</div>' : visibleSkills.map(s => {
+      <div class="panel split-list" id="skillList"><div class="empty" id="skillSearchEmpty" ${visibleSkills.length === 0 ? '' : 'hidden'}>No skills</div>${uniqueSkills.map(s => {
         const broken = s.description && s.description.startsWith('Broken symlink');
         const peers = skillsByName[s._key] || {};
         const platforms = Array.from(new Set(Object.values(peers).map(peer => peer.source)));
@@ -969,8 +1102,8 @@ async function renderSkills() {
         const scopes = Array.from(new Set(Object.values(peers).map(peer => peer.scope || 'user')));
         const scopeLabel = scopes.includes('user') ? (scopes.length > 1 ? scopes.join('/') : 'user') : scopes.join('/');
         return `
-        <div class="split-item ${skillsManageMode ? 'with-check' : ''} ${s._key === selectedSkillName ? 'active' : ''} ${selectedSkillNames.has(s._key) ? 'row-selected' : ''}" data-key="${esc(s._key)}">
-          ${skillsManageMode && manageable ? `<input type="checkbox" class="split-check skill-check" data-key="${esc(s._key)}" ${selectedSkillNames.has(s._key) ? 'checked' : ''}>` : ''}
+        <div class="split-item ${skillsManageMode ? 'with-check' : ''} ${s._key === selectedSkillName ? 'active' : ''} ${selectedSkillNames.has(s._key) ? 'row-selected' : ''}" data-key="${escAttr(s._key)}" data-search="${escAttr(skillSearchText(s))}" ${skillMatchesSearch(s) ? '' : 'hidden'}>
+          ${skillsManageMode && manageable ? `<input type="checkbox" class="split-check skill-check" data-key="${escAttr(s._key)}" ${selectedSkillNames.has(s._key) ? 'checked' : ''}>` : ''}
           <div class="split-item-body">
             <div class="split-item-name">${platforms.map(p => sourceBadge(p)).join(' ')} ${esc(s.name)}</div>
             <div class="split-item-meta">${broken ? '<span class="red">broken</span>' : s.enabled ? '<span class="green">enabled</span>' : '<span class="muted">disabled</span>'} · ${esc(scopeLabel)} · ${esc(s.is_symlink ? 'symlink' : 'local')}</div>
@@ -978,7 +1111,7 @@ async function renderSkills() {
         </div>`;
       }).join('')}
       </div>
-      <div class="panel">${!detail ? '<div class="empty">Select a skill</div>' : `
+      <div class="panel" id="skillDetail">${!detail ? '<div class="empty">Select a skill</div>' : `
         <div class="detail-header">
           <div class="detail-title">${esc(detail.name)}</div>
           <div class="detail-actions">
@@ -999,7 +1132,12 @@ async function renderSkills() {
 
   document.getElementById('skillSearch')?.addEventListener('input', (e) => {
     skillsSearch = e.target.value;
-    renderSkills();
+    const result = filterSearchRows('skillList', 'skillSearchEmpty', skillsSearch);
+    if (!result.activeVisible) {
+      selectedSkillName = null;
+      document.getElementById('skillDetail').innerHTML = '<div class="empty">Select a skill</div>';
+      document.querySelectorAll('#skillList .split-item.active').forEach(row => row.classList.remove('active'));
+    }
   });
 
   document.getElementById('btnManageSkills')?.addEventListener('click', () => {
@@ -1174,8 +1312,8 @@ async function renderSkills() {
 
 /* ── MCP View ── */
 let selectedMcpName = null;
-async function renderMcp() {
-  const items = await api('/mcp');
+async function renderMcp(options = {}) {
+  const items = Array.isArray(options.items) ? options.items : await api('/mcp');
   const prevScroll = $content().querySelector('.split-list')?.scrollTop ?? 0;
 
   const mcpByName = {};
@@ -1190,17 +1328,20 @@ async function renderMcp() {
     }
   }
   const mcpQuery = mcpSearch.trim().toLowerCase();
-  const visibleMcp = mcpQuery
-    ? uniqueMcp.filter(m => {
-        const peers = mcpByName[m.name] || {};
-        const peerValues = Object.values(peers).flatMap(peer => [peer.url, peer.command, peer.args, peer.config_raw]);
-        const haystack = [m.name, m.url, m.command, m.args, m.config_raw, ...Object.keys(peers), ...peerValues].filter(Boolean).join(' ').toLowerCase();
-        return haystack.includes(mcpQuery);
-      })
-    : uniqueMcp;
+  const mcpMatchesSearch = (m) => {
+    const peers = mcpByName[m.name] || {};
+    const peerValues = Object.values(peers).flatMap(peer => [peer.url, peer.command, peer.args, peer.config_raw]);
+    const haystack = [m.name, m.url, m.command, m.args, m.config_raw, ...Object.keys(peers), ...peerValues].filter(Boolean).join(' ').toLowerCase();
+    return !mcpQuery || haystack.includes(mcpQuery);
+  };
+  const mcpSearchText = (m) => {
+    const peers = mcpByName[m.name] || {};
+    const peerValues = Object.values(peers).flatMap(peer => [peer.url, peer.command, peer.args, peer.config_raw]);
+    return [m.name, m.url, m.command, m.args, m.config_raw, ...Object.keys(peers), ...peerValues].filter(Boolean).join(' ').toLowerCase();
+  };
+  const visibleMcp = uniqueMcp.filter(mcpMatchesSearch);
 
-  if (selectedMcpName && !visibleMcp.some(m => m.name === selectedMcpName)) selectedMcpName = visibleMcp[0]?.name ?? null;
-  selectedMcpName = selectedMcpName || (visibleMcp[0]?.name ?? null);
+  if (selectedMcpName && !visibleMcp.some(m => m.name === selectedMcpName)) selectedMcpName = null;
   const mcpPeerMap = selectedMcpName ? (mcpByName[selectedMcpName] || {}) : {};
   const detail = mcpPeerMap['claude-code'] || mcpPeerMap['codex'] || null;
   const mcpCcInstalled = !!mcpPeerMap['claude-code'];
@@ -1235,12 +1376,12 @@ async function renderMcp() {
       ` : ''}
     </div>
     <div class="split-layout">
-      <div class="panel split-list" id="mcpList">${visibleMcp.length === 0 ? '<div class="empty">No MCP servers</div>' : visibleMcp.map(m => {
+      <div class="panel split-list" id="mcpList"><div class="empty" id="mcpSearchEmpty" ${visibleMcp.length === 0 ? '' : 'hidden'}>No MCP servers</div>${uniqueMcp.map(m => {
         const mcpPeers = mcpByName[m.name] || {};
         const mcpPlatforms = Object.keys(mcpPeers);
         return `
-        <div class="split-item ${mcpManageMode ? 'with-check' : ''} ${m.name === selectedMcpName ? 'active' : ''} ${selectedMcpNames.has(m.name) ? 'row-selected' : ''}" data-name="${esc(m.name)}">
-          ${mcpManageMode ? `<input type="checkbox" class="split-check mcp-check" data-name="${esc(m.name)}" ${selectedMcpNames.has(m.name) ? 'checked' : ''}>` : ''}
+        <div class="split-item ${mcpManageMode ? 'with-check' : ''} ${m.name === selectedMcpName ? 'active' : ''} ${selectedMcpNames.has(m.name) ? 'row-selected' : ''}" data-name="${escAttr(m.name)}" data-search="${escAttr(mcpSearchText(m))}" ${mcpMatchesSearch(m) ? '' : 'hidden'}>
+          ${mcpManageMode ? `<input type="checkbox" class="split-check mcp-check" data-name="${escAttr(m.name)}" ${selectedMcpNames.has(m.name) ? 'checked' : ''}>` : ''}
           <div class="split-item-body">
             <div class="split-item-name">${mcpPlatforms.map(p => sourceBadge(p)).join(' ')} ${esc(m.name)}</div>
             <div class="split-item-meta">${esc(m.url || m.command || '')}</div>
@@ -1248,7 +1389,7 @@ async function renderMcp() {
         </div>`;
       }).join('')}
       </div>
-      <div class="panel">${!detail ? '<div class="empty">Select an MCP server</div>' : `
+      <div class="panel" id="mcpDetail">${!detail ? '<div class="empty">Select an MCP server</div>' : `
         <div class="detail-header">
           <div class="detail-title">${esc(detail.name)}</div>
           <div class="detail-actions">
@@ -1270,7 +1411,12 @@ async function renderMcp() {
 
   document.getElementById('mcpSearch')?.addEventListener('input', (e) => {
     mcpSearch = e.target.value;
-    renderMcp();
+    const result = filterSearchRows('mcpList', 'mcpSearchEmpty', mcpSearch);
+    if (!result.activeVisible) {
+      selectedMcpName = null;
+      document.getElementById('mcpDetail').innerHTML = '<div class="empty">Select an MCP server</div>';
+      document.querySelectorAll('#mcpList .split-item.active').forEach(row => row.classList.remove('active'));
+    }
   });
 
   document.getElementById('btnManageMcp')?.addEventListener('click', () => {

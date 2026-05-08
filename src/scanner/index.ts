@@ -7,6 +7,7 @@ import { scanClaudeSettings } from "./claude-settings.js";
 import { scanCodexSessions } from "./codex-sessions.js";
 import { scanCodexSkills } from "./codex-skills.js";
 import { scanCodexSettings } from "./codex-settings.js";
+import { dataPath } from "../runtime-paths.js";
 
 export interface SourceHomeConfig {
   home: string;
@@ -27,7 +28,7 @@ function expandPath(p: string) {
 }
 
 export function loadConfig(): AgentMonConfig {
-  const configPath = resolve(process.cwd(), "agentmon.config.json");
+  const configPath = dataPath("agentmon.config.json");
   if (existsSync(configPath)) {
     config = JSON.parse(readFileSync(configPath, "utf-8"));
   } else {

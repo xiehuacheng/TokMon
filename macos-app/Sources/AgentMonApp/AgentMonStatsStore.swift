@@ -339,6 +339,10 @@ struct TokMonDashboardState: Decodable {
     }
     return "\(from.dropLast(3)) - \(to.dropLast(3))"
   }
+
+  var rangeModeLabel: String {
+    rangeMode == "round" ? "Round" : "Exact"
+  }
 }
 
 enum TokMonTrendInterval {

@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png?v=20260506-2">
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png?v=20260506-2">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png?v=20260506-2">
-  <link rel="stylesheet" href="style.css?v=20260506-1">
+  <link rel="stylesheet" href="style.css?v=20260508-12">
 </head>
 <body>
   <div class="shell">
@@ -30,19 +30,21 @@
         </a>
       </div>
       <div class="header-right">
-        <nav class="tab-btns" id="navTabs">
-          <button class="tbtn active" data-tab="tokmon">Tokens</button>
-          <button class="tbtn" data-tab="sessions">Sessions</button>
-          <button class="tbtn" data-tab="skills">Skills</button>
-          <button class="tbtn" data-tab="mcp">MCP</button>
-          <button class="tbtn" data-tab="settings">Settings</button>
-        </nav>
+        <div class="header-actions" id="headerActions"></div>
+        <div class="header-tabs">
+          <nav class="tab-btns" id="navTabs">
+            <button class="tbtn active" data-tab="tokmon">Tokens</button>
+            <button class="tbtn" data-tab="sessions">Sessions</button>
+            <button class="tbtn" data-tab="skills">Skills</button>
+            <button class="tbtn" data-tab="mcp">MCP</button>
+            <button class="tbtn" data-tab="settings">Settings</button>
+          </nav>
+        </div>
         <button class="nav-icon-btn rebuild-db-action" id="btnRebuildDatabase" type="button" aria-label="Rebuild Database" title="Rebuild Database">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M12 3C7.58 3 4 4.57 4 6.5v11C4 19.43 7.58 21 12 21s8-1.57 8-3.5v-11C20 4.57 16.42 3 12 3Zm0 2c3.62 0 5.67 1.12 6 1.5-.33.38-2.38 1.5-6 1.5S6.33 6.88 6 6.5C6.33 6.12 8.38 5 12 5Zm6 12.5c-.32.38-2.38 1.5-6 1.5s-5.68-1.12-6-1.5v-2.47C7.47 15.92 9.61 16.5 12 16.5s4.53-.58 6-1.47v2.47Zm0-5c-.32.38-2.38 1.5-6 1.5s-5.68-1.12-6-1.5v-2.47C7.47 10.92 9.61 11.5 12 11.5s4.53-.58 6-1.47v2.47Z"></path>
           </svg>
         </button>
-        <div class="header-actions" id="headerActions"></div>
       </div>
     </header>
     <div class="scan-status" id="scanStatus" hidden></div>
@@ -51,8 +53,8 @@
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal" id="modal"></div>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="tokmon-module.js?v=20260430-8"></script>
-  <script src="app.js?v=20260430-8"></script>
+  <script src="vendor/echarts.min.js?v=5.6.0"></script>
+  <script src="tokmon-module.js?v=20260508-17"></script>
+  <script src="app.js?v=20260508-17"></script>
 </body>
 </html>
