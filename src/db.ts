@@ -100,6 +100,9 @@ function initSchema() {
     CREATE TABLE IF NOT EXISTS tokmon_scan_state (
       file_path   TEXT PRIMARY KEY,
       last_offset INTEGER NOT NULL DEFAULT 0,
+      session_id  TEXT,
+      model       TEXT,
+      last_usage_key TEXT,
       updated_at  TEXT DEFAULT (datetime('now'))
     );
 
@@ -120,6 +123,15 @@ function initSchema() {
   } catch {}
   try {
     db.exec("ALTER TABLE skills ADD COLUMN scope TEXT DEFAULT 'user'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE tokmon_scan_state ADD COLUMN session_id TEXT");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE tokmon_scan_state ADD COLUMN model TEXT");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE tokmon_scan_state ADD COLUMN last_usage_key TEXT");
   } catch {}
 }
 
@@ -327,6 +339,15 @@ export function deleteMissingByIds(table: "sessions" | "skills" | "mcp_servers" 
   d.prepare(`DELETE FROM ${table} WHERE source = ? AND id NOT IN (${placeholders})`).run(source, ...ids);
 }
 
+export function getSessionIdByFilePath(source: string, filePath: string): string | null {
+  const row = getDb().prepare("SELECT id FROM sessions WHERE source = ? AND file_path = ?").get(source, filePath) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+export function updateSessionActive(source: string, id: string, isActive: number) {
+  getDb().prepare("UPDATE sessions SET is_active = ? WHERE source = ? AND id = ?").run(isActive, source, id);
+}
+
 export interface UsageRecord {
   source: string;
   sessionId: string;
@@ -358,16 +379,65 @@ export function insertUsage(record: UsageRecord) {
   return result.changes > 0;
 }
 
+export interface TokmonScanState {
+  offset: number;
+  sessionId: string | null;
+  model: string | null;
+  lastUsageKey: string | null;
+}
+
+export function getTokmonScanState(filePath: string): TokmonScanState {
+  const row = getDb().prepare(`
+    SELECT last_offset, session_id, model, last_usage_key
+    FROM tokmon_scan_state
+    WHERE file_path = ?
+  `).get(filePath) as {
+    last_offset: number;
+    session_id: string | null;
+    model: string | null;
+    last_usage_key: string | null;
+  } | undefined;
+
+  return {
+    offset: row?.last_offset ?? 0,
+    sessionId: row?.session_id ?? null,
+    model: row?.model ?? null,
+    lastUsageKey: row?.last_usage_key ?? null,
+  };
+}
+
+export function setTokmonScanState(filePath: string, nextState: Partial<TokmonScanState> & { offset: number }) {
+  const current = getTokmonScanState(filePath);
+  const sessionId = nextState.sessionId === undefined ? current.sessionId : nextState.sessionId;
+  const model = nextState.model === undefined ? current.model : nextState.model;
+  const lastUsageKey = nextState.lastUsageKey === undefined ? current.lastUsageKey : nextState.lastUsageKey;
+
+  getDb().prepare(`
+    INSERT INTO tokmon_scan_state (file_path, last_offset, session_id, model, last_usage_key)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(file_path) DO UPDATE SET
+      last_offset = excluded.last_offset,
+      session_id = excluded.session_id,
+      model = excluded.model,
+      last_usage_key = excluded.last_usage_key,
+      updated_at = datetime('now')
+  `).run(filePath, nextState.offset, sessionId, model, lastUsageKey);
+}
+
 export function getTokmonScanOffset(filePath: string): number {
-  const row = getDb().prepare("SELECT last_offset FROM tokmon_scan_state WHERE file_path = ?").get(filePath) as { last_offset: number } | undefined;
-  return row?.last_offset ?? 0;
+  return getTokmonScanState(filePath).offset;
 }
 
 export function setTokmonScanOffset(filePath: string, offset: number) {
-  getDb().prepare(`
-    INSERT INTO tokmon_scan_state (file_path, last_offset) VALUES (?, ?)
-    ON CONFLICT(file_path) DO UPDATE SET last_offset = excluded.last_offset, updated_at = datetime('now')
-  `).run(filePath, offset);
+  setTokmonScanState(filePath, { offset });
+}
+
+export function getSessionScanState(filePath: string): { offset: number; mtime: string | null } {
+  return getScanState(filePath);
+}
+
+export function setSessionScanState(filePath: string, offset: number, mtime?: string) {
+  setScanState(filePath, offset, mtime);
 }
 
 export function dedupeCodexUsageRecords(): number {

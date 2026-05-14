@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { existsSync, openSync, readFileSync, readdirSync, statSync, writeFileSync, closeSync, readSync } from "fs";
 import { basename, join, resolve } from "path";
 import { homedir } from "os";
-import { getTokmonScanOffset, insertUsage, setTokmonScanOffset } from "../db.js";
+import { getTokmonScanState, insertUsage, setTokmonScanState } from "../db.js";
 import { dataPath } from "../runtime-paths.js";
 
 export function expandPath(path: string): string {
@@ -111,33 +111,31 @@ function scanClaudeCodeFiles(
 
 function scanClaudeFile(filePath: string, fallbackSessionId: string): number {
   let count = 0;
-  const offset = getTokmonScanOffset(filePath);
-  const content = readFileSync(filePath, "utf-8");
-  if (content.length <= offset) return 0;
+  const fileSize = fileByteSize(filePath);
+  if (fileSize === null) return 0;
 
-  const seenIds = new Set<string>();
-  const oldContent = content.slice(0, offset);
-  for (const line of oldContent.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const record = parseClaudeUsageRecord(JSON.parse(line), fallbackSessionId);
-      if (record?.messageId) seenIds.add(record.messageId);
-    } catch {}
-  }
+  const state = getTokmonScanState(filePath);
+  const range = calculateAppendRange(fileSize, state.offset);
+  if (!range) return 0;
 
-  const newContent = content.slice(offset);
-  for (const line of newContent.split("\n")) {
+  let lastUsageKey = state.lastUsageKey;
+  for (const line of readFileRange(filePath, range).split("\n")) {
     if (!line.trim()) continue;
     try {
       const record = parseClaudeUsageRecord(JSON.parse(line), fallbackSessionId);
       if (!record) continue;
-      if (record.messageId && seenIds.has(record.messageId)) continue;
-      if (record.messageId) seenIds.add(record.messageId);
+      const usageKey = record.messageId || claudeUsageKey(record.usage);
+      if (usageKey && usageKey === lastUsageKey) continue;
+      lastUsageKey = usageKey;
       if (insertUsage(record.usage)) count++;
     } catch {}
   }
 
-  setTokmonScanOffset(filePath, content.length);
+  setTokmonScanState(filePath, {
+    offset: range.nextOffset,
+    sessionId: fallbackSessionId,
+    lastUsageKey,
+  });
   return count;
 }
 
@@ -157,7 +155,11 @@ function backfillClaudeFile(filePath: string, fallbackSessionId: string): number
     } catch {}
   }
 
-  setTokmonScanOffset(filePath, content.length);
+  setTokmonScanState(filePath, {
+    offset: Buffer.byteLength(content),
+    sessionId: fallbackSessionId,
+    lastUsageKey: null,
+  });
   return count;
 }
 
@@ -213,15 +215,18 @@ function walkDir(dir: string, cb: (path: string) => void) {
 
 function scanCodexFile(filePath: string, sessionId: string): number {
   let count = 0;
-  const content = readFileSync(filePath, "utf-8");
-  const offset = getTokmonScanOffset(filePath);
-  if (content.length <= offset) return 0;
+  const fileSize = fileByteSize(filePath);
+  if (fileSize === null) return 0;
 
-  const seenUsage = new Set<string>();
+  const state = getTokmonScanState(filePath);
+  const range = calculateAppendRange(fileSize, state.offset);
+  if (!range) return 0;
 
-  let lastModel = "unknown";
-  let resolvedSessionId = sessionId;
-  for (const line of content.split("\n")) {
+  let resolvedSessionId = range.offset === 0 ? sessionId : (state.sessionId || sessionId);
+  let lastModel = range.offset === 0 ? "unknown" : (state.model || "unknown");
+  let lastUsageKey = range.offset === 0 ? null : state.lastUsageKey;
+
+  for (const line of readFileRange(filePath, range).split("\n")) {
     if (!line.trim()) continue;
     try {
       const obj = JSON.parse(line);
@@ -230,30 +235,16 @@ function scanCodexFile(filePath: string, sessionId: string): number {
         if (obj.type === "session_meta" && typeof payload?.id === "string" && payload.id.trim()) {
           resolvedSessionId = payload.id;
         }
-        if (payload?.model) lastModel = payload.model;
+        if (typeof payload?.model === "string" && payload.model.trim()) {
+          lastModel = payload.model;
+        }
       }
-    } catch {}
-  }
 
-  const oldContent = content.slice(0, offset);
-  for (const line of oldContent.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const usage = getCodexLastTokenUsage(JSON.parse(line));
-      if (usage && hasCodexTokenUsage(usage)) seenUsage.add(codexUsageKey(usage));
-    } catch {}
-  }
-
-  const newContent = content.slice(offset);
-  for (const line of newContent.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const obj = JSON.parse(line);
       const u = getCodexLastTokenUsage(obj);
       if (!u || !hasCodexTokenUsage(u)) continue;
       const usageKey = codexUsageKey(u);
-      if (seenUsage.has(usageKey)) continue;
-      seenUsage.add(usageKey);
+      if (usageKey === lastUsageKey) continue;
+      lastUsageKey = usageKey;
       if (insertUsage({
         source: "codex",
         sessionId: resolvedSessionId,
@@ -268,7 +259,12 @@ function scanCodexFile(filePath: string, sessionId: string): number {
     } catch {}
   }
 
-  setTokmonScanOffset(filePath, content.length);
+  setTokmonScanState(filePath, {
+    offset: range.nextOffset,
+    sessionId: resolvedSessionId,
+    model: lastModel,
+    lastUsageKey,
+  });
   return count;
 }
 
@@ -299,4 +295,48 @@ function codexUsageKey(usage: any): string {
     usage.cached_input_tokens || 0,
     usage.reasoning_output_tokens || 0,
   ].join(":");
+}
+
+function claudeUsageKey(usage: any): string {
+  return [
+    usage.sessionId || "",
+    usage.createdAt || "",
+    usage.inputTokens || 0,
+    usage.outputTokens || 0,
+    usage.cacheCreation || 0,
+    usage.cacheRead || 0,
+    usage.reasoningTokens || 0,
+  ].join(":");
+}
+
+export interface AppendRange {
+  offset: number;
+  length: number;
+  nextOffset: number;
+}
+
+export function calculateAppendRange(fileSize: number, offset: number): AppendRange | null {
+  const start = fileSize < offset ? 0 : offset;
+  const length = fileSize - start;
+  if (length <= 0) return null;
+  return { offset: start, length, nextOffset: fileSize };
+}
+
+function fileByteSize(filePath: string): number | null {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
+
+function readFileRange(filePath: string, range: AppendRange): string {
+  const fd = openSync(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(range.length);
+    const bytesRead = readSync(fd, buffer, 0, range.length, range.offset);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
 }

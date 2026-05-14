@@ -10,6 +10,7 @@ import { mcpRoutes } from "./routes/mcp.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { tokmonRoutes } from "./routes/tokmon.js";
 import { backfillClaudeCodeUsage, loadTokMonConfig, scanTokMonAll } from "./tokmon/scanner.js";
+import { ActivityLeases } from "./activity-leases.js";
 
 const config = loadConfig();
 loadTokMonConfig();
@@ -39,9 +40,29 @@ const scanStatus: ScanStatus = {
 
 let scanTimer: ReturnType<typeof setInterval> | undefined;
 let tokmonScanTimer: ReturnType<typeof setInterval> | undefined;
+let activityTimer: ReturnType<typeof setInterval> | undefined;
+let periodicScanRunning = false;
+let periodicTokmonScanRunning = false;
+let initialScanStarted = false;
+const activityLeases = new ActivityLeases();
 
 const app = new Hono();
 app.get("/api/scan-status", (c) => c.json(scanStatus));
+app.get("/api/activity", (c) => c.json(activityLeases.snapshot()));
+app.post("/api/activity", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const name = String(body?.name || "").trim();
+  if (!name) return c.json({ error: "Activity name is required" }, 400);
+  const ttlMs = Number.isFinite(Number(body?.ttlMs)) ? Number(body.ttlMs) : 10_000;
+  activityLeases.renew(name, ttlMs);
+  startPeriodicScans();
+  return c.json(activityLeases.snapshot());
+});
+app.delete("/api/activity/:name", (c) => {
+  activityLeases.release(c.req.param("name"));
+  reconcilePeriodicScans();
+  return c.json(activityLeases.snapshot());
+});
 app.post("/api/scan", (c) => {
   try {
     const count = scanAll();
@@ -141,34 +162,92 @@ async function runInitialScan(options: { rebuild?: boolean } = {}) {
       error: message,
     });
     console.error("Initial scan error:", err);
-  } finally {
-    startPeriodicScans();
   }
 }
 
 function startPeriodicScans() {
+  if (!activityLeases.hasActiveLeases()) return;
+
+  startInitialScanOnce();
+
+  if (!activityTimer) {
+    activityTimer = setInterval(reconcilePeriodicScans, 2_000);
+  }
   if (!scanTimer) {
     scanTimer = setInterval(() => {
+      if (!activityLeases.hasActiveLeases()) {
+        reconcilePeriodicScans();
+        return;
+      }
+      if (periodicScanRunning) return;
+      periodicScanRunning = true;
       try { scanAll(); } catch (e) { console.error("Scan error:", e); }
-    }, 5_000);
+      finally { periodicScanRunning = false; }
+    }, 10_000);
   }
   if (!tokmonScanTimer) {
     tokmonScanTimer = setInterval(() => {
+      if (!activityLeases.hasActiveLeases()) {
+        reconcilePeriodicScans();
+        return;
+      }
+      if (periodicTokmonScanRunning) return;
+      periodicTokmonScanRunning = true;
       try {
         const count = scanTokMonAll();
         if (count > 0) console.log(`TokMon scan: ${count} new usage records`);
       } catch (e) {
         console.error("TokMon scan error:", e);
+      } finally {
+        periodicTokmonScanRunning = false;
       }
-    }, 3_000);
+    }, 5_000);
   }
 }
 
-setTimeout(() => { void runInitialScan(); }, 250);
+function startInitialScanOnce() {
+  if (initialScanStarted || scanStatus.running || scanStatus.finishedAt) return;
+  initialScanStarted = true;
+  setTimeout(() => { void runInitialScan(); }, 50);
+}
+
+function reconcilePeriodicScans() {
+  if (activityLeases.hasActiveLeases()) {
+    startPeriodicScans();
+    return;
+  }
+
+  if (scanTimer) {
+    clearInterval(scanTimer);
+    scanTimer = undefined;
+  }
+  if (tokmonScanTimer) {
+    clearInterval(tokmonScanTimer);
+    tokmonScanTimer = undefined;
+  }
+  if (activityTimer) {
+    clearInterval(activityTimer);
+    activityTimer = undefined;
+  }
+}
+
+function runTokmonScanOnce() {
+  if (periodicTokmonScanRunning) return;
+  periodicTokmonScanRunning = true;
+  try {
+    const count = scanTokMonAll();
+    if (count > 0) console.log(`TokMon scan: ${count} new usage records`);
+  } catch (e) {
+    console.error("TokMon scan error:", e);
+  } finally {
+    periodicTokmonScanRunning = false;
+  }
+}
 
 const shutdown = () => {
   if (scanTimer) clearInterval(scanTimer);
   if (tokmonScanTimer) clearInterval(tokmonScanTimer);
+  if (activityTimer) clearInterval(activityTimer);
   (server as any).closeAllConnections?.();
   closeDb();
   process.kill(process.pid, "SIGKILL");

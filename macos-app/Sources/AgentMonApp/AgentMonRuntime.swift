@@ -14,7 +14,7 @@ final class AgentMonRuntime: ObservableObject {
     started = true
     agentMonLog("AgentMon runtime starting service")
     server.start()
-    stats.start(appURL: server.appURL)
+    stats.configure(appURL: server.appURL)
   }
 
   func openDashboard() {
@@ -23,13 +23,13 @@ final class AgentMonRuntime: ObservableObject {
   }
 
   func quit() {
-    stats.stop()
+    stats.stopObserving()
     server.stop(waitUntilExit: true)
     NSApplication.shared.terminate(nil)
   }
 
   func stop() {
-    stats.stop()
+    stats.stopObserving()
     server.stop(waitUntilExit: true)
   }
 }

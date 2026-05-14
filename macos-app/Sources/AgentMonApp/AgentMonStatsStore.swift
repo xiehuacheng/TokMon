@@ -25,6 +25,12 @@ struct TokMonSummary: Decodable {
   let total: TokMonTotals
   let bySource: [TokMonSourceTotals]
   let byModel: [TokMonModelTotals]
+
+  func estimatedCost(costRates: TokMonCostRates) -> Double {
+    byModel.reduce(0) { sum, model in
+      sum + model.value(for: .cost, costRates: costRates)
+    }
+  }
 }
 
 struct TokMonTotals: Decodable {
@@ -345,6 +351,11 @@ struct TokMonDashboardState: Decodable {
   }
 }
 
+private struct ActivityRequest: Encodable {
+  let name: String
+  let ttlMs: Int
+}
+
 enum TokMonTrendInterval {
   case hour
   case day
@@ -363,9 +374,17 @@ final class AgentMonStatsStore: ObservableObject {
   private var appURL: URL?
   private var timerTask: Task<Void, Never>?
   private let refreshIntervalSeconds = 3
+  private let activityName = "status-popover"
+  private let activityTtlMilliseconds = 10_000
 
-  func start(appURL: URL) {
+  func configure(appURL: URL) {
     self.appURL = appURL
+  }
+
+  func startObserving(appURL: URL? = nil) {
+    if let appURL {
+      self.appURL = appURL
+    }
     if timerTask == nil {
       timerTask = Task { [weak self] in
         while !Task.isCancelled {
@@ -377,9 +396,10 @@ final class AgentMonStatsStore: ObservableObject {
     requestRefresh()
   }
 
-  func stop() {
+  func stopObserving() {
     timerTask?.cancel()
     timerTask = nil
+    releaseActivity()
   }
 
   func refresh() async {
@@ -389,6 +409,9 @@ final class AgentMonStatsStore: ObservableObject {
     defer { isRefreshing = false }
 
     do {
+      try await renewActivity(appURL: appURL)
+      _ = try? await triggerTokMonScan(appURL: appURL)
+
       async let scanStatus = fetchScanStatus(appURL: appURL)
       async let dashboardState = fetchDashboardState(appURL: appURL)
 
@@ -423,6 +446,34 @@ final class AgentMonStatsStore: ObservableObject {
     Task { [weak self] in
       await self?.refresh()
     }
+  }
+
+  private func releaseActivity() {
+    guard let appURL else { return }
+    Task.detached { [activityName] in
+      var request = URLRequest(url: appURL.appendingPathComponent("api/activity/\(activityName)"))
+      request.httpMethod = "DELETE"
+      request.timeoutInterval = 1.5
+      _ = try? await URLSession.shared.data(for: request)
+    }
+  }
+
+  private nonisolated func renewActivity(appURL: URL) async throws {
+    var request = URLRequest(url: appURL.appendingPathComponent("api/activity"))
+    request.httpMethod = "POST"
+    request.timeoutInterval = 1.5
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(ActivityRequest(name: activityName, ttlMs: activityTtlMilliseconds))
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+    try validate(response: response, url: request.url ?? appURL)
+  }
+
+  private nonisolated func triggerTokMonScan(appURL: URL) async throws {
+    let url = appURL.appendingPathComponent("api/tokmon/scan")
+    let (data, response) = try await URLSession.shared.data(from: url)
+    try validate(response: response, url: url)
+    _ = data
   }
 
   private nonisolated func fillTrendBuckets(

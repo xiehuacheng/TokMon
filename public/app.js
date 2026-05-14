@@ -18,6 +18,10 @@ let sessionsLastSignature = '';
 let sessionsSearchDebounceTimer = null;
 let sessionsSearchRequestSeq = 0;
 const SESSIONS_AUTO_REFRESH_MS = 3000;
+const DASHBOARD_ACTIVITY_NAME = 'web-dashboard';
+const DASHBOARD_ACTIVITY_TTL_MS = 10000;
+const DASHBOARD_ACTIVITY_RENEW_MS = 5000;
+let dashboardActivityTimer = null;
 
 const $ = (sel) => document.querySelector(sel);
 const $content = () => $('#content');
@@ -48,6 +52,34 @@ function render() {
   const views = { tokmon: renderTokMon, sessions: renderSessions, skills: renderSkills, mcp: renderMcp, settings: renderSettings };
   const rendered = (views[currentTab] || views.tokmon)();
   Promise.resolve(rendered).then(() => containScrollWithinAll(document));
+}
+
+function renewDashboardActivity() {
+  if (document.hidden) return;
+  fetch('/api/activity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: DASHBOARD_ACTIVITY_NAME, ttlMs: DASHBOARD_ACTIVITY_TTL_MS }),
+  }).catch(() => {});
+}
+
+function releaseDashboardActivity() {
+  fetch(`/api/activity/${encodeURIComponent(DASHBOARD_ACTIVITY_NAME)}`, { method: 'DELETE' }).catch(() => {});
+}
+
+function startDashboardActivity() {
+  if (!dashboardActivityTimer) {
+    dashboardActivityTimer = setInterval(renewDashboardActivity, DASHBOARD_ACTIVITY_RENEW_MS);
+  }
+  renewDashboardActivity();
+}
+
+function stopDashboardActivity() {
+  if (dashboardActivityTimer) {
+    clearInterval(dashboardActivityTimer);
+    dashboardActivityTimer = null;
+  }
+  releaseDashboardActivity();
 }
 
 /* ── Helpers ── */
@@ -133,8 +165,14 @@ async function pollSessionsAutoRefresh() {
 
 setInterval(pollSessionsAutoRefresh, SESSIONS_AUTO_REFRESH_MS);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) pollSessionsAutoRefresh();
+  if (document.hidden) stopDashboardActivity();
+  else {
+    startDashboardActivity();
+    pollSessionsAutoRefresh();
+  }
 });
+window.addEventListener('pagehide', stopDashboardActivity);
+startDashboardActivity();
 
 function renderScanStatus(status) {
   const el = $scanStatus();
@@ -745,6 +783,7 @@ function bindSessionsManageEvents(rows) {
 
 async function updateSessionsSearchResults() {
   const requestSeq = ++sessionsSearchRequestSeq;
+  await fetch('/api/scan', { method: 'POST' }).catch(() => null);
   const data = await api('/sessions?' + sessionsQueryParams());
   if (currentTab !== 'sessions' || requestSeq !== sessionsSearchRequestSeq) return;
   sessionsLastSignature = sessionsSignature(data);
@@ -766,6 +805,7 @@ async function updateSessionsSearchResults() {
 async function renderSessions(prefetchedData = null) {
   renderSessionsHeaderActions();
   const f = sessionsFilters;
+  if (!prefetchedData) await fetch('/api/scan', { method: 'POST' }).catch(() => null);
   const data = prefetchedData || await api('/sessions?' + sessionsQueryParams());
   if (currentTab !== 'sessions') return;
   sessionsLastSignature = sessionsSignature(data);

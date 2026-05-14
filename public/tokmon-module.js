@@ -1004,6 +1004,8 @@ function restorePageScrollAfterLayout(snapshot) {
 async function refresh() {
   if (destroyed) return;
   const seq = ++refreshSeq;
+  await fetch('/api/tokmon/scan').catch(() => null);
+  if (destroyed || seq !== refreshSeq) return;
   if (liveMode) {
     const now = new Date();
     $('#dateTo').value = fmtDateTime(now);

@@ -35,9 +35,11 @@ final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
     popover.behavior = .transient
     popoverDelegate = AgentMonPopoverDelegate(
       didShow: { [weak self] in
+        self?.runtime.stats.startObserving(appURL: self?.runtime.server.appURL)
         self?.setStatusItemHighlighted(true)
       },
       didClose: { [weak self] in
+        self?.runtime.stats.stopObserving()
         self?.setStatusItemHighlighted(false)
       },
     )
@@ -64,6 +66,7 @@ final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
     setStatusItemHighlighted(true)
     NSApplication.shared.activate(ignoringOtherApps: true)
     Task { @MainActor in
+      runtime.stats.startObserving(appURL: runtime.server.appURL)
       await runtime.stats.refresh()
     }
     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)

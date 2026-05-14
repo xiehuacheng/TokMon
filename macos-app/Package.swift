@@ -15,5 +15,10 @@ let package = Package(
       name: "AgentMonApp",
       path: "Sources/AgentMonApp",
     ),
+    .testTarget(
+      name: "AgentMonAppTests",
+      dependencies: ["AgentMonApp"],
+      path: "Tests/AgentMonAppTests",
+    ),
   ],
 )

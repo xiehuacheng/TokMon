@@ -143,7 +143,7 @@ struct StatusPopoverView: View {
       )
       MetricTile(
         series: .cost,
-        value: formatCost(stats.snapshot.dashboardState?.estimatedCost),
+        value: formatCost(currentEstimatedCost),
         isSelected: selectedSeries.key == .cost,
         onSelect: selectSeries,
       )
@@ -324,6 +324,17 @@ struct StatusPopoverView: View {
     case .failed:
       "Server failed"
     }
+  }
+
+  private var currentEstimatedCost: Double? {
+    guard
+      let summary = stats.snapshot.summary,
+      let costRates = stats.snapshot.dashboardState?.costRates
+    else {
+      return stats.snapshot.dashboardState?.estimatedCost
+    }
+
+    return summary.estimatedCost(costRates: costRates)
   }
 
   private var updatedLine: String {

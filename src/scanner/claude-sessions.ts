@@ -1,6 +1,6 @@
-import { readdirSync } from "fs";
+import { readdirSync, statSync } from "fs";
 import { join } from "path";
-import { deleteMissingByIds, upsertSession } from "../db.js";
+import { deleteMissingByIds, getSessionIdByFilePath, getSessionScanState, setSessionScanState, updateSessionActive, upsertSession } from "../db.js";
 import { extractClaudeText, processAlive, safeJsonParse, safeReadText } from "./utils.js";
 
 export function scanClaudeSessions(claudeHome: string) {
@@ -26,6 +26,21 @@ export function scanClaudeSessions(claudeHome: string) {
         if (!file.endsWith(".jsonl")) continue;
         const filePath = join(projectDir, file);
         const sessionId = file.replace(/\.jsonl$/, "");
+        const fileState = currentFileState(filePath);
+        if (!fileState) continue;
+
+        const indexedId = getSessionIdByFilePath("claude-code", filePath);
+        const scanState = getSessionScanState(filePath);
+        if (
+          indexedId &&
+          scanState.offset === fileState.size &&
+          scanState.mtime === fileState.mtime
+        ) {
+          updateSessionActive("claude-code", indexedId, activeSessions.has(indexedId) ? 1 : 0);
+          seenIds.push(indexedId);
+          continue;
+        }
+
         const text = safeReadText(filePath);
         if (!text) continue;
 
@@ -91,6 +106,7 @@ export function scanClaudeSessions(claudeHome: string) {
           isActive: activeSessions.has(sessionId) ? 1 : 0,
           filePath,
         });
+        setSessionScanState(filePath, fileState.size, fileState.mtime);
         seenIds.push(sessionId);
       }
     }
@@ -98,4 +114,13 @@ export function scanClaudeSessions(claudeHome: string) {
 
   deleteMissingByIds("sessions", "claude-code", seenIds);
   return seenIds.length;
+}
+
+function currentFileState(filePath: string): { size: number; mtime: string } | null {
+  try {
+    const st = statSync(filePath);
+    return { size: st.size, mtime: st.mtime.toISOString() };
+  } catch {
+    return null;
+  }
 }

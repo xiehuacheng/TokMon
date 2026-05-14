@@ -1,6 +1,6 @@
 import { basename } from "path";
 import { statSync } from "fs";
-import { deleteMissingByIds, upsertSession } from "../db.js";
+import { deleteMissingByIds, getSessionIdByFilePath, getSessionScanState, setSessionScanState, updateSessionActive, upsertSession } from "../db.js";
 import { extractCodexText, safeJsonParse, safeReadText, walkFiles } from "./utils.js";
 
 const CODEX_ACTIVE_WINDOW_MS = 10 * 60 * 1000;
@@ -11,6 +11,21 @@ export function scanCodexSessions(codexHome: string) {
 
   walkFiles(sessionsRoot, (filePath) => {
     if (!filePath.endsWith(".jsonl")) return;
+    const fileState = currentFileState(filePath);
+    if (!fileState) return;
+
+    const indexedId = getSessionIdByFilePath("codex", filePath);
+    const scanState = getSessionScanState(filePath);
+    if (
+      indexedId &&
+      scanState.offset === fileState.size &&
+      scanState.mtime === fileState.mtime
+    ) {
+      updateSessionActive("codex", indexedId, isRecentlyWritten(filePath) ? 1 : 0);
+      seenIds.push(indexedId);
+      return;
+    }
+
     const text = safeReadText(filePath);
     if (!text) return;
 
@@ -87,6 +102,7 @@ export function scanCodexSessions(codexHome: string) {
       isActive: isRecentlyWritten(filePath) ? 1 : 0,
       filePath,
     });
+    setSessionScanState(filePath, fileState.size, fileState.mtime);
     seenIds.push(sessionId);
   });
 
@@ -99,5 +115,14 @@ function isRecentlyWritten(filePath: string) {
     return Date.now() - statSync(filePath).mtimeMs <= CODEX_ACTIVE_WINDOW_MS;
   } catch {
     return false;
+  }
+}
+
+function currentFileState(filePath: string): { size: number; mtime: string } | null {
+  try {
+    const st = statSync(filePath);
+    return { size: st.size, mtime: st.mtime.toISOString() };
+  } catch {
+    return null;
   }
 }
