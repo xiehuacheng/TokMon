@@ -181,6 +181,34 @@ final class TokMonDatabase {
     return records
   }
 
+  func queryRows<T>(_ sql: String, params: [TokMonSQLValue] = [], map: (TokMonSQLRow) throws -> T) throws -> [T] {
+    let statement = try prepare(sql)
+    defer { sqlite3_finalize(statement) }
+
+    for (offset, param) in params.enumerated() {
+      try bind(param, at: Int32(offset + 1), in: statement)
+    }
+
+    var rows: [T] = []
+    var result = sqlite3_step(statement)
+    while result == SQLITE_ROW {
+      rows.append(try map(TokMonSQLRow(statement: statement)))
+      result = sqlite3_step(statement)
+    }
+
+    guard result == SQLITE_DONE else {
+      throw TokMonDatabaseError.sqlite(lastErrorMessage)
+    }
+
+    return rows
+  }
+
+  func queryInt(_ sql: String, params: [TokMonSQLValue] = []) throws -> Int {
+    try queryRows(sql, params: params) { row in
+      row.int(0)
+    }.first ?? 0
+  }
+
   private var requiredConnection: OpaquePointer {
     guard let connection else {
       preconditionFailure("TokMonDatabase connection is closed")
@@ -337,6 +365,15 @@ final class TokMonDatabase {
     }
   }
 
+  private func bind(_ value: TokMonSQLValue, at index: Int32, in statement: OpaquePointer?) throws {
+    switch value {
+    case .text(let text):
+      try bind(text, at: index, in: statement)
+    case .int(let int):
+      try bind(int, at: index, in: statement)
+    }
+  }
+
   private func bindNull(at index: Int32, in statement: OpaquePointer?) throws {
     guard sqlite3_bind_null(statement, index) == SQLITE_OK else {
       throw TokMonDatabaseError.sqlite(lastErrorMessage)
@@ -373,3 +410,26 @@ private enum TokMonDatabaseError: LocalizedError {
 }
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+enum TokMonSQLValue {
+  case text(String)
+  case int(Int)
+}
+
+struct TokMonSQLRow {
+  fileprivate let statement: OpaquePointer?
+
+  func string(_ index: Int32) -> String {
+    guard sqlite3_column_type(statement, index) != SQLITE_NULL else {
+      return ""
+    }
+    guard let rawValue = sqlite3_column_text(statement, index) else {
+      return ""
+    }
+    return String(cString: rawValue)
+  }
+
+  func int(_ index: Int32) -> Int {
+    Int(sqlite3_column_int64(statement, index))
+  }
+}

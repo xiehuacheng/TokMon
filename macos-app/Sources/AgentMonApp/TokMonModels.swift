@@ -271,6 +271,54 @@ struct TokMonTrendBucket: Decodable {
   }
 }
 
+struct TokMonHeatmapDay: Equatable, Identifiable {
+  var day: String
+  var requests: Int
+  var inputTokens: Int
+  var outputTokens: Int
+  var cacheCreation: Int
+  var cacheRead: Int
+  var id: String { day }
+}
+
+struct TokMonModelOption: Equatable, Identifiable {
+  var model: String
+  var lastUsed: String
+  var id: String { model }
+}
+
+struct TokMonRecordRow: Equatable, Identifiable {
+  var id: String { "\(source):\(sessionId):\(createdAt):\(inputTokens):\(outputTokens)" }
+  var source: String
+  var sessionId: String
+  var model: String
+  var inputTokens: Int
+  var outputTokens: Int
+  var cacheCreation: Int
+  var cacheRead: Int
+  var reasoningTokens: Int
+  var createdAt: String
+}
+
+struct TokMonRecordsPage: Equatable {
+  var total: Int
+  var page: Int
+  var limit: Int
+  var rows: [TokMonRecordRow]
+}
+
+struct TokMonUsageSession: Equatable, Identifiable {
+  var id: String { "\(source):\(sessionId)" }
+  var sessionId: String
+  var source: String
+  var model: String
+  var requests: Int
+  var inputTokens: Int
+  var outputTokens: Int
+  var firstAt: String
+  var lastAt: String
+}
+
 struct TokMonTrendPoint: Identifiable {
   let id: String
   let label: String
