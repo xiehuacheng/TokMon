@@ -4,7 +4,9 @@ struct StatusPopoverView: View {
   @EnvironmentObject private var runtime: AgentMonRuntime
   @EnvironmentObject private var server: AgentMonServer
   @EnvironmentObject private var stats: AgentMonStatsStore
+  @State private var selectedPage = TokMonPopoverPage.overview
   @State private var selectedSeries = TokMonSeriesPresentation(rawValue: "total")
+  @State private var expandedRequestId: String?
 
   private let numberFormatter: NumberFormatter = {
     let formatter = NumberFormatter()
@@ -24,12 +26,9 @@ struct StatusPopoverView: View {
             .lineLimit(2)
         }
 
+        pagePicker
         dashboardStatePanel
-        metricsGrid
-        trendPanel
-        scanStatus
-        sourceBreakdown
-        modelBreakdown
+        currentPageContent
         footer
       }
       .padding(16)
@@ -37,6 +36,196 @@ struct StatusPopoverView: View {
     .frame(width: 360, height: 500)
     .onChange(of: stats.snapshot.dashboardState?.activeSeries, initial: true) { _, activeSeries in
       selectedSeries = TokMonSeriesPresentation(rawValue: activeSeries ?? "total")
+    }
+  }
+
+  private var pagePicker: some View {
+    Picker("TokMon Page", selection: $selectedPage) {
+      ForEach(availablePages) { page in
+        Text(page.title).tag(page)
+      }
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+  }
+
+  @ViewBuilder
+  private var currentPageContent: some View {
+    switch selectedPage {
+    case .overview:
+      overviewPage
+    case .trends:
+      trendsPage
+    case .requests:
+      requestsPage
+    case .sessions:
+      sessionsPage
+    }
+  }
+
+  private var overviewPage: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      metricsGrid
+      scanStatus
+      sourceBreakdown
+      modelBreakdown
+    }
+  }
+
+  private var trendsPage: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      trendPanel
+      if stats.usesNativeEngine {
+        heatmapPanel
+      }
+    }
+  }
+
+  private var requestsPage: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      let recordsPage = stats.snapshot.recordsPage
+      let rows = stats.snapshot.recordsPage?.rows ?? []
+
+      HStack {
+        SectionTitle("Requests")
+        Spacer()
+        if let recordsPage, recordsPage.total > 0 {
+          Text("Showing \(rows.count) of \(recordsPage.total)")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      if rows.isEmpty {
+        Text("No requests in the selected range.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(rows) { row in
+          RequestRowView(
+            row: row,
+            isExpanded: expandedRequestId == row.id,
+            costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
+            sourceLabel: labelForSource(row.source),
+            sourceColor: colorForSource(row.source),
+            formatCompact: formatChartValue,
+            formatCost: formatCost,
+            onToggleDetails: {
+              expandedRequestId = expandedRequestId == row.id ? nil : row.id
+            },
+            onJumpToSession: {
+              jumpToSession(source: row.source, sessionId: row.sessionId)
+            },
+          )
+        }
+
+        if stats.canLoadMoreRecords {
+          LoadMoreButton(title: "Load More Requests") {
+            stats.loadMoreRecords()
+          }
+        }
+      }
+    }
+  }
+
+  private var sessionsPage: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      let sessions = stats.snapshot.usageSessions
+
+      HStack {
+        SectionTitle("Sessions")
+        Spacer()
+        if !sessions.isEmpty {
+          Text("Latest \(sessions.count)")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      if sessions.isEmpty {
+        Text("No usage sessions yet.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(sessions) { session in
+          SessionRowView(
+            session: session,
+            isSelected: stats.snapshot.selectedUsageSession?.id == session.id,
+            costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
+            sourceLabel: labelForSource(session.source),
+            sourceColor: colorForSource(session.source),
+            formatCompact: formatChartValue,
+            formatCost: formatCost,
+            onSelect: {
+              stats.selectUsageSession(source: session.source, sessionId: session.sessionId)
+            },
+          )
+        }
+
+        if stats.canLoadMoreUsageSessions {
+          LoadMoreButton(title: "Load More Sessions") {
+            stats.loadMoreUsageSessions()
+          }
+        }
+
+        selectedSessionDrilldown
+      }
+    }
+  }
+
+  private var selectedSessionDrilldown: some View {
+    let selection = stats.snapshot.selectedUsageSession
+    let rows = stats.snapshot.selectedSessionRecords
+
+    return Group {
+      if let selection {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            SectionTitle("Session Requests")
+            Spacer()
+            Button {
+              stats.clearSelectedUsageSession()
+            } label: {
+              Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help("Close Session Requests")
+          }
+
+          Text("\(labelForSource(selection.source)) · \(selection.sessionId)")
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+
+          if rows.isEmpty {
+            Text("No requests in this session for the selected range.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          } else {
+            ForEach(rows) { row in
+              RequestRowView(
+                row: row,
+                isExpanded: expandedRequestId == row.id,
+                costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
+                sourceLabel: labelForSource(row.source),
+                sourceColor: colorForSource(row.source),
+                formatCompact: formatChartValue,
+                formatCost: formatCost,
+                onToggleDetails: {
+                  expandedRequestId = expandedRequestId == row.id ? nil : row.id
+                },
+                onJumpToSession: nil,
+              )
+            }
+          }
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+      }
     }
   }
 
@@ -245,6 +434,39 @@ struct StatusPopoverView: View {
     .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
+  private var heatmapPanel: some View {
+    let days = stats.snapshot.heatmapDays
+    let maxRequests = days.map(\.requests).max() ?? 0
+
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        SectionTitle("Activity")
+        Spacer()
+        Text("365D")
+          .font(.caption2.monospacedDigit())
+          .foregroundStyle(.secondary)
+      }
+
+      if days.isEmpty {
+        Text("No recent activity.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 18), spacing: 3) {
+          ForEach(days) { day in
+            RoundedRectangle(cornerRadius: 2)
+              .fill(heatmapColor(requests: day.requests, maxRequests: maxRequests))
+              .frame(height: 5)
+              .help("\(day.day): \(day.requests) requests")
+          }
+        }
+      }
+    }
+    .padding(10)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+  }
+
   private var sourceBreakdown: some View {
     let costRates = stats.snapshot.dashboardState?.costRates ?? .zero
     let selectedKey = selectedSeries.key
@@ -387,6 +609,15 @@ struct StatusPopoverView: View {
     selectedSeries = series
   }
 
+  private var availablePages: [TokMonPopoverPage] {
+    stats.usesNativeEngine ? TokMonPopoverPage.allCases : [.overview, .trends]
+  }
+
+  private func jumpToSession(source: String, sessionId: String) {
+    stats.selectUsageSession(source: source, sessionId: sessionId)
+    selectedPage = .sessions
+  }
+
   private func trendPoints(for seriesKey: TokMonSeriesKey) -> [TokMonTrendPoint] {
     let costRates = stats.snapshot.dashboardState?.costRates ?? .zero
     return stats.snapshot.trendBuckets.map { bucket in
@@ -417,6 +648,36 @@ struct StatusPopoverView: View {
       TokMonMetricColor.accent.swiftUIColor
     default:
       TokMonMetricColor.purple.swiftUIColor
+    }
+  }
+
+  private func heatmapColor(requests: Int, maxRequests: Int) -> Color {
+    guard maxRequests > 0, requests > 0 else {
+      return Color.secondary.opacity(0.16)
+    }
+    let opacity = 0.24 + 0.76 * (Double(requests) / Double(maxRequests))
+    return TokMonMetricColor.green.swiftUIColor.opacity(opacity)
+  }
+}
+
+private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
+  case overview
+  case trends
+  case requests
+  case sessions
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .overview:
+      "Overview"
+    case .trends:
+      "Trends"
+    case .requests:
+      "Requests"
+    case .sessions:
+      "Sessions"
     }
   }
 }
@@ -485,6 +746,228 @@ private struct StatePill: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
+}
+
+private struct RequestRowView: View {
+  let row: TokMonRecordRow
+  let isExpanded: Bool
+  let costRates: TokMonCostRates
+  let sourceLabel: String
+  let sourceColor: Color
+  let formatCompact: (Double?) -> String
+  let formatCost: (Double?) -> String
+  let onToggleDetails: () -> Void
+  let onJumpToSession: (() -> Void)?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(row.model)
+          .font(.caption.weight(.medium))
+          .lineLimit(1)
+        Spacer(minLength: 8)
+        Text(shortTimestamp(row.createdAt))
+          .font(.caption2.monospacedDigit())
+          .foregroundStyle(.secondary)
+      }
+
+      HStack(spacing: 8) {
+        Text(sourceLabel)
+          .font(.caption2.weight(.medium))
+          .foregroundStyle(sourceColor)
+        Text(row.sessionId)
+          .font(.caption2.monospaced())
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        Spacer(minLength: 0)
+      }
+
+      HStack(spacing: 10) {
+        TokenChip(label: "In", value: formatCompact(Double(row.inputTokens)))
+        TokenChip(label: "Out", value: formatCompact(Double(row.outputTokens)))
+        TokenChip(label: "Cache", value: formatCompact(Double(row.cacheCreation + row.cacheRead)))
+        if row.reasoningTokens > 0 {
+          TokenChip(label: "Reason", value: formatCompact(Double(row.reasoningTokens)))
+        }
+        TokenChip(label: "$", value: formatCost(cost))
+      }
+
+      HStack(spacing: 10) {
+        Button {
+          onToggleDetails()
+        } label: {
+          Label(isExpanded ? "Hide Details" : "Details", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+            .labelStyle(.titleAndIcon)
+            .font(.caption2)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+
+        if let onJumpToSession {
+          Button {
+            onJumpToSession()
+          } label: {
+            Label("Jump", systemImage: "arrowshape.turn.up.right")
+              .labelStyle(.titleAndIcon)
+              .font(.caption2)
+          }
+          .buttonStyle(.plain)
+          .focusable(false)
+        }
+      }
+      .foregroundStyle(.secondary)
+
+      if isExpanded {
+        VStack(alignment: .leading, spacing: 3) {
+          DetailLine(label: "Created", value: row.createdAt)
+          DetailLine(label: "Session", value: row.sessionId)
+          DetailLine(label: "Cache Created", value: formatCompact(Double(row.cacheCreation)))
+          DetailLine(label: "Cache Read", value: formatCompact(Double(row.cacheRead)))
+          DetailLine(label: "Reasoning", value: formatCompact(Double(row.reasoningTokens)))
+        }
+        .padding(.top, 2)
+      }
+    }
+    .padding(8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+  }
+
+  private var cost: Double {
+    Double(row.inputTokens) / 1_000_000 * costRates.input
+      + Double(row.outputTokens) / 1_000_000 * costRates.output
+      + Double(row.cacheCreation) / 1_000_000 * costRates.cacheCreate
+      + Double(row.cacheRead) / 1_000_000 * costRates.cacheRead
+  }
+}
+
+private struct SessionRowView: View {
+  let session: TokMonUsageSession
+  let isSelected: Bool
+  let costRates: TokMonCostRates
+  let sourceLabel: String
+  let sourceColor: Color
+  let formatCompact: (Double?) -> String
+  let formatCost: (Double?) -> String
+  let onSelect: () -> Void
+
+  var body: some View {
+    Button {
+      onSelect()
+    } label: {
+      VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .firstTextBaseline) {
+          Text(session.sessionId)
+            .font(.caption.monospaced())
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Spacer(minLength: 8)
+          Text("\(session.requests) req")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+
+        HStack(spacing: 8) {
+          Text(sourceLabel)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(sourceColor)
+          Text(session.model)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+          Spacer(minLength: 0)
+        }
+
+        HStack(spacing: 10) {
+          TokenChip(label: "Tokens", value: formatCompact(Double(session.inputTokens + session.outputTokens)))
+          TokenChip(label: "$", value: formatCost(cost))
+          Spacer(minLength: 0)
+          Text("\(shortTimestamp(session.firstAt)) - \(shortTimestamp(session.lastAt))")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
+      .padding(8)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color(nsColor: .controlBackgroundColor))
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .overlay(
+        RoundedRectangle(cornerRadius: 8)
+          .stroke(isSelected ? sourceColor : Color.clear, lineWidth: 1.5)
+      )
+      .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+    .buttonStyle(.plain)
+    .focusable(false)
+  }
+
+  private var cost: Double {
+    Double(session.inputTokens) / 1_000_000 * costRates.input
+      + Double(session.outputTokens) / 1_000_000 * costRates.output
+      + Double(session.cacheCreation) / 1_000_000 * costRates.cacheCreate
+      + Double(session.cacheRead) / 1_000_000 * costRates.cacheRead
+  }
+}
+
+private struct DetailLine: View {
+  let label: String
+  let value: String
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text(label)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      Spacer(minLength: 8)
+      Text(value)
+        .font(.caption2.monospacedDigit())
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+  }
+}
+
+private struct TokenChip: View {
+  let label: String
+  let value: String
+
+  var body: some View {
+    HStack(spacing: 3) {
+      Text(label)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.caption2.monospacedDigit())
+    }
+    .lineLimit(1)
+  }
+}
+
+private struct LoadMoreButton: View {
+  let title: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(title, systemImage: "plus.circle")
+        .font(.caption)
+        .frame(maxWidth: .infinity)
+    }
+    .buttonStyle(.borderless)
+    .focusable(false)
+  }
+}
+
+private func shortTimestamp(_ value: String) -> String {
+  if value.count >= 16 {
+    let start = value.index(value.startIndex, offsetBy: 5)
+    let end = value.index(value.startIndex, offsetBy: 16)
+    return String(value[start..<end])
+  }
+  return value
 }
 
 private struct TrendLineChart: View {

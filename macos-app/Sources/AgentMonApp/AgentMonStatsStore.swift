@@ -4,10 +4,22 @@ struct AgentMonStatsSnapshot: Sendable {
   var scanStatus: AgentMonScanStatus?
   var summary: TokMonSummary?
   var trendBuckets: [TokMonTrendBucket] = []
+  var heatmapDays: [TokMonHeatmapDay] = []
+  var recordsPage: TokMonRecordsPage?
+  var usageSessions: [TokMonUsageSession] = []
+  var selectedUsageSession: TokMonUsageSessionSelection?
+  var selectedSessionRecords: [TokMonRecordRow] = []
   var dashboardState: TokMonDashboardState?
   var updatedAt: Date?
 
   static let empty = AgentMonStatsSnapshot()
+}
+
+struct TokMonUsageSessionSelection: Equatable, Sendable {
+  let source: String
+  let sessionId: String
+
+  var id: String { "\(source):\(sessionId)" }
 }
 
 struct AgentMonScanStatus: Decodable, Equatable, Sendable {
@@ -35,6 +47,9 @@ final class AgentMonStatsStore: ObservableObject {
   private let nativeWorker: TokMonNativeStatsWorker?
   private var appURL: URL?
   private var timerTask: Task<Void, Never>?
+  private var recordsLimit = 20
+  private var usageSessionsLimit = 50
+  private var selectedUsageSession: TokMonUsageSessionSelection?
   private let activityName = "status-popover"
   private let activityTtlMilliseconds = 10_000
 
@@ -44,6 +59,15 @@ final class AgentMonStatsStore: ObservableObject {
 
   var usesNativeEngine: Bool {
     nativeWorker != nil
+  }
+
+  var canLoadMoreRecords: Bool {
+    guard let recordsPage = snapshot.recordsPage else { return false }
+    return usesNativeEngine && recordsPage.rows.count < recordsPage.total
+  }
+
+  var canLoadMoreUsageSessions: Bool {
+    usesNativeEngine && !snapshot.usageSessions.isEmpty && snapshot.usageSessions.count >= usageSessionsLimit
   }
 
   func configure(appURL: URL) {
@@ -78,7 +102,11 @@ final class AgentMonStatsStore: ObservableObject {
 
     do {
       if let nativeWorker {
-        snapshot = try await nativeWorker.refresh()
+        snapshot = try await nativeWorker.refresh(
+          recordsLimit: recordsLimit,
+          sessionsLimit: usageSessionsLimit,
+          selectedSession: selectedUsageSession,
+        )
       } else if let appURL {
         try await refreshHTTP(appURL: appURL)
       }
@@ -89,10 +117,40 @@ final class AgentMonStatsStore: ObservableObject {
         scanStatus: snapshot.scanStatus,
         summary: snapshot.summary,
         trendBuckets: snapshot.trendBuckets,
+        heatmapDays: snapshot.heatmapDays,
+        recordsPage: snapshot.recordsPage,
+        usageSessions: snapshot.usageSessions,
+        selectedUsageSession: snapshot.selectedUsageSession,
+        selectedSessionRecords: snapshot.selectedSessionRecords,
         dashboardState: snapshot.dashboardState,
         updatedAt: snapshot.updatedAt,
       )
     }
+  }
+
+  func loadMoreRecords() {
+    guard usesNativeEngine else { return }
+    recordsLimit += 20
+    requestRefresh()
+  }
+
+  func loadMoreUsageSessions() {
+    guard usesNativeEngine else { return }
+    usageSessionsLimit += 50
+    requestRefresh()
+  }
+
+  func selectUsageSession(source: String, sessionId: String) {
+    guard usesNativeEngine else { return }
+    selectedUsageSession = TokMonUsageSessionSelection(source: source, sessionId: sessionId)
+    requestRefresh()
+  }
+
+  func clearSelectedUsageSession() {
+    guard usesNativeEngine else { return }
+    selectedUsageSession = nil
+    snapshot.selectedUsageSession = nil
+    snapshot.selectedSessionRecords = []
   }
 
   private var refreshDelay: UInt64 {
@@ -118,6 +176,11 @@ final class AgentMonStatsStore: ObservableObject {
       scanStatus: resolvedScanStatus,
       summary: resolvedSummary,
       trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(resolvedTrend, dashboardState: resolvedDashboardState),
+      heatmapDays: snapshot.heatmapDays,
+      recordsPage: snapshot.recordsPage,
+      usageSessions: snapshot.usageSessions,
+      selectedUsageSession: snapshot.selectedUsageSession,
+      selectedSessionRecords: snapshot.selectedSessionRecords,
       dashboardState: resolvedDashboardState,
       updatedAt: Date(),
     )
@@ -234,7 +297,11 @@ private actor TokMonNativeStatsWorker {
     self.nowProvider = nowProvider
   }
 
-  func refresh() throws -> AgentMonStatsSnapshot {
+  func refresh(
+    recordsLimit: Int,
+    sessionsLimit: Int,
+    selectedSession: TokMonUsageSessionSelection?,
+  ) throws -> AgentMonStatsSnapshot {
     let now = nowProvider()
     let config = try engine.configStore.loadConfig()
     let rawUIState = try engine.configStore.loadUIState()
@@ -248,6 +315,17 @@ private actor TokMonNativeStatsWorker {
     )
     let summary = try engine.queryStore.summary(filter: filter)
     let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval)
+    let heatmap = try engine.queryStore.heatmap(source: filter.source, model: filter.model, endingAt: now)
+    let records = try engine.queryStore.records(filter: filter, page: 0, limit: recordsLimit)
+    let sessions = try engine.queryStore.sessions(filter: filter, limit: sessionsLimit)
+    let selectedRecords = try selectedSession.map {
+      try engine.queryStore.recordsForSession(
+        filter: filter,
+        source: $0.source,
+        sessionId: $0.sessionId,
+        limit: 20,
+      )
+    } ?? []
 
     return AgentMonStatsSnapshot(
       scanStatus: AgentMonScanStatus(
@@ -262,6 +340,11 @@ private actor TokMonNativeStatsWorker {
       ),
       summary: summary,
       trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(trend, dashboardState: dashboardState),
+      heatmapDays: heatmap,
+      recordsPage: records,
+      usageSessions: sessions,
+      selectedUsageSession: selectedSession,
+      selectedSessionRecords: selectedRecords,
       dashboardState: dashboardState,
       updatedAt: now,
     )

@@ -319,6 +319,8 @@ struct TokMonUsageSession: Equatable, Identifiable {
   var requests: Int
   var inputTokens: Int
   var outputTokens: Int
+  var cacheCreation: Int
+  var cacheRead: Int
   var firstAt: String
   var lastAt: String
 }

@@ -114,12 +114,26 @@ final class TokMonQueryStore {
     }
   }
 
-  func heatmap(source: String?, model: String?) throws -> [TokMonHeatmapDay] {
-    var whereSQL = "WHERE created_at >= datetime('now', ?)"
-    var params: [TokMonSQLValue] = [.text("-365 days")]
+  func heatmap(source: String?, model: String?, endingAt: Date = Date()) throws -> [TokMonHeatmapDay] {
+    let calendar = Calendar.current
+    let endDay = calendar.startOfDay(for: endingAt)
+    guard let startDay = calendar.date(byAdding: .day, value: -364, to: endDay) else {
+      return []
+    }
+
+    let sqlFormatter = DateFormatter()
+    sqlFormatter.locale = Locale(identifier: "en_US_POSIX")
+    sqlFormatter.timeZone = .current
+    sqlFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+
+    var whereSQL = "WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)"
+    var params: [TokMonSQLValue] = [
+      .text(sqlFormatter.string(from: startDay)),
+      .text(sqlFormatter.string(from: calendar.date(byAdding: DateComponents(day: 1, second: -1), to: endDay) ?? endDay)),
+    ]
     appendOptionalFilters(source: source, model: model, tablePrefix: nil, whereSQL: &whereSQL, params: &params)
 
-    return try requiredDatabase.queryRows("""
+    let rows = try requiredDatabase.queryRows("""
       SELECT strftime('%Y-%m-%d', created_at, 'localtime') as day,
              COUNT(*) as requests,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
@@ -139,10 +153,12 @@ final class TokMonQueryStore {
         cacheRead: row.int(5),
       )
     }
+
+    return fillHeatmapDays(rows: rows, startDay: startDay, endDay: endDay, calendar: calendar)
   }
 
   func models() throws -> [TokMonModelOption] {
-    try requiredDatabase.queryRows("""
+    return try requiredDatabase.queryRows("""
       SELECT model, MAX(created_at) as last_used
       FROM usage_records
       WHERE model != '' AND model != 'unknown' AND model != '<synthetic>'
@@ -192,21 +208,77 @@ final class TokMonQueryStore {
     return TokMonRecordsPage(total: total, page: normalizedPage, limit: normalizedLimit, rows: rows)
   }
 
+  func recordsForSession(
+    filter: TokMonQueryFilter,
+    source: String,
+    sessionId: String,
+    limit: Int,
+  ) throws -> [TokMonRecordRow] {
+    let scoped = scopedWhere(filter: filter, tablePrefix: "u")
+    var params = scoped.params
+    params.append(.text(source))
+    params.append(.text(sessionId))
+    params.append(.int(max(1, limit)))
+
+    return try requiredDatabase.queryRows("""
+      SELECT u.source,
+             u.session_id,
+             u.model,
+             u.input_tokens,
+             u.output_tokens,
+             u.cache_creation,
+             u.cache_read,
+             u.reasoning_tokens,
+             datetime(u.created_at, 'localtime') as created_at
+      FROM usage_records u
+      \(scoped.whereSQL)
+      AND u.source = ?
+      AND u.session_id = ?
+      ORDER BY u.created_at DESC
+      LIMIT ?
+    """, params: params) { row in
+      TokMonRecordRow(
+        source: row.string(0),
+        sessionId: row.string(1),
+        model: row.string(2),
+        inputTokens: row.int(3),
+        outputTokens: row.int(4),
+        cacheCreation: row.int(5),
+        cacheRead: row.int(6),
+        reasoningTokens: row.int(7),
+        createdAt: row.string(8),
+      )
+    }
+  }
+
   func sessions(limit: Int) throws -> [TokMonUsageSession] {
-    try requiredDatabase.queryRows("""
+    try sessions(filter: nil, limit: limit)
+  }
+
+  func sessions(filter: TokMonQueryFilter?, limit: Int) throws -> [TokMonUsageSession] {
+    let scoped = filter.map { scopedWhere(filter: $0) }
+    let whereSQL = scoped?.whereSQL ?? ""
+    let params = scoped?.params ?? []
+    var rowParams = params
+    rowParams.append(.int(max(1, limit)))
+
+    return try requiredDatabase.queryRows("""
       SELECT session_id,
              source,
-             model,
+             CASE WHEN COUNT(DISTINCT model) = 1 THEN MIN(model) ELSE 'Mixed' END as model,
              COUNT(*) as requests,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
+             COALESCE(SUM(cache_creation), 0) as cache_creation,
+             COALESCE(SUM(cache_read), 0) as cache_read,
              MIN(created_at) as first_at,
              MAX(created_at) as last_at
       FROM usage_records
+      \(whereSQL)
       GROUP BY session_id, source
       ORDER BY last_at DESC
       LIMIT ?
-    """, params: [.int(max(1, limit))]) { row in
+    """, params: rowParams) { row in
       TokMonUsageSession(
         sessionId: row.string(0),
         source: row.string(1),
@@ -214,8 +286,10 @@ final class TokMonQueryStore {
         requests: row.int(3),
         inputTokens: row.int(4),
         outputTokens: row.int(5),
-        firstAt: row.string(6),
-        lastAt: row.string(7),
+        cacheCreation: row.int(6),
+        cacheRead: row.int(7),
+        firstAt: row.string(8),
+        lastAt: row.string(9),
       )
     }
   }
@@ -259,6 +333,29 @@ final class TokMonQueryStore {
       return name
     }
     return "\(tablePrefix).\(name)"
+  }
+
+  private func fillHeatmapDays(
+    rows: [TokMonHeatmapDay],
+    startDay: Date,
+    endDay: Date,
+    calendar: Calendar,
+  ) -> [TokMonHeatmapDay] {
+    let lookup = Dictionary(uniqueKeysWithValues: rows.map { ($0.day, $0) })
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd"
+
+    var result: [TokMonHeatmapDay] = []
+    var day = startDay
+    while day <= endDay {
+      let key = formatter.string(from: day)
+      result.append(lookup[key] ?? TokMonHeatmapDay(day: key, requests: 0, inputTokens: 0, outputTokens: 0, cacheCreation: 0, cacheRead: 0))
+      guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+      day = next
+    }
+    return result
   }
 }
 

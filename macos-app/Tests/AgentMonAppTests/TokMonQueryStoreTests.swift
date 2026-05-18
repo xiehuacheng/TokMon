@@ -35,7 +35,55 @@ import Testing
   let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", source: "codex", model: "gpt-a")
 
   let summary = try store.summary(filter: filter)
+  let sessions = try store.sessions(filter: filter, limit: 10)
 
   #expect(summary.total.totalRequests == 1)
   #expect(summary.total.totalInput == 10)
+  #expect(sessions.map(\.sessionId) == ["s1"])
+  #expect(sessions.first?.cacheRead == 0)
+}
+
+@Test func queryStoreReturnsRecordsForSpecificUsageSession() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s2", model: "gpt-a", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:05:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 30, outputTokens: 3, cacheCreation: 0, cacheRead: 0, reasoningTokens: 4, createdAt: "2026-05-14T01:10:00.000Z"))
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", source: "codex", model: nil)
+
+  let rows = try store.recordsForSession(filter: filter, source: "codex", sessionId: "s1", limit: 10)
+
+  #expect(rows.map(\.inputTokens) == [30, 10])
+  #expect(rows.map(\.reasoningTokens) == [4, 0])
+}
+
+@Test func usageSessionsUseMixedModelLabelWhenSessionContainsMultipleModels() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-b", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 3, reasoningTokens: 0, createdAt: "2026-05-14T01:10:00.000Z"))
+  let store = TokMonQueryStore(database: db)
+
+  let sessions = try store.sessions(limit: 10)
+
+  #expect(sessions.count == 1)
+  #expect(sessions.first?.model == "Mixed")
+  #expect(sessions.first?.requests == 2)
+  #expect(sessions.first?.cacheRead == 3)
+}
+
+@Test func heatmapReturns365LocalDaysAndFillsDaysWithoutUsage() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  let store = TokMonQueryStore(database: db)
+
+  let days = try store.heatmap(source: nil, model: nil, endingAt: makeLocalDate("2026-05-14 10:05:30"))
+
+  #expect(days.count == 365)
+  #expect(days.first?.day == "2025-05-15")
+  #expect(days.last?.day == "2026-05-14")
+  #expect(days.filter { $0.requests == 0 }.count == 364)
+  #expect(days.first { $0.day == "2026-05-14" }?.requests == 1)
 }
