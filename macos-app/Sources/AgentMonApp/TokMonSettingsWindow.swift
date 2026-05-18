@@ -80,10 +80,13 @@ struct TokMonSettingsWindow: View {
               Task { try? await store.rebuildAndRescan() }
             }
             .disabled(store.isBusy)
+
+            Button("Check Parity") {
+              Task { try? await store.runParityCheck() }
+            }
+            .disabled(store.isBusy)
           }
-          Text("Legacy parity checks are retained for migration verification.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          parityStatus
         }
       }
 
@@ -121,6 +124,22 @@ struct TokMonSettingsWindow: View {
       }
       .keyboardShortcut(.defaultAction)
       .disabled(store.isBusy)
+    }
+  }
+
+  private var parityStatus: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(store.parityReport?.summary ?? "Compares native queries with retained legacy route SQL semantics.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      if let differences = store.parityReport?.differences, !differences.isEmpty {
+        ForEach(differences.prefix(3)) { difference in
+          Text("\(difference.endpoint).\(difference.path): native \(difference.native), legacy \(difference.legacy)")
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
     }
   }
 }

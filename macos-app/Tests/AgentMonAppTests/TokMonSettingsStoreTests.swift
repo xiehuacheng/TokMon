@@ -58,7 +58,9 @@ import Testing
 @Test func settingsStoreRebuildsAndRescansTokMonData() async throws {
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)
+  let claudeRoot = dataDir.appendingPathComponent("claude", isDirectory: true)
   let sourceRoot = dataDir.appendingPathComponent("codex", isDirectory: true)
+  try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
   try """
   {"type":"session_meta","payload":{"id":"s1","model":"gpt-test"}}
@@ -67,7 +69,7 @@ import Testing
   try configStore.saveConfig(TokMonConfig(
     port: 3388,
     sources: [
-      "claude-code": TokMonSourceConfig(path: dataDir.appendingPathComponent("missing-claude").path),
+      "claude-code": TokMonSourceConfig(path: claudeRoot.path),
       "codex": TokMonSourceConfig(path: sourceRoot.path),
     ],
   ))
@@ -139,4 +141,148 @@ import Testing
   } catch {}
 
   #expect(try database.allUsageRecords().map(\.sessionId) == ["existing"])
+}
+
+@MainActor
+@Test func settingsStoreRunsLegacyParityCheck() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveUIState(TokMonUIState(
+    source: "codex",
+    from: "2026-05-14 08:00:00",
+    to: "2026-05-14 10:00:00",
+    rangeLabel: nil,
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: false,
+    rangeMode: "exact",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  try createLegacySessionsTable(in: database)
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonSettingsStore(engine: engine)
+
+  try await store.runParityCheck(now: makeLocalDate("2026-05-14 10:05:30"))
+
+  #expect(store.parityReport?.passed == true)
+  #expect(store.statusMessage == "Legacy parity passed.")
+}
+
+@MainActor
+@Test func settingsStoreReportsLegacyParityDifferences() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveUIState(TokMonUIState(
+    source: "codex",
+    from: "2026-05-14 08:00:00",
+    to: "2026-05-14 10:00:00",
+    rangeLabel: nil,
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: false,
+    rangeMode: "exact",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  try createLegacySessionsTable(in: database)
+  _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 2, cacheCreation: 1, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-b", inputTokens: 20, outputTokens: 3, cacheCreation: 0, cacheRead: 4, reasoningTokens: 0, createdAt: "2026-05-14T01:10:00.000Z"))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonSettingsStore(engine: engine)
+
+  try await store.runParityCheck(now: makeLocalDate("2026-05-14 10:05:30"))
+
+  #expect(store.parityReport?.passed == false)
+  #expect(store.parityReport?.differences.contains {
+    $0.endpoint == "sessions" && $0.path == "0.model" && $0.native == "Mixed"
+  } == true)
+  #expect(store.parityReport?.differences.contains {
+    $0.endpoint == "sessions" && $0.path == "0.cache_creation" && $0.native == "1" && $0.legacy == "<missing>"
+  } == true)
+  #expect(store.parityReport?.differences.contains {
+    $0.endpoint == "sessions" && $0.path == "0.cache_read" && $0.native == "4" && $0.legacy == "<missing>"
+  } == true)
+  #expect(store.parityReport?.differences.contains {
+    $0.endpoint == "records" && $0.path == "__error"
+  } == false)
+  #expect(store.statusMessage.hasPrefix("Legacy parity failed with "))
+}
+
+@MainActor
+@Test func settingsStoreReportsMissingLegacySessionsTableForRecordsParity() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveUIState(TokMonUIState(
+    source: "codex",
+    from: "2026-05-14 08:00:00",
+    to: "2026-05-14 10:00:00",
+    rangeLabel: nil,
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: false,
+    rangeMode: "exact",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 2, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonSettingsStore(engine: engine)
+
+  try await store.runParityCheck(now: makeLocalDate("2026-05-14 10:05:30"))
+
+  #expect(store.parityReport?.passed == false)
+  #expect(store.parityReport?.differences.contains {
+    $0.endpoint == "records" && $0.path == "__error" && $0.native == "<missing>"
+  } == true)
+  #expect(store.statusMessage.hasPrefix("Legacy parity failed with "))
+}
+
+@MainActor
+@Test func settingsStoreDoesNotClearDatabaseWhenAnyConfiguredSourcePathIsMissing() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  let codexDir = dataDir.appendingPathComponent("codex", isDirectory: true)
+  try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+  try """
+  {"type":"session_meta","payload":{"id":"s1","model":"gpt-test"}}
+  {"type":"event_msg","timestamp":"2026-05-14T01:00:00.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
+  """.write(to: codexDir.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+  try configStore.saveConfig(TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: dataDir.appendingPathComponent("missing-claude").path),
+      "codex": TokMonSourceConfig(path: codexDir.path),
+    ],
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(source: "claude-code", sessionId: "existing", model: "claude", inputTokens: 1, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-13T01:00:00.000Z"))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonSettingsStore(engine: engine)
+
+  do {
+    try await store.rebuildAndRescan()
+    Issue.record("Expected rebuild to fail when any configured source path is missing.")
+  } catch {}
+
+  #expect(try database.allUsageRecords().map(\.sessionId) == ["existing"])
+}
+
+private func createLegacySessionsTable(in database: TokMonDatabase) throws {
+  _ = try database.queryRows("""
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      file_path TEXT
+    )
+  """) { _ in () }
 }
