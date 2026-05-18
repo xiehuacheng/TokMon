@@ -44,7 +44,7 @@ final class AgentMonStatsStore: ObservableObject {
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
 
-  private let nativeWorker: TokMonNativeStatsWorker?
+  private let nativeEngineActor: TokMonEngineActor?
   private var appURL: URL?
   private var timerTask: Task<Void, Never>?
   private var recordsLimit = 20
@@ -54,11 +54,19 @@ final class AgentMonStatsStore: ObservableObject {
   private let activityTtlMilliseconds = 10_000
 
   init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
-    nativeWorker = engine.map { TokMonNativeStatsWorker(engine: $0, nowProvider: nowProvider) }
+    nativeEngineActor = engine.map { TokMonEngineActor(engine: $0) }
+    self.nowProvider = nowProvider
   }
 
+  init(engineActor: TokMonEngineActor, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+    nativeEngineActor = engineActor
+    self.nowProvider = nowProvider
+  }
+
+  private let nowProvider: @Sendable () -> Date
+
   var usesNativeEngine: Bool {
-    nativeWorker != nil
+    nativeEngineActor != nil
   }
 
   var canLoadMoreRecords: Bool {
@@ -101,8 +109,9 @@ final class AgentMonStatsStore: ObservableObject {
     defer { isRefreshing = false }
 
     do {
-      if let nativeWorker {
-        snapshot = try await nativeWorker.refresh(
+      if let nativeEngineActor {
+        snapshot = try await nativeEngineActor.refreshStats(
+          now: nowProvider(),
           recordsLimit: recordsLimit,
           sessionsLimit: usageSessionsLimit,
           selectedSession: selectedUsageSession,
@@ -193,7 +202,7 @@ final class AgentMonStatsStore: ObservableObject {
   }
 
   private func releaseActivity() {
-    guard nativeWorker == nil, let appURL else { return }
+    guard nativeEngineActor == nil, let appURL else { return }
     Task.detached { [activityName] in
       var request = URLRequest(url: appURL.appendingPathComponent("api/activity/\(activityName)"))
       request.httpMethod = "DELETE"
@@ -285,69 +294,6 @@ final class AgentMonStatsStore: ObservableObject {
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw AgentMonAppError("\(url.path) returned HTTP \(httpResponse.statusCode).")
     }
-  }
-}
-
-private actor TokMonNativeStatsWorker {
-  private let engine: TokMonEngine
-  private let nowProvider: @Sendable () -> Date
-
-  init(engine: TokMonEngine, nowProvider: @escaping @Sendable () -> Date) {
-    self.engine = engine
-    self.nowProvider = nowProvider
-  }
-
-  func refresh(
-    recordsLimit: Int,
-    sessionsLimit: Int,
-    selectedSession: TokMonUsageSessionSelection?,
-  ) throws -> AgentMonStatsSnapshot {
-    let now = nowProvider()
-    let config = try engine.configStore.loadConfig()
-    let rawUIState = try engine.configStore.loadUIState()
-    let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
-    let inserted = try engine.scanner.scan(config: config)
-    let filter = TokMonQueryFilter(
-      from: dashboardState.from,
-      to: dashboardState.to,
-      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
-      model: nil,
-    )
-    let summary = try engine.queryStore.summary(filter: filter)
-    let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval)
-    let heatmap = try engine.queryStore.heatmap(source: filter.source, model: filter.model, endingAt: now)
-    let records = try engine.queryStore.records(filter: filter, page: 0, limit: recordsLimit)
-    let sessions = try engine.queryStore.sessions(filter: filter, limit: sessionsLimit)
-    let selectedRecords = try selectedSession.map {
-      try engine.queryStore.recordsForSession(
-        filter: filter,
-        source: $0.source,
-        sessionId: $0.sessionId,
-        limit: 20,
-      )
-    } ?? []
-
-    return AgentMonStatsSnapshot(
-      scanStatus: AgentMonScanStatus(
-        running: false,
-        phase: inserted > 0 ? "Scanned \(inserted) new records" : "Idle",
-        current: 0,
-        total: 0,
-        processed: inserted,
-        startedAt: nil,
-        finishedAt: TokMonStatsSnapshotBuilder.formattedTimestamp(now),
-        error: nil,
-      ),
-      summary: summary,
-      trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(trend, dashboardState: dashboardState),
-      heatmapDays: heatmap,
-      recordsPage: records,
-      usageSessions: sessions,
-      selectedUsageSession: selectedSession,
-      selectedSessionRecords: selectedRecords,
-      dashboardState: dashboardState,
-      updatedAt: now,
-    )
   }
 }
 

@@ -241,6 +241,20 @@ struct StatusPopoverView: View {
 
       Spacer()
 
+      if runtime.usesNativeTokMonEngine {
+        Button {
+          runtime.openSettings()
+        } label: {
+          Image(systemName: "gearshape")
+            .font(.system(size: 14, weight: .semibold))
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help("TokMon Settings")
+      }
+
       if !runtime.usesNativeTokMonEngine {
         Button {
           runtime.openDashboard()

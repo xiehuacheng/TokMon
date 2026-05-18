@@ -99,13 +99,15 @@ final class TokMonConfigStore {
     }
 
     let defaults = TokMonUIState.default
+    let rangeLabel = optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel)
+    let inferredRange = rangeComponents(label: rangeLabel)
     return TokMonUIState(
       source: stringValue(object["source"]) ?? defaults.source,
       from: stringValue(object["from"]) ?? defaults.from,
       to: stringValue(object["to"]) ?? defaults.to,
-      rangeLabel: optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel),
-      rangeHours: optionalIntValue(object["rangeHours"], default: defaults.rangeHours),
-      rangeDays: optionalIntValue(object["rangeDays"], default: defaults.rangeDays),
+      rangeLabel: rangeLabel,
+      rangeHours: optionalIntValue(in: object, key: "rangeHours", default: inferredRange.hours),
+      rangeDays: optionalIntValue(in: object, key: "rangeDays", default: inferredRange.days),
       liveMode: boolValue(object["liveMode"]) ?? defaults.liveMode,
       rangeMode: stringValue(object["rangeMode"]) ?? defaults.rangeMode,
       interval: stringValue(object["interval"]) ?? defaults.interval,
@@ -142,14 +144,29 @@ final class TokMonConfigStore {
     return stringValue(value) ?? defaultValue
   }
 
-  private func optionalIntValue(_ value: Any?, default defaultValue: Int?) -> Int? {
-    guard let value else {
+  private func optionalIntValue(in object: [String: Any], key: String, default defaultValue: Int?) -> Int? {
+    guard let value = object[key] else {
       return defaultValue
     }
     if value is NSNull {
       return nil
     }
     return intValue(value) ?? defaultValue
+  }
+
+  private func rangeComponents(label: String?) -> (hours: Int?, days: Int?) {
+    switch label {
+    case "1H":
+      return (1, nil)
+    case "24H":
+      return (24, nil)
+    case "30D":
+      return (nil, 30)
+    case "90D":
+      return (nil, 90)
+    default:
+      return (nil, 7)
+    }
   }
 
   private func stringValue(_ value: Any?) -> String? {

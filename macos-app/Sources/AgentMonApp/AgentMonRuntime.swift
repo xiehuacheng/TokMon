@@ -8,15 +8,22 @@ final class AgentMonRuntime: ObservableObject {
   let stats: AgentMonStatsStore
   let usesNativeTokMonEngine: Bool
 
+  private let nativeEngineActor: TokMonEngineActor?
+  private let settingsWindowController: TokMonSettingsWindowController?
   private var started = false
 
   init() {
     if let engine = try? Self.makeTokMonEngine() {
-      stats = AgentMonStatsStore(engine: engine)
+      let engineActor = TokMonEngineActor(engine: engine)
+      nativeEngineActor = engineActor
+      stats = AgentMonStatsStore(engineActor: engineActor)
       usesNativeTokMonEngine = true
+      settingsWindowController = TokMonSettingsWindowController(engineActor: engineActor)
     } else {
+      nativeEngineActor = nil
       stats = AgentMonStatsStore()
       usesNativeTokMonEngine = false
+      settingsWindowController = nil
     }
   }
 
@@ -36,6 +43,10 @@ final class AgentMonRuntime: ObservableObject {
     start()
     guard !usesNativeTokMonEngine else { return }
     NSWorkspace.shared.open(server.appURL)
+  }
+
+  func openSettings() {
+    settingsWindowController?.show()
   }
 
   func quit() {
