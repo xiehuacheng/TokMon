@@ -101,6 +101,8 @@ final class TokMonConfigStore {
     let defaults = TokMonUIState.default
     return TokMonUIState(
       source: stringValue(object["source"]) ?? defaults.source,
+      from: stringValue(object["from"]) ?? defaults.from,
+      to: stringValue(object["to"]) ?? defaults.to,
       rangeLabel: optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel),
       rangeHours: optionalIntValue(object["rangeHours"], default: defaults.rangeHours),
       rangeDays: optionalIntValue(object["rangeDays"], default: defaults.rangeDays),

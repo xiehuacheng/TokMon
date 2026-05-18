@@ -1,6 +1,6 @@
 import Foundation
 
-struct AgentMonStatsSnapshot {
+struct AgentMonStatsSnapshot: Sendable {
   var scanStatus: AgentMonScanStatus?
   var summary: TokMonSummary?
   var trendBuckets: [TokMonTrendBucket] = []
@@ -10,7 +10,7 @@ struct AgentMonStatsSnapshot {
   static let empty = AgentMonStatsSnapshot()
 }
 
-struct AgentMonScanStatus: Decodable {
+struct AgentMonScanStatus: Decodable, Equatable, Sendable {
   let running: Bool
   let phase: String
   let current: Int
@@ -32,11 +32,19 @@ final class AgentMonStatsStore: ObservableObject {
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
 
+  private let nativeWorker: TokMonNativeStatsWorker?
   private var appURL: URL?
   private var timerTask: Task<Void, Never>?
-  private let refreshIntervalSeconds = 3
   private let activityName = "status-popover"
   private let activityTtlMilliseconds = 10_000
+
+  init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+    nativeWorker = engine.map { TokMonNativeStatsWorker(engine: $0, nowProvider: nowProvider) }
+  }
+
+  var usesNativeEngine: Bool {
+    nativeWorker != nil
+  }
 
   func configure(appURL: URL) {
     self.appURL = appURL
@@ -49,8 +57,9 @@ final class AgentMonStatsStore: ObservableObject {
     if timerTask == nil {
       timerTask = Task { [weak self] in
         while !Task.isCancelled {
-          try? await Task.sleep(nanoseconds: UInt64(self?.refreshIntervalSeconds ?? 3) * 1_000_000_000)
-          await self?.refresh()
+          guard let self else { return }
+          try? await Task.sleep(nanoseconds: self.refreshDelay)
+          await self.refresh()
         }
       }
     }
@@ -64,32 +73,15 @@ final class AgentMonStatsStore: ObservableObject {
   }
 
   func refresh() async {
-    guard let appURL else { return }
-
     isRefreshing = true
     defer { isRefreshing = false }
 
     do {
-      try await renewActivity(appURL: appURL)
-      _ = try? await triggerTokMonScan(appURL: appURL)
-
-      async let scanStatus = fetchScanStatus(appURL: appURL)
-      async let dashboardState = fetchDashboardState(appURL: appURL)
-
-      let resolvedScanStatus = try await scanStatus
-      let resolvedDashboardState = try await dashboardState
-      async let summary = fetchTokMonSummary(appURL: appURL, dashboardState: resolvedDashboardState)
-      async let trend = fetchTokMonTrend(appURL: appURL, dashboardState: resolvedDashboardState)
-      let resolvedSummary = try await summary
-      let resolvedTrend = try await trend
-
-      snapshot = AgentMonStatsSnapshot(
-        scanStatus: resolvedScanStatus,
-        summary: resolvedSummary,
-        trendBuckets: fillTrendBuckets(resolvedTrend, dashboardState: resolvedDashboardState),
-        dashboardState: resolvedDashboardState,
-        updatedAt: Date(),
-      )
+      if let nativeWorker {
+        snapshot = try await nativeWorker.refresh()
+      } else if let appURL {
+        try await refreshHTTP(appURL: appURL)
+      }
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -103,6 +95,34 @@ final class AgentMonStatsStore: ObservableObject {
     }
   }
 
+  private var refreshDelay: UInt64 {
+    let milliseconds = max(snapshot.dashboardState?.refreshRate ?? 3000, 1000)
+    return UInt64(milliseconds) * 1_000_000
+  }
+
+  private func refreshHTTP(appURL: URL) async throws {
+    try await renewActivity(appURL: appURL)
+    _ = try? await triggerTokMonScan(appURL: appURL)
+
+    async let scanStatus = fetchScanStatus(appURL: appURL)
+    async let dashboardState = fetchDashboardState(appURL: appURL)
+
+    let resolvedScanStatus = try await scanStatus
+    let resolvedDashboardState = try await dashboardState
+    async let summary = fetchTokMonSummary(appURL: appURL, dashboardState: resolvedDashboardState)
+    async let trend = fetchTokMonTrend(appURL: appURL, dashboardState: resolvedDashboardState)
+    let resolvedSummary = try await summary
+    let resolvedTrend = try await trend
+
+    snapshot = AgentMonStatsSnapshot(
+      scanStatus: resolvedScanStatus,
+      summary: resolvedSummary,
+      trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(resolvedTrend, dashboardState: resolvedDashboardState),
+      dashboardState: resolvedDashboardState,
+      updatedAt: Date(),
+    )
+  }
+
   private func requestRefresh() {
     Task { [weak self] in
       await self?.refresh()
@@ -110,7 +130,7 @@ final class AgentMonStatsStore: ObservableObject {
   }
 
   private func releaseActivity() {
-    guard let appURL else { return }
+    guard nativeWorker == nil, let appURL else { return }
     Task.detached { [activityName] in
       var request = URLRequest(url: appURL.appendingPathComponent("api/activity/\(activityName)"))
       request.httpMethod = "DELETE"
@@ -135,61 +155,6 @@ final class AgentMonStatsStore: ObservableObject {
     let (data, response) = try await URLSession.shared.data(from: url)
     try validate(response: response, url: url)
     _ = data
-  }
-
-  private nonisolated func fillTrendBuckets(
-    _ buckets: [TokMonTrendBucket],
-    dashboardState: TokMonDashboardState,
-  ) -> [TokMonTrendBucket] {
-    let interval = TokMonTrendInterval(dashboardState.interval)
-    let calendar = Calendar.current
-    let lookup = Dictionary(uniqueKeysWithValues: buckets.map { ($0.bucket, $0) })
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = .current
-    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-
-    guard
-      let rawStart = formatter.date(from: dashboardState.from),
-      let rawEnd = formatter.date(from: dashboardState.to)
-    else {
-      return buckets
-    }
-
-    let start: Date
-    let end: Date
-    let stepComponent: Calendar.Component
-
-    switch interval {
-    case .day:
-      start = calendar.startOfDay(for: rawStart)
-      end = calendar.startOfDay(for: rawEnd)
-      stepComponent = .day
-    case .hour:
-      start = calendar.dateInterval(of: .hour, for: rawStart)?.start ?? rawStart
-      end = calendar.dateInterval(of: .hour, for: rawEnd)?.start ?? rawEnd
-      stepComponent = .hour
-    }
-
-    var current = start
-    var result: [TokMonTrendBucket] = []
-
-    while current <= end {
-      let key = trendBucketKey(for: current, interval: interval)
-      result.append(lookup[key] ?? TokMonTrendBucket(bucket: key))
-      guard let next = calendar.date(byAdding: stepComponent, value: 1, to: current) else { break }
-      current = next
-    }
-
-    return result
-  }
-
-  private nonisolated func trendBucketKey(for date: Date, interval: TokMonTrendInterval) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = .current
-    formatter.dateFormat = interval == .day ? "yyyy-MM-dd" : "yyyy-MM-dd HH:00"
-    return formatter.string(from: date)
   }
 
   private nonisolated func fetchScanStatus(appURL: URL) async throws -> AgentMonScanStatus {
@@ -257,5 +222,189 @@ final class AgentMonStatsStore: ObservableObject {
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw AgentMonAppError("\(url.path) returned HTTP \(httpResponse.statusCode).")
     }
+  }
+}
+
+private actor TokMonNativeStatsWorker {
+  private let engine: TokMonEngine
+  private let nowProvider: @Sendable () -> Date
+
+  init(engine: TokMonEngine, nowProvider: @escaping @Sendable () -> Date) {
+    self.engine = engine
+    self.nowProvider = nowProvider
+  }
+
+  func refresh() throws -> AgentMonStatsSnapshot {
+    let now = nowProvider()
+    let config = try engine.configStore.loadConfig()
+    let rawUIState = try engine.configStore.loadUIState()
+    let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
+    let inserted = try engine.scanner.scan(config: config)
+    let filter = TokMonQueryFilter(
+      from: dashboardState.from,
+      to: dashboardState.to,
+      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      model: nil,
+    )
+    let summary = try engine.queryStore.summary(filter: filter)
+    let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval)
+
+    return AgentMonStatsSnapshot(
+      scanStatus: AgentMonScanStatus(
+        running: false,
+        phase: inserted > 0 ? "Scanned \(inserted) new records" : "Idle",
+        current: 0,
+        total: 0,
+        processed: inserted,
+        startedAt: nil,
+        finishedAt: TokMonStatsSnapshotBuilder.formattedTimestamp(now),
+        error: nil,
+      ),
+      summary: summary,
+      trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(trend, dashboardState: dashboardState),
+      dashboardState: dashboardState,
+      updatedAt: now,
+    )
+  }
+}
+
+enum TokMonStatsSnapshotBuilder {
+  static func fillTrendBuckets(
+    _ buckets: [TokMonTrendBucket],
+    dashboardState: TokMonDashboardState,
+  ) -> [TokMonTrendBucket] {
+    let interval = TokMonTrendInterval(dashboardState.interval)
+    let calendar = Calendar.current
+    let lookup = Dictionary(uniqueKeysWithValues: buckets.map { ($0.bucket, $0) })
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+
+    guard
+      let rawStart = formatter.date(from: dashboardState.from),
+      let rawEnd = formatter.date(from: dashboardState.to)
+    else {
+      return buckets
+    }
+
+    let start: Date
+    let end: Date
+    let stepComponent: Calendar.Component
+
+    switch interval {
+    case .day:
+      start = calendar.startOfDay(for: rawStart)
+      end = calendar.startOfDay(for: rawEnd)
+      stepComponent = .day
+    case .hour:
+      start = calendar.dateInterval(of: .hour, for: rawStart)?.start ?? rawStart
+      end = calendar.dateInterval(of: .hour, for: rawEnd)?.start ?? rawEnd
+      stepComponent = .hour
+    }
+
+    var current = start
+    var result: [TokMonTrendBucket] = []
+
+    while current <= end {
+      let key = trendBucketKey(for: current, interval: interval)
+      result.append(lookup[key] ?? TokMonTrendBucket(bucket: key))
+      guard let next = calendar.date(byAdding: stepComponent, value: 1, to: current) else { break }
+      current = next
+    }
+
+    return result
+  }
+
+  static func currentDashboardState(from uiState: TokMonUIState, now: Date) -> TokMonDashboardState {
+    let range = resolvedRange(for: uiState, now: now)
+    return TokMonDashboardState(
+      source: uiState.source,
+      from: range.from,
+      to: range.to,
+      interval: uiState.interval,
+      liveMode: uiState.liveMode,
+      rangeMode: uiState.rangeMode,
+      rangeLabel: uiState.rangeLabel,
+      rangeHours: uiState.rangeHours,
+      rangeDays: uiState.rangeDays,
+      refreshRate: uiState.refreshRate,
+      activeSeries: uiState.activeSeries,
+      estimatedCost: 0,
+      costRates: uiState.costRates,
+      updatedAt: isoTimestamp(now),
+    )
+  }
+
+  static func formattedTimestamp(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter.string(from: date)
+  }
+
+  private static func resolvedRange(for uiState: TokMonUIState, now: Date) -> (from: String, to: String) {
+    if !uiState.liveMode {
+      return (
+        uiState.from.isEmpty ? "2000-01-01 00:00:00" : uiState.from,
+        uiState.to.isEmpty ? "2099-12-31 23:59:59" : uiState.to
+      )
+    }
+
+    guard uiState.liveMode, uiState.rangeHours != nil || uiState.rangeDays != nil else {
+      return ("2000-01-01 00:00:00", "2099-12-31 23:59:59")
+    }
+
+    let calendar = Calendar.current
+    let from: Date
+    if let rangeHours = uiState.rangeHours {
+      if uiState.rangeMode == "round" {
+        let roundedNow = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        from = calendar.date(byAdding: .hour, value: -rangeHours + 1, to: roundedNow) ?? now
+      } else {
+        from = calendar.date(byAdding: .hour, value: -rangeHours, to: now) ?? now
+      }
+    } else if let rangeDays = uiState.rangeDays {
+      if uiState.rangeMode == "round" {
+        let today = calendar.startOfDay(for: now)
+        from = calendar.date(byAdding: .day, value: -rangeDays + 1, to: today) ?? now
+      } else {
+        from = calendar.date(byAdding: .day, value: -rangeDays, to: now) ?? now
+      }
+    } else {
+      from = now
+    }
+
+    return (formattedDashboardBoundary(from, seconds: 0), formattedDashboardBoundary(now, seconds: 59))
+  }
+
+  private static func trendBucketKey(for date: Date, interval: TokMonTrendInterval) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = interval == .day ? "yyyy-MM-dd" : "yyyy-MM-dd HH:00"
+    return formatter.string(from: date)
+  }
+
+  private static func formattedDashboardBoundary(_ date: Date, seconds: Int) -> String {
+    var calendar = Calendar.current
+    calendar.timeZone = .current
+    let adjusted = calendar.date(
+      bySettingHour: calendar.component(.hour, from: date),
+      minute: calendar.component(.minute, from: date),
+      second: seconds,
+      of: date,
+    ) ?? date
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter.string(from: adjusted)
+  }
+
+  private static func isoTimestamp(_ date: Date) -> String {
+    ISO8601DateFormatter().string(from: date)
   }
 }

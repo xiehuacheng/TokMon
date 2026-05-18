@@ -35,6 +35,8 @@ struct TokMonCostRates: Codable, Equatable {
 
 struct TokMonUIState: Codable, Equatable {
   var source: String
+  var from: String
+  var to: String
   var rangeLabel: String?
   var rangeHours: Int?
   var rangeDays: Int?
@@ -47,6 +49,8 @@ struct TokMonUIState: Codable, Equatable {
 
   static let `default` = TokMonUIState(
     source: "",
+    from: "",
+    to: "",
     rangeLabel: "7D",
     rangeHours: nil,
     rangeDays: 7,
@@ -404,6 +408,38 @@ struct TokMonDashboardState: Decodable {
     case estimatedCost
     case costRates
     case updatedAt
+  }
+
+  init(
+    source: String,
+    from: String,
+    to: String,
+    interval: String,
+    liveMode: Bool,
+    rangeMode: String,
+    rangeLabel: String?,
+    rangeHours: Int?,
+    rangeDays: Int?,
+    refreshRate: Int,
+    activeSeries: String,
+    estimatedCost: Double,
+    costRates: TokMonCostRates,
+    updatedAt: String,
+  ) {
+    self.source = source
+    self.from = from
+    self.to = to
+    self.interval = interval
+    self.liveMode = liveMode
+    self.rangeMode = rangeMode
+    self.rangeLabel = rangeLabel
+    self.rangeHours = rangeHours
+    self.rangeDays = rangeDays
+    self.refreshRate = refreshRate
+    self.activeSeries = activeSeries
+    self.estimatedCost = estimatedCost
+    self.costRates = costRates
+    self.updatedAt = updatedAt
   }
 
   init(from decoder: Decoder) throws {

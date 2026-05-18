@@ -52,17 +52,19 @@ struct StatusPopoverView: View {
 
       Spacer()
 
-      Button {
-        runtime.openDashboard()
-      } label: {
-        Image(systemName: "safari")
-          .font(.system(size: 14, weight: .semibold))
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
+      if !runtime.usesNativeTokMonEngine {
+        Button {
+          runtime.openDashboard()
+        } label: {
+          Image(systemName: "safari")
+            .font(.system(size: 14, weight: .semibold))
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help("Open Dashboard")
       }
-      .buttonStyle(.plain)
-      .focusable(false)
-      .help("Open Dashboard")
 
       Button {
         runtime.quit()
@@ -76,20 +78,22 @@ struct StatusPopoverView: View {
       .focusable(false)
       .help("Quit AgentMon")
 
-      Button {
-        server.restart()
-      } label: {
-        Label("Restart Dashboard Service", systemImage: server.phase == .starting ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
-          .labelStyle(.iconOnly)
-          .font(.system(size: 14, weight: .semibold))
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
+      if !runtime.usesNativeTokMonEngine {
+        Button {
+          server.restart()
+        } label: {
+          Label("Restart Dashboard Service", systemImage: server.phase == .starting ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
+            .labelStyle(.iconOnly)
+            .font(.system(size: 14, weight: .semibold))
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .disabled(server.phase == .starting)
+        .accessibilityLabel("Restart Dashboard Service")
+        .help("Restart Dashboard Service")
       }
-      .buttonStyle(.plain)
-      .focusable(false)
-      .disabled(server.phase == .starting)
-      .accessibilityLabel("Restart Dashboard Service")
-      .help("Restart Dashboard Service")
     }
   }
 
@@ -314,15 +318,19 @@ struct StatusPopoverView: View {
   }
 
   private var serverLine: String {
+    if runtime.usesNativeTokMonEngine {
+      return "Native TokMon"
+    }
+
     switch server.phase {
     case .idle:
-      "Ready"
+      return "Ready"
     case .starting:
-      "Starting local server"
+      return "Starting local server"
     case .running(let attached):
-      attached ? "Connected to existing server" : "Local server running"
+      return attached ? "Connected to existing server" : "Local server running"
     case .failed:
-      "Server failed"
+      return "Server failed"
     }
   }
 

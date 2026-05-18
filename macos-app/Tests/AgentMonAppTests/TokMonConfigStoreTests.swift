@@ -22,6 +22,8 @@ import Testing
   try """
   {
     "source": "codex",
+    "from": "2026-05-13 00:00:00",
+    "to": "2026-05-14 00:00:00",
     "interval": "hour",
     "liveMode": true,
     "rangeMode": "round",
@@ -43,6 +45,8 @@ import Testing
   let state = try store.loadUIState()
 
   #expect(state.source == "codex")
+  #expect(state.from == "2026-05-13 00:00:00")
+  #expect(state.to == "2026-05-14 00:00:00")
   #expect(state.interval == "hour")
   #expect(state.rangeMode == "round")
   #expect(state.rangeLabel == "24H")
@@ -83,6 +87,8 @@ import Testing
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
   #expect(state.source == "codex")
+  #expect(state.from == "")
+  #expect(state.to == "")
   #expect(state.rangeLabel == "7D")
   #expect(state.rangeHours == nil)
   #expect(state.rangeDays == 7)
