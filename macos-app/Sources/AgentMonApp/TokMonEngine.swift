@@ -8,7 +8,7 @@ final class TokMonEngine {
   let parityVerifier: TokMonParityVerifier
 
   init(
-    configStore: TokMonConfigStore = TokMonConfigStore(),
+    configStore: TokMonConfigStore,
     database: TokMonDatabase = TokMonDatabase(),
     scanner: TokMonScanner = TokMonScanner(),
     queryStore: TokMonQueryStore = TokMonQueryStore(),
