@@ -9,7 +9,7 @@ final class TokMonEngine {
 
   init(
     configStore: TokMonConfigStore,
-    database: TokMonDatabase = TokMonDatabase(),
+    database: TokMonDatabase,
     scanner: TokMonScanner = TokMonScanner(),
     queryStore: TokMonQueryStore = TokMonQueryStore(),
     parityVerifier: TokMonParityVerifier = TokMonParityVerifier(),

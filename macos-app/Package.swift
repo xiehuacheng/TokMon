@@ -14,6 +14,9 @@ let package = Package(
     .executableTarget(
       name: "AgentMonApp",
       path: "Sources/AgentMonApp",
+      linkerSettings: [
+        .linkedLibrary("sqlite3"),
+      ],
     ),
     .testTarget(
       name: "AgentMonAppTests",
