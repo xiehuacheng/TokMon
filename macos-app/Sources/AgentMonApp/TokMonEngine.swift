@@ -10,13 +10,13 @@ final class TokMonEngine {
   init(
     configStore: TokMonConfigStore,
     database: TokMonDatabase,
-    scanner: TokMonScanner = TokMonScanner(),
+    scanner: TokMonScanner? = nil,
     queryStore: TokMonQueryStore = TokMonQueryStore(),
     parityVerifier: TokMonParityVerifier = TokMonParityVerifier(),
   ) {
     self.configStore = configStore
     self.database = database
-    self.scanner = scanner
+    self.scanner = scanner ?? TokMonScanner(database: database)
     self.queryStore = queryStore
     self.parityVerifier = parityVerifier
   }
