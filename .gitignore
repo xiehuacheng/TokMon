@@ -1,8 +1,10 @@
 node_modules/
 dist/
 coverage/
+.superpowers/
 .worktrees
 .worktrees/
+docs/superpowers/
 
 # Runtime databases and local scan state
 *.db

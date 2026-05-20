@@ -76,7 +76,6 @@ struct TokMonSettingsDraft: Equatable {
   var source = TokMonUIState.default.source
   var rangeLabel = TokMonUIState.default.rangeLabel ?? "7D"
   var liveMode = TokMonUIState.default.liveMode
-  var rangeMode = TokMonUIState.default.rangeMode
   var interval = TokMonUIState.default.interval
   var activeSeries = TokMonUIState.default.activeSeries
   var refreshRate = TokMonUIState.default.refreshRate
@@ -84,6 +83,8 @@ struct TokMonSettingsDraft: Equatable {
   var outputRate = TokMonUIState.default.costRates.output
   var cacheCreateRate = TokMonUIState.default.costRates.cacheCreate
   var cacheReadRate = TokMonUIState.default.costRates.cacheRead
+  var modelPricing = TokMonUIState.default.modelPricing
+  var availableModels: [TokMonModelOption] = []
 }
 
 enum TokMonSettingsError: LocalizedError {

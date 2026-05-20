@@ -2,12 +2,11 @@ import SwiftUI
 
 struct StatusPopoverView: View {
   @EnvironmentObject private var runtime: AgentMonRuntime
-  @EnvironmentObject private var server: AgentMonServer
   @EnvironmentObject private var stats: AgentMonStatsStore
   @State private var selectedPage = TokMonPopoverPage.overview
-  @State private var selectedSeries = TokMonSeriesPresentation(rawValue: "total")
+  @State private var selectedSeries = TokMonSeriesPresentation.total
   @State private var expandedRequestId: String?
-
+  @State private var isTotalTokensExpanded = false
   private let numberFormatter: NumberFormatter = {
     let formatter = NumberFormatter()
     formatter.numberStyle = .decimal
@@ -15,47 +14,59 @@ struct StatusPopoverView: View {
   }()
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 14) {
-        header
-
-        if let errorMessage = stats.errorMessage {
-          Text(errorMessage)
-            .font(.caption)
-            .foregroundStyle(TokMonMetricColor.red.swiftUIColor)
-            .lineLimit(2)
+    TokMonLiquidGlassScene {
+      ScrollView(showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 10) {
+          header
+          errorBanner
+          SystemMenuPageRail(
+            pages: availablePages,
+            selectedPage: selectedPage,
+            onSelect: { selectedPage = $0 },
+          )
+          rangeControl
+          currentPage
         }
-
-        pagePicker
-        dashboardStatePanel
-        currentPageContent
-        footer
+        .padding(11)
+        .frame(maxWidth: .infinity, minHeight: 740, alignment: .topLeading)
+        .background(Color.black.opacity(0.001))
+        .contentShape(Rectangle())
       }
-      .padding(16)
     }
-    .frame(width: 360, height: 500)
+    .background(alignment: .top) {
+      StatusPanelShell()
+    }
+    .frame(width: 360, height: 740)
     .onChange(of: stats.snapshot.dashboardState?.activeSeries, initial: true) { _, activeSeries in
       selectedSeries = TokMonSeriesPresentation(rawValue: activeSeries ?? "total")
     }
   }
 
-  private var pagePicker: some View {
-    Picker("TokMon Page", selection: $selectedPage) {
-      ForEach(availablePages) { page in
-        Text(page.title).tag(page)
-      }
+  @ViewBuilder
+  private var errorBanner: some View {
+    if let errorMessage = stats.errorMessage {
+      Text(errorMessage)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(TokMonGlass.danger)
+        .lineLimit(2)
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(Color.black.opacity(0.22))
+            .overlay {
+              RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(TokMonGlass.danger.opacity(0.32), lineWidth: 1)
+            }
+        }
     }
-    .pickerStyle(.segmented)
-    .labelsHidden()
   }
 
   @ViewBuilder
-  private var currentPageContent: some View {
+  private var currentPage: some View {
     switch selectedPage {
     case .overview:
       overviewPage
-    case .trends:
-      trendsPage
     case .requests:
       requestsPage
     case .sessions:
@@ -63,49 +74,111 @@ struct StatusPopoverView: View {
     }
   }
 
-  private var overviewPage: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      metricsGrid
-      scanStatus
-      sourceBreakdown
-      modelBreakdown
+  private var header: some View {
+    HStack(alignment: .center, spacing: 10) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(Color.white.opacity(0.12))
+          .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+          }
+        Text("A")
+          .font(.system(size: 17, weight: .black, design: .rounded))
+          .foregroundStyle(TokMonGlass.neutralTint)
+      }
+      .frame(width: 30, height: 30)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text("AgentMon")
+          .font(.system(size: 14, weight: .heavy, design: .rounded))
+          .foregroundStyle(TokMonGlass.neutralTint)
+        Text("\(serverLine) · \(updatedLine)")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(1)
+      }
+
+      Spacer()
+
+      HeaderIconButton(systemName: "gearshape", help: "TokMon Settings") {
+        runtime.openSettings()
+      }
+      HeaderIconButton(systemName: "power", help: "Quit AgentMon") {
+        runtime.quit()
+      }
     }
   }
 
-  private var trendsPage: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      trendPanel
-      if stats.usesNativeEngine {
-        heatmapPanel
+  private var rangeControl: some View {
+    Group {
+      if let state = stats.snapshot.dashboardState, stats.usesNativeEngine {
+        RangePresetControl(
+          selectedLabel: TokMonRangePreset(label: state.rangeLabel).label,
+          onSelect: selectRangePreset,
+        )
+      } else if let state = stats.snapshot.dashboardState {
+        Text(state.rangeDisplay)
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        Text("Waiting for TokMon settings...")
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
+  }
+
+  private var overviewPage: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      AgentMonHudMetricGrid(
+        metrics: primaryMetrics,
+        tokenDetails: secondaryMetrics,
+        isTotalExpanded: isTotalTokensExpanded,
+        onToggleTotalExpanded: toggleTotalTokensExpanded,
+        onSelect: selectSeries,
+      )
+      AgentMonHudTrendCard(
+        title: "Trend",
+        valueLabel: selectedSeries.label,
+        points: trendPoints(for: selectedSeries.key),
+        color: selectedSeries.tintColor,
+      )
+      AgentMonHudActivityCard(
+        days: stats.snapshot.heatmapDays,
+        selectedSeries: selectedSeries.key,
+        colorForValue: heatmapColor,
+      )
+      AgentMonHudBreakdownCard(
+        title: "Top Models",
+        trailingTitle: selectedSeries.isCost ? "Cost" : selectedSeries.label,
+        rows: modelRows,
+      )
+      AgentMonHudBreakdownCard(
+        title: "Sources",
+        trailingTitle: selectedSeries.isCost ? "Cost" : selectedSeries.label,
+        rows: sourceRows,
+      )
+    }
+    .font(.system(size: 12, weight: .regular, design: .rounded))
   }
 
   private var requestsPage: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      let recordsPage = stats.snapshot.recordsPage
-      let rows = stats.snapshot.recordsPage?.rows ?? []
+    let rows = stats.snapshot.recordsPage?.rows ?? []
+    let total = stats.snapshot.recordsPage?.total ?? 0
 
-      HStack {
-        SectionTitle("Requests")
-        Spacer()
-        if let recordsPage, recordsPage.total > 0 {
-          Text("Showing \(rows.count) of \(recordsPage.total)")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-      }
-
+    return VStack(alignment: .leading, spacing: 9) {
+      AgentMonHudSectionHeader("Requests", trailing: total > 0 ? "Showing \(rows.count) of \(total)" : nil)
       if rows.isEmpty {
-        Text("No requests in the selected range.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        emptyState("No requests in the selected range.")
       } else {
         ForEach(rows) { row in
           RequestRowView(
             row: row,
             isExpanded: expandedRequestId == row.id,
-            costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
+            costRates: costRates(forModel: row.model),
             sourceLabel: labelForSource(row.source),
             sourceColor: colorForSource(row.source),
             formatCompact: formatChartValue,
@@ -118,7 +191,6 @@ struct StatusPopoverView: View {
             },
           )
         }
-
         if stats.canLoadMoreRecords {
           LoadMoreButton(title: "Load More Requests") {
             stats.loadMoreRecords()
@@ -126,32 +198,23 @@ struct StatusPopoverView: View {
         }
       }
     }
+    .padding(9)
+    .hudCard()
   }
 
   private var sessionsPage: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      let sessions = stats.snapshot.usageSessions
+    let sessions = stats.snapshot.usageSessions
 
-      HStack {
-        SectionTitle("Sessions")
-        Spacer()
-        if !sessions.isEmpty {
-          Text("Latest \(sessions.count)")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-      }
-
+    return VStack(alignment: .leading, spacing: 9) {
+      AgentMonHudSectionHeader("Sessions", trailing: sessions.isEmpty ? nil : "Latest \(sessions.count)")
       if sessions.isEmpty {
-        Text("No usage sessions yet.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        emptyState("No usage sessions yet.")
       } else {
         ForEach(sessions) { session in
           SessionRowView(
             session: session,
             isSelected: stats.snapshot.selectedUsageSession?.id == session.id,
-            costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
+            costRates: costRates(forSession: session),
             sourceLabel: labelForSource(session.source),
             sourceColor: colorForSource(session.source),
             formatCompact: formatChartValue,
@@ -161,431 +224,142 @@ struct StatusPopoverView: View {
             },
           )
         }
-
         if stats.canLoadMoreUsageSessions {
           LoadMoreButton(title: "Load More Sessions") {
             stats.loadMoreUsageSessions()
           }
         }
-
         selectedSessionDrilldown
       }
     }
+    .padding(9)
+    .hudCard()
   }
 
+  @ViewBuilder
   private var selectedSessionDrilldown: some View {
-    let selection = stats.snapshot.selectedUsageSession
-    let rows = stats.snapshot.selectedSessionRecords
+    if let selection = stats.snapshot.selectedUsageSession {
+      let rows = stats.snapshot.selectedSessionRecords
+      let selectedSession = stats.snapshot.usageSessions.first { $0.id == selection.id }
 
-    return Group {
-      if let selection {
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            SectionTitle("Session Requests")
-            Spacer()
-            Button {
-              stats.clearSelectedUsageSession()
-            } label: {
-              Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .help("Close Session Requests")
-          }
-
-          Text("\(labelForSource(selection.source)) · \(selection.sessionId)")
-            .font(.caption2.monospaced())
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-
-          if rows.isEmpty {
-            Text("No requests in this session for the selected range.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          } else {
-            ForEach(rows) { row in
-              RequestRowView(
-                row: row,
-                isExpanded: expandedRequestId == row.id,
-                costRates: stats.snapshot.dashboardState?.costRates ?? .zero,
-                sourceLabel: labelForSource(row.source),
-                sourceColor: colorForSource(row.source),
-                formatCompact: formatChartValue,
-                formatCost: formatCost,
-                onToggleDetails: {
-                  expandedRequestId = expandedRequestId == row.id ? nil : row.id
-                },
-                onJumpToSession: nil,
-              )
-            }
-          }
-        }
-        .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-      }
-    }
-  }
-
-  private var header: some View {
-    HStack(alignment: .center) {
-      VStack(alignment: .leading, spacing: 3) {
-        Text("AgentMon")
-          .font(.headline)
-        Text(serverLine)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Spacer()
-
-      if runtime.usesNativeTokMonEngine {
-        Button {
-          runtime.openSettings()
-        } label: {
-          Image(systemName: "gearshape")
-            .font(.system(size: 14, weight: .semibold))
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help("TokMon Settings")
-      }
-
-      if !runtime.usesNativeTokMonEngine {
-        Button {
-          runtime.openDashboard()
-        } label: {
-          Image(systemName: "safari")
-            .font(.system(size: 14, weight: .semibold))
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help("Open Dashboard")
-      }
-
-      Button {
-        runtime.quit()
-      } label: {
-        Image(systemName: "power")
-          .font(.system(size: 14, weight: .semibold))
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .focusable(false)
-      .help("Quit AgentMon")
-
-      if !runtime.usesNativeTokMonEngine {
-        Button {
-          server.restart()
-        } label: {
-          Label("Restart Dashboard Service", systemImage: server.phase == .starting ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
-            .labelStyle(.iconOnly)
-            .font(.system(size: 14, weight: .semibold))
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .disabled(server.phase == .starting)
-        .accessibilityLabel("Restart Dashboard Service")
-        .help("Restart Dashboard Service")
-      }
-    }
-  }
-
-  private var metricsGrid: some View {
-    let totals = stats.snapshot.summary?.total
-
-    return LazyVGrid(
-      columns: [
-        GridItem(.flexible(), spacing: 6),
-        GridItem(.flexible(), spacing: 6),
-        GridItem(.flexible(), spacing: 6),
-      ],
-      alignment: .leading,
-      spacing: 6,
-    ) {
-      MetricTile(
-        series: .total,
-        value: formatCompact(totals?.totalTokens),
-        isSelected: selectedSeries.key == .total,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .requests,
-        value: formatCompact(totals?.totalRequests),
-        isSelected: selectedSeries.key == .requests,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .input,
-        value: formatCompact(totals?.totalInput),
-        isSelected: selectedSeries.key == .input,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .output,
-        value: formatCompact(totals?.totalOutput),
-        isSelected: selectedSeries.key == .output,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .cache,
-        value: formatCompact(totals?.totalCacheCreation),
-        isSelected: selectedSeries.key == .cache,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .cacheHit,
-        value: formatCompact(totals?.totalCacheRead),
-        isSelected: selectedSeries.key == .cacheHit,
-        onSelect: selectSeries,
-      )
-      MetricTile(
-        series: .cost,
-        value: formatCost(currentEstimatedCost),
-        isSelected: selectedSeries.key == .cost,
-        onSelect: selectSeries,
-      )
-    }
-  }
-
-  private var dashboardStatePanel: some View {
-    Group {
-      if let state = stats.snapshot.dashboardState {
-        VStack(spacing: 6) {
-          HStack(spacing: 6) {
-            StatePill(label: "Range", value: state.rangeDisplay)
-            StatePill(label: "Source", value: state.sourceLabel)
-          }
-          HStack(spacing: 6) {
-            StatePill(label: "Mode", value: "\(state.liveMode ? "Live" : "Fixed") · \(state.interval.capitalized)")
-            StatePill(label: "Time", value: state.rangeModeLabel)
-          }
-        }
-      } else {
-        Text("Waiting for dashboard settings...")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }
-    .padding(8)
-    .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 8))
-  }
-
-  private var scanStatus: some View {
-    return VStack(alignment: .leading, spacing: 8) {
-      SectionTitle("Scan")
-
-      if let scanStatus = stats.snapshot.scanStatus {
+      VStack(alignment: .leading, spacing: 10) {
         HStack {
-          Circle()
-            .fill(scanStatus.running ? TokMonMetricColor.accent.swiftUIColor : TokMonMetricColor.green.swiftUIColor)
-            .frame(width: 8, height: 8)
-          Text(scanStatus.phase)
-            .font(.caption)
-            .lineLimit(1)
+          AgentMonHudSectionHeader("Session Requests", trailing: nil)
           Spacer()
-          Text(scanStatus.running ? "\(scanStatus.current)/\(scanStatus.total)" : "Idle")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+          Button {
+            stats.clearSelectedUsageSession()
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .font(.system(size: 15, weight: .semibold))
+          }
+          .buttonStyle(.plain)
+          .focusable(false)
         }
+        Text("\(labelForSource(selection.source)) · \(selectedSession?.title ?? selection.sessionId)")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(1)
+          .truncationMode(.middle)
 
-        if scanStatus.running, scanStatus.total > 0 {
-          ProgressView(value: Double(scanStatus.current), total: Double(scanStatus.total))
+        if rows.isEmpty {
+          emptyState("No requests in this session for the selected range.")
+        } else {
+          ForEach(rows) { row in
+            RequestRowView(
+              row: row,
+              isExpanded: expandedRequestId == row.id,
+              costRates: costRates(forModel: row.model),
+              sourceLabel: labelForSource(row.source),
+              sourceColor: colorForSource(row.source),
+              formatCompact: formatChartValue,
+              formatCost: formatCost,
+              onToggleDetails: {
+                expandedRequestId = expandedRequestId == row.id ? nil : row.id
+              },
+              onJumpToSession: nil,
+            )
+          }
         }
-
-        if let error = scanStatus.error, !error.isEmpty {
-          Text(error)
-            .font(.caption2)
-            .foregroundStyle(TokMonMetricColor.red.swiftUIColor)
-            .lineLimit(2)
-        }
-      } else {
-        Text("Waiting for scan status...")
-          .font(.caption)
-          .foregroundStyle(.secondary)
       }
+      .padding(14)
+      .hudInsetCard()
     }
   }
 
-  private var trendPanel: some View {
-    let trendPoints = trendPoints(for: selectedSeries.key)
+  private var primaryMetrics: [AgentMonHudMetric] {
+    let totals = stats.snapshot.summary?.total
+    return [
+      AgentMonHudMetric(series: .total, value: formatCompact(totals?.totalTokens), delta: metricDelta(for: .total), isSelected: selectedSeries.key == .total),
+      AgentMonHudMetric(series: .cost, value: formatCost(currentEstimatedCost), delta: metricDelta(for: .cost), isSelected: selectedSeries.key == .cost),
+      AgentMonHudMetric(series: .requests, value: formatCompact(totals?.totalRequests), delta: metricDelta(for: .requests), isSelected: selectedSeries.key == .requests),
+      AgentMonHudMetric(series: .cacheHitRate, value: formatPercent(totals?.cacheHitRate), delta: metricDelta(for: .cacheHitRate), isSelected: selectedSeries.key == .cacheHitRate),
+    ]
+  }
 
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        SectionTitle("Trend")
-        Spacer()
-        Text(selectedSeries.label)
-          .font(.caption2)
-          .foregroundStyle(selectedSeries.color.swiftUIColor)
-      }
+  private var secondaryMetrics: [AgentMonHudMetric] {
+    let totals = stats.snapshot.summary?.total
+    return [
+      AgentMonHudMetric(series: .input, value: formatCompact(totals?.totalInput), delta: metricDelta(for: .input), isSelected: selectedSeries.key == .input),
+      AgentMonHudMetric(series: .output, value: formatCompact(totals?.totalOutput), delta: metricDelta(for: .output), isSelected: selectedSeries.key == .output),
+      AgentMonHudMetric(series: .cache, value: formatCompact(totals?.totalCacheCreation), delta: metricDelta(for: .cache), isSelected: selectedSeries.key == .cache),
+      AgentMonHudMetric(series: .cacheHit, value: formatCompact(totals?.totalCacheRead), delta: metricDelta(for: .cacheHit), isSelected: selectedSeries.key == .cacheHit),
+    ]
+  }
 
-      if trendPoints.isEmpty {
-        Text("No trend data in the selected range.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        TrendLineChart(
-          points: trendPoints,
-          color: selectedSeries.color.swiftUIColor,
-          valueFormatter: selectedSeries.isCost ? formatCost : formatChartValue,
+  private var modelRows: [AgentMonHudBreakdownRow] {
+    Array((stats.snapshot.summary?.byModel ?? [])
+      .sorted { modelValue($0, for: selectedSeries.key) > modelValue($1, for: selectedSeries.key) }
+      .prefix(4))
+      .map { model in
+        AgentMonHudBreakdownRow(
+          id: model.id,
+          title: model.model,
+          subtitle: "\(model.requests) sessions",
+          value: formatMetricValue(modelValue(model, for: selectedSeries.key)),
+          color: colorForSource(model.source),
         )
-        .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132)
       }
-    }
-    .padding(10)
-    .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
-  private var heatmapPanel: some View {
-    let days = stats.snapshot.heatmapDays
-    let maxRequests = days.map(\.requests).max() ?? 0
-
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        SectionTitle("Activity")
-        Spacer()
-        Text("365D")
-          .font(.caption2.monospacedDigit())
-          .foregroundStyle(.secondary)
+  private var sourceRows: [AgentMonHudBreakdownRow] {
+    (stats.snapshot.summary?.bySource ?? [])
+      .sorted { sourceValue($0, for: selectedSeries.key) > sourceValue($1, for: selectedSeries.key) }
+      .map { source in
+        AgentMonHudBreakdownRow(
+          id: source.id,
+          title: labelForSource(source.source),
+          subtitle: "\(source.requests) requests",
+          value: formatMetricValue(sourceValue(source, for: selectedSeries.key)),
+          color: colorForSource(source.source),
+        )
       }
-
-      if days.isEmpty {
-        Text("No recent activity.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 18), spacing: 3) {
-          ForEach(days) { day in
-            RoundedRectangle(cornerRadius: 2)
-              .fill(heatmapColor(requests: day.requests, maxRequests: maxRequests))
-              .frame(height: 5)
-              .help("\(day.day): \(day.requests) requests")
-          }
-        }
-      }
-    }
-    .padding(10)
-    .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
-  private var sourceBreakdown: some View {
-    let costRates = stats.snapshot.dashboardState?.costRates ?? .zero
-    let selectedKey = selectedSeries.key
-
-    return VStack(alignment: .leading, spacing: 8) {
-      SectionTitle("Sources")
-
-      let sources = stats.snapshot.summary?.bySource ?? []
-      if sources.isEmpty {
-        Text("No usage in the selected range.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(sources.sorted { $0.value(for: selectedKey, costRates: costRates) > $1.value(for: selectedKey, costRates: costRates) }) { source in
-          HStack {
-            Text(labelForSource(source.source))
-              .font(.caption)
-              .foregroundStyle(colorForSource(source.source))
-            Spacer()
-            Text(formatMetricValue(source.value(for: selectedKey, costRates: costRates)))
-              .font(.caption.monospacedDigit())
-              .foregroundStyle(.primary)
-          }
-        }
-      }
-    }
-  }
-
-  private var modelBreakdown: some View {
-    let costRates = stats.snapshot.dashboardState?.costRates ?? .zero
-    let selectedKey = selectedSeries.key
-
-    return VStack(alignment: .leading, spacing: 8) {
-      SectionTitle("Top Models")
-
-      let models = Array((stats.snapshot.summary?.byModel ?? [])
-        .sorted { $0.value(for: selectedKey, costRates: costRates) > $1.value(for: selectedKey, costRates: costRates) }
-        .prefix(4))
-
-      if models.isEmpty {
-        Text("No model activity yet.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(models) { model in
-          HStack {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(model.model)
-                .font(.caption)
-                .lineLimit(1)
-              Text(labelForSource(model.source))
-                .font(.caption2)
-                .foregroundStyle(colorForSource(model.source))
-            }
-            Spacer()
-            Text(formatMetricValue(model.value(for: selectedKey, costRates: costRates)))
-              .font(.caption.monospacedDigit())
-              .foregroundStyle(.primary)
-          }
-        }
-      }
-    }
-  }
-
-  private var footer: some View {
-    Text(updatedLine)
-      .font(.caption2)
-      .foregroundStyle(.secondary)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, 2)
+  private func emptyState(_ message: String) -> some View {
+    Text(message)
+      .font(.system(size: 13, weight: .semibold, design: .rounded))
+      .foregroundStyle(TokMonGlass.mutedTint)
+      .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
   }
 
   private var serverLine: String {
-    if runtime.usesNativeTokMonEngine {
-      return "Native TokMon"
-    }
-
-    switch server.phase {
-    case .idle:
-      return "Ready"
-    case .starting:
-      return "Starting local server"
-    case .running(let attached):
-      return attached ? "Connected to existing server" : "Local server running"
-    case .failed:
-      return "Server failed"
-    }
+    "Native TokMon"
   }
 
   private var currentEstimatedCost: Double? {
-    guard
-      let summary = stats.snapshot.summary,
-      let costRates = stats.snapshot.dashboardState?.costRates
-    else {
+    guard let summary = stats.snapshot.summary else {
       return stats.snapshot.dashboardState?.estimatedCost
     }
-
-    return summary.estimatedCost(costRates: costRates)
+    if !modelPricing.isEmpty {
+      return summary.estimatedCost(modelPricing: modelPricing)
+    }
+    return summary.estimatedCost(costRates: fallbackCostRates)
   }
 
   private var updatedLine: String {
     guard let updatedAt = stats.snapshot.updatedAt else {
-      return "Not refreshed yet"
+      return "updated now"
     }
-
     return "Updated \(updatedAt.formatted(date: .omitted, time: .standard))"
   }
 
@@ -608,7 +382,47 @@ struct StatusPopoverView: View {
   }
 
   private func formatMetricValue(_ value: Double?) -> String {
-    selectedSeries.isCost ? formatCost(value) : formatChartValue(value)
+    if selectedSeries.isPercent {
+      return formatPercent(value)
+    }
+    return selectedSeries.isCost ? formatCost(value) : formatChartValue(value)
+  }
+
+  private func formatPercent(_ value: Double?) -> String {
+    guard let value else { return "-" }
+    return String(format: "%.1f%%", value * 100)
+  }
+
+  private func metricDelta(for seriesKey: TokMonSeriesKey) -> String {
+    guard let current = stats.snapshot.summary,
+          let previous = stats.snapshot.previousSummary else {
+      return "No previous period"
+    }
+
+    let currentValue = summaryValue(current, for: seriesKey)
+    let previousValue = summaryValue(previous, for: seriesKey)
+    guard previousValue > 0 else {
+      return currentValue > 0 ? "New vs previous" : "No previous period"
+    }
+
+    let change = (currentValue - previousValue) / previousValue
+    if abs(change) < 0.005 {
+      return "No change vs previous"
+    }
+    let sign = change > 0 ? "+" : "-"
+    return "\(sign)\(Int((abs(change) * 100).rounded()))% vs previous"
+  }
+
+  private func summaryValue(_ summary: TokMonSummary, for seriesKey: TokMonSeriesKey) -> Double {
+    switch seriesKey {
+    case .cost:
+      if !modelPricing.isEmpty {
+        return summary.estimatedCost(modelPricing: modelPricing)
+      }
+      return summary.estimatedCost(costRates: fallbackCostRates)
+    default:
+      return summary.total.value(for: seriesKey, costRates: fallbackCostRates)
+    }
   }
 
   private func formatChartValue(_ value: Double?) -> String {
@@ -623,8 +437,20 @@ struct StatusPopoverView: View {
     selectedSeries = series
   }
 
+  private func selectRangePreset(_ preset: TokMonRangePreset) {
+    Task {
+      await stats.updateDashboardRange(preset.label)
+    }
+  }
+
+  private func toggleTotalTokensExpanded() {
+    withAnimation(.interactiveSpring(response: 0.48, dampingFraction: 0.82, blendDuration: 0.16)) {
+      isTotalTokensExpanded.toggle()
+    }
+  }
+
   private var availablePages: [TokMonPopoverPage] {
-    stats.usesNativeEngine ? TokMonPopoverPage.allCases : [.overview, .trends]
+    stats.usesNativeEngine ? TokMonPopoverPage.allCases : [.overview]
   }
 
   private func jumpToSession(source: String, sessionId: String) {
@@ -633,7 +459,7 @@ struct StatusPopoverView: View {
   }
 
   private func trendPoints(for seriesKey: TokMonSeriesKey) -> [TokMonTrendPoint] {
-    let costRates = stats.snapshot.dashboardState?.costRates ?? .zero
+    let costRates = aggregateCostRates
     return stats.snapshot.trendBuckets.map { bucket in
       TokMonTrendPoint(
         id: "\(seriesKey.rawValue):\(bucket.bucket)",
@@ -641,6 +467,84 @@ struct StatusPopoverView: View {
         value: bucket.value(for: seriesKey, costRates: costRates),
       )
     }
+  }
+
+  private var modelPricing: [String: TokMonCostRates] {
+    stats.snapshot.dashboardState?.modelPricing ?? [:]
+  }
+
+  private var fallbackCostRates: TokMonCostRates {
+    stats.snapshot.dashboardState?.costRates ?? .zero
+  }
+
+  private var aggregateCostRates: TokMonCostRates {
+    guard let summary = stats.snapshot.summary, !modelPricing.isEmpty else {
+      return fallbackCostRates
+    }
+    return weightedAverageRates(byModel: summary.byModel, modelPricing: modelPricing)
+  }
+
+  private func costRates(forModel model: String) -> TokMonCostRates {
+    guard !modelPricing.isEmpty else {
+      return fallbackCostRates
+    }
+    return modelPricing[model] ?? .zero
+  }
+
+  private func costRates(forSession session: TokMonUsageSession) -> TokMonCostRates {
+    guard !modelPricing.isEmpty else {
+      return fallbackCostRates
+    }
+    if session.model != "Mixed" {
+      return modelPricing[session.model] ?? .zero
+    }
+    return aggregateCostRates
+  }
+
+  private func sourceValue(_ source: TokMonSourceTotals, for seriesKey: TokMonSeriesKey) -> Double {
+    guard seriesKey == .cost, !modelPricing.isEmpty else {
+      return source.value(for: seriesKey, costRates: fallbackCostRates)
+    }
+    return (stats.snapshot.summary?.byModel ?? [])
+      .filter { $0.source == source.source }
+      .reduce(0) { sum, model in sum + modelValue(model, for: .cost) }
+  }
+
+  private func modelValue(_ model: TokMonModelTotals, for seriesKey: TokMonSeriesKey) -> Double {
+    model.value(for: seriesKey, costRates: costRates(forModel: model.model))
+  }
+
+  private func weightedAverageRates(
+    byModel: [TokMonModelTotals],
+    modelPricing: [String: TokMonCostRates],
+  ) -> TokMonCostRates {
+    var totalInput = 0
+    var totalOutput = 0
+    var totalCacheCreation = 0
+    var totalCacheRead = 0
+    var inputCost = 0.0
+    var outputCost = 0.0
+    var cacheCreationCost = 0.0
+    var cacheReadCost = 0.0
+
+    for model in byModel {
+      guard let rates = modelPricing[model.model] else { continue }
+      totalInput += model.inputTokens
+      totalOutput += model.outputTokens
+      totalCacheCreation += model.cacheCreation
+      totalCacheRead += model.cacheRead
+      inputCost += Double(model.inputTokens) / 1_000_000 * rates.input
+      outputCost += Double(model.outputTokens) / 1_000_000 * rates.output
+      cacheCreationCost += Double(model.cacheCreation) / 1_000_000 * rates.cacheCreate
+      cacheReadCost += Double(model.cacheRead) / 1_000_000 * rates.cacheRead
+    }
+
+    return TokMonCostRates(
+      input: totalInput == 0 ? 0 : inputCost / Double(totalInput) * 1_000_000,
+      output: totalOutput == 0 ? 0 : outputCost / Double(totalOutput) * 1_000_000,
+      cacheCreate: totalCacheCreation == 0 ? 0 : cacheCreationCost / Double(totalCacheCreation) * 1_000_000,
+      cacheRead: totalCacheRead == 0 ? 0 : cacheReadCost / Double(totalCacheRead) * 1_000_000,
+    )
   }
 
   private func labelForSource(_ source: String) -> String {
@@ -657,26 +561,25 @@ struct StatusPopoverView: View {
   private func colorForSource(_ source: String) -> Color {
     switch source {
     case "claude-code":
-      TokMonMetricColor.orange.swiftUIColor
+      TokMonGlass.warning
     case "codex":
-      TokMonMetricColor.accent.swiftUIColor
+      TokMonGlass.accent
     default:
-      TokMonMetricColor.purple.swiftUIColor
+      TokMonGlass.mutedTint
     }
   }
 
-  private func heatmapColor(requests: Int, maxRequests: Int) -> Color {
-    guard maxRequests > 0, requests > 0 else {
-      return Color.secondary.opacity(0.16)
+  private func heatmapColor(value: Double, maxValue: Double) -> Color {
+    guard maxValue > 0, value > 0 else {
+      return Color.white.opacity(0.08)
     }
-    let opacity = 0.24 + 0.76 * (Double(requests) / Double(maxRequests))
-    return TokMonMetricColor.green.swiftUIColor.opacity(opacity)
+    let opacity = 0.30 + 0.55 * (value / maxValue)
+    return TokMonGlass.success.opacity(opacity)
   }
 }
 
 private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
   case overview
-  case trends
   case requests
   case sessions
 
@@ -685,9 +588,7 @@ private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .overview:
-      "Overview"
-    case .trends:
-      "Trends"
+      "Tokens"
     case .requests:
       "Requests"
     case .sessions:
@@ -696,442 +597,742 @@ private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
   }
 }
 
-private struct MetricTile: View {
+private struct AgentMonHudMetric: Identifiable {
   let series: TokMonSeriesPresentation
   let value: String
+  let delta: String
   let isSelected: Bool
-  let onSelect: (TokMonSeriesPresentation) -> Void
 
-  var body: some View {
-    Button {
-      onSelect(series)
-    } label: {
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 4) {
-          Text(series.icon)
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(series.color.swiftUIColor)
-          Text(series.label)
-            .font(.system(size: 9, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.65)
-        }
-        Text(value)
-          .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
-          .foregroundStyle(series.color.swiftUIColor)
-          .lineLimit(1)
-          .minimumScaleFactor(0.62)
-      }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 7)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color(nsColor: .controlBackgroundColor))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 8)
-          .stroke(isSelected ? series.color.swiftUIColor : Color.clear, lineWidth: 1.5)
-      )
-      .contentShape(RoundedRectangle(cornerRadius: 8))
-    }
-    .buttonStyle(.plain)
-    .focusable(false)
-  }
+  var id: String { series.key.rawValue }
 }
 
-private struct StatePill: View {
-  let label: String
-  let value: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(label.uppercased())
-        .font(.system(size: 8, weight: .semibold, design: .rounded))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      Text(value)
-        .font(.caption2.monospacedDigit())
-        .foregroundStyle(.primary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .minimumScaleFactor(0.75)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-  }
-}
-
-private struct RequestRowView: View {
-  let row: TokMonRecordRow
-  let isExpanded: Bool
-  let costRates: TokMonCostRates
-  let sourceLabel: String
-  let sourceColor: Color
-  let formatCompact: (Double?) -> String
-  let formatCost: (Double?) -> String
-  let onToggleDetails: () -> Void
-  let onJumpToSession: (() -> Void)?
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(row.model)
-          .font(.caption.weight(.medium))
-          .lineLimit(1)
-        Spacer(minLength: 8)
-        Text(shortTimestamp(row.createdAt))
-          .font(.caption2.monospacedDigit())
-          .foregroundStyle(.secondary)
-      }
-
-      HStack(spacing: 8) {
-        Text(sourceLabel)
-          .font(.caption2.weight(.medium))
-          .foregroundStyle(sourceColor)
-        Text(row.sessionId)
-          .font(.caption2.monospaced())
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        Spacer(minLength: 0)
-      }
-
-      HStack(spacing: 10) {
-        TokenChip(label: "In", value: formatCompact(Double(row.inputTokens)))
-        TokenChip(label: "Out", value: formatCompact(Double(row.outputTokens)))
-        TokenChip(label: "Cache", value: formatCompact(Double(row.cacheCreation + row.cacheRead)))
-        if row.reasoningTokens > 0 {
-          TokenChip(label: "Reason", value: formatCompact(Double(row.reasoningTokens)))
-        }
-        TokenChip(label: "$", value: formatCost(cost))
-      }
-
-      HStack(spacing: 10) {
-        Button {
-          onToggleDetails()
-        } label: {
-          Label(isExpanded ? "Hide Details" : "Details", systemImage: isExpanded ? "chevron.up" : "chevron.down")
-            .labelStyle(.titleAndIcon)
-            .font(.caption2)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-
-        if let onJumpToSession {
-          Button {
-            onJumpToSession()
-          } label: {
-            Label("Jump", systemImage: "arrowshape.turn.up.right")
-              .labelStyle(.titleAndIcon)
-              .font(.caption2)
-          }
-          .buttonStyle(.plain)
-          .focusable(false)
-        }
-      }
-      .foregroundStyle(.secondary)
-
-      if isExpanded {
-        VStack(alignment: .leading, spacing: 3) {
-          DetailLine(label: "Created", value: row.createdAt)
-          DetailLine(label: "Session", value: row.sessionId)
-          DetailLine(label: "Cache Created", value: formatCompact(Double(row.cacheCreation)))
-          DetailLine(label: "Cache Read", value: formatCompact(Double(row.cacheRead)))
-          DetailLine(label: "Reasoning", value: formatCompact(Double(row.reasoningTokens)))
-        }
-        .padding(.top, 2)
-      }
-    }
-    .padding(8)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 8))
-  }
-
-  private var cost: Double {
-    Double(row.inputTokens) / 1_000_000 * costRates.input
-      + Double(row.outputTokens) / 1_000_000 * costRates.output
-      + Double(row.cacheCreation) / 1_000_000 * costRates.cacheCreate
-      + Double(row.cacheRead) / 1_000_000 * costRates.cacheRead
-  }
-}
-
-private struct SessionRowView: View {
-  let session: TokMonUsageSession
-  let isSelected: Bool
-  let costRates: TokMonCostRates
-  let sourceLabel: String
-  let sourceColor: Color
-  let formatCompact: (Double?) -> String
-  let formatCost: (Double?) -> String
-  let onSelect: () -> Void
-
-  var body: some View {
-    Button {
-      onSelect()
-    } label: {
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(alignment: .firstTextBaseline) {
-          Text(session.sessionId)
-            .font(.caption.monospaced())
-            .lineLimit(1)
-            .truncationMode(.middle)
-          Spacer(minLength: 8)
-          Text("\(session.requests) req")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-
-        HStack(spacing: 8) {
-          Text(sourceLabel)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(sourceColor)
-          Text(session.model)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-          Spacer(minLength: 0)
-        }
-
-        HStack(spacing: 10) {
-          TokenChip(label: "Tokens", value: formatCompact(Double(session.inputTokens + session.outputTokens)))
-          TokenChip(label: "$", value: formatCost(cost))
-          Spacer(minLength: 0)
-          Text("\(shortTimestamp(session.firstAt)) - \(shortTimestamp(session.lastAt))")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
-      }
-      .padding(8)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(Color(nsColor: .controlBackgroundColor))
-      .clipShape(RoundedRectangle(cornerRadius: 8))
-      .overlay(
-        RoundedRectangle(cornerRadius: 8)
-          .stroke(isSelected ? sourceColor : Color.clear, lineWidth: 1.5)
-      )
-      .contentShape(RoundedRectangle(cornerRadius: 8))
-    }
-    .buttonStyle(.plain)
-    .focusable(false)
-  }
-
-  private var cost: Double {
-    Double(session.inputTokens) / 1_000_000 * costRates.input
-      + Double(session.outputTokens) / 1_000_000 * costRates.output
-      + Double(session.cacheCreation) / 1_000_000 * costRates.cacheCreate
-      + Double(session.cacheRead) / 1_000_000 * costRates.cacheRead
-  }
-}
-
-private struct DetailLine: View {
-  let label: String
-  let value: String
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 6) {
-      Text(label)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      Spacer(minLength: 8)
-      Text(value)
-        .font(.caption2.monospacedDigit())
-        .lineLimit(1)
-        .truncationMode(.middle)
-    }
-  }
-}
-
-private struct TokenChip: View {
-  let label: String
-  let value: String
-
-  var body: some View {
-    HStack(spacing: 3) {
-      Text(label)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      Text(value)
-        .font(.caption2.monospacedDigit())
-    }
-    .lineLimit(1)
-  }
-}
-
-private struct LoadMoreButton: View {
+private struct AgentMonHudBreakdownRow: Identifiable {
+  let id: String
   let title: String
+  let subtitle: String
+  let value: String
+  let color: Color
+}
+
+private struct StatusPanelShell: View {
+  var body: some View {
+    shellShape
+      .fill(.regularMaterial)
+      .overlay { shellShape.fill(Color.black.opacity(0.34)) }
+      .overlay {
+        shellShape.fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(0.10),
+              Color.white.opacity(0.025),
+              Color.black.opacity(0.12),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing,
+          )
+        )
+      }
+      .overlay {
+        shellShape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+      }
+      .shadow(color: Color.black.opacity(0.24), radius: 22, y: 10)
+      .allowsHitTesting(false)
+  }
+
+  private var shellShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: 30, style: .continuous)
+  }
+}
+
+private struct HeaderIconButton: View {
+  let systemName: String
+  let help: String
   let action: () -> Void
 
   var body: some View {
     Button(action: action) {
-      Label(title, systemImage: "plus.circle")
-        .font(.caption)
-        .frame(maxWidth: .infinity)
+      Image(systemName: systemName)
+        .font(.system(size: 14, weight: .bold))
+        .foregroundStyle(TokMonGlass.neutralTint)
+        .frame(width: 28, height: 28)
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
-    .buttonStyle(.borderless)
+    .buttonStyle(.plain)
+    .focusable(false)
+    .help(help)
+    .background {
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(Color.white.opacity(0.07))
+        .overlay {
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+        }
+    }
+  }
+}
+
+private struct SystemMenuPageRail: View {
+  let pages: [TokMonPopoverPage]
+  let selectedPage: TokMonPopoverPage
+  let onSelect: (TokMonPopoverPage) -> Void
+
+  var body: some View {
+    HStack(spacing: 3) {
+      ForEach(pages) { page in
+        Button {
+          onSelect(page)
+        } label: {
+          Text(page.title)
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .foregroundStyle(selectedPage == page ? TokMonGlass.neutralTint : TokMonGlass.mutedTint)
+        .background {
+          RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(selectedPage == page ? TokMonGlass.accent.opacity(0.18) : Color.clear)
+            .overlay {
+              RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(selectedPage == page ? TokMonGlass.accent.opacity(0.26) : Color.clear, lineWidth: 1)
+            }
+        }
+      }
+    }
+    .padding(3)
+    .background {
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .fill(TokMonGlass.hudRailFill)
+        .overlay {
+          RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+        }
+    }
+  }
+}
+
+private struct RangePresetControl: View {
+  let selectedLabel: String
+  let onSelect: (TokMonRangePreset) -> Void
+  private let prototypeRangePresets: [TokMonRangePreset] = [.today, .thisWeek, .thisMonth, .all]
+
+  var body: some View {
+    HStack(spacing: 3) {
+      ForEach(prototypeRangePresets) { preset in
+        Button {
+          onSelect(preset)
+        } label: {
+          Text(preset.compactDisplayLabel)
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.78)
+            .frame(maxWidth: .infinity, minHeight: 22)
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .foregroundStyle(selectedLabel == preset.label ? TokMonGlass.neutralTint : TokMonGlass.mutedTint)
+        .tokMonSelectionPill(isSelected: selectedLabel == preset.label, cornerRadius: 10)
+        .help("Show \(preset.displayLabel)")
+      }
+    }
+  }
+}
+
+private struct AgentMonHudMetricGrid: View {
+  let metrics: [AgentMonHudMetric]
+  let tokenDetails: [AgentMonHudMetric]
+  let isTotalExpanded: Bool
+  let onToggleTotalExpanded: () -> Void
+  let onSelect: (TokMonSeriesPresentation) -> Void
+
+  var body: some View {
+    let totalMetric = metrics.first { $0.series.key == .total }
+    let supportingMetrics = metrics.filter { $0.series.key != .total }
+
+    VStack(spacing: 7) {
+      if isTotalExpanded {
+        if let totalMetric {
+          TotalTokensMetricTile(
+            metric: totalMetric,
+            tokenDetails: tokenDetails,
+            isExpanded: isTotalExpanded,
+            onToggleExpanded: onToggleTotalExpanded,
+            onSelect: onSelect,
+          )
+          HStack(spacing: 7) {
+            ForEach(supportingMetrics) { metric in
+              CompactMetricTile(metric: metric, hideDelta: true, onSelect: onSelect)
+            }
+          }
+          .transition(.asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity),
+            removal: .move(edge: .top).combined(with: .opacity),
+          ))
+        }
+      } else {
+        LazyVGrid(
+          columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 2),
+          alignment: .leading,
+          spacing: 7,
+        ) {
+          ForEach(metrics) { metric in
+            if metric.series.key == .total {
+              TotalTokensMetricTile(
+                metric: metric,
+                tokenDetails: tokenDetails,
+                isExpanded: false,
+                onToggleExpanded: onToggleTotalExpanded,
+                onSelect: onSelect,
+              )
+            } else {
+              PrimaryMetricTile(metric: metric, hideDelta: false, onSelect: onSelect)
+            }
+          }
+        }
+        .transition(.asymmetric(
+          insertion: .scale(scale: 0.98).combined(with: .opacity),
+          removal: .scale(scale: 0.98).combined(with: .opacity),
+        ))
+      }
+    }
+  }
+}
+
+private struct PrimaryMetricTile: View {
+  let metric: AgentMonHudMetric
+  var hideDelta = false
+  let onSelect: (TokMonSeriesPresentation) -> Void
+
+  var body: some View {
+    Button {
+      onSelect(metric.series)
+    } label: {
+      VStack(alignment: .leading, spacing: 7) {
+        HStack {
+          Text(metric.series.label.uppercased())
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .foregroundStyle(TokMonGlass.mutedTint)
+            .lineLimit(1)
+          Spacer(minLength: 0)
+          Text(metric.series.icon)
+            .font(.system(size: 12, weight: .black, design: .rounded))
+            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+        }
+        MetricValueText(value: metric.value, isSelected: metric.isSelected)
+        if !hideDelta {
+          MetricDelta(metric.delta)
+        }
+      }
+      .padding(9)
+      .frame(maxWidth: .infinity, minHeight: 66, alignment: .topLeading)
+      .hudCard(isSelected: metric.isSelected)
+      .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+    .buttonStyle(.plain)
     .focusable(false)
   }
 }
 
-private func shortTimestamp(_ value: String) -> String {
-  if value.count >= 16 {
-    let start = value.index(value.startIndex, offsetBy: 5)
-    let end = value.index(value.startIndex, offsetBy: 16)
-    return String(value[start..<end])
+private struct TotalTokensMetricTile: View {
+  let metric: AgentMonHudMetric
+  let tokenDetails: [AgentMonHudMetric]
+  let isExpanded: Bool
+  let onToggleExpanded: () -> Void
+  let onSelect: (TokMonSeriesPresentation) -> Void
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Button {
+        onSelect(metric.series)
+      } label: {
+        VStack(alignment: .leading, spacing: 7) {
+          HStack(spacing: 6) {
+            Text(metric.series.label.uppercased())
+              .font(.system(size: 11, weight: .heavy, design: .rounded))
+              .foregroundStyle(TokMonGlass.mutedTint)
+              .lineLimit(1)
+            Text(metric.series.icon)
+              .font(.system(size: 12, weight: .black, design: .rounded))
+              .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+          }
+          MetricValueText(value: metric.value, isSelected: metric.isSelected)
+          MetricDelta(metric.delta)
+        }
+        .frame(minWidth: 76, maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .focusable(false)
+
+      if isExpanded {
+        LazyVGrid(
+          columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2),
+          alignment: .leading,
+          spacing: 6,
+        ) {
+          ForEach(tokenDetails) { detail in
+            TokenDetailMiniMetric(metric: detail)
+          }
+        }
+        .frame(width: 152)
+        .transition(.asymmetric(
+          insertion: .move(edge: .trailing).combined(with: .opacity),
+          removal: .move(edge: .trailing).combined(with: .opacity),
+        ))
+      }
+
+      Button {
+        onToggleExpanded()
+      } label: {
+        Image(systemName: isExpanded ? "chevron.left" : "chevron.right")
+          .font(.system(size: 11, weight: .black))
+          .foregroundStyle(TokMonGlass.neutralTint)
+          .frame(width: 24, height: 24)
+          .contentShape(Circle())
+      }
+      .buttonStyle(.plain)
+      .focusable(false)
+      .background {
+        Circle()
+          .fill(Color.white.opacity(0.075))
+          .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
+      }
+      .help(isExpanded ? "Hide token details" : "Show token details")
+    }
+    .padding(9)
+    .frame(maxWidth: .infinity, minHeight: isExpanded ? 80 : 66, alignment: .topLeading)
+    .hudCard(isSelected: metric.isSelected)
+    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
   }
-  return value
+}
+
+private struct TokenDetailMiniMetric: View {
+  let metric: AgentMonHudMetric
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(metric.series.compactLabel)
+        .font(.system(size: 9, weight: .heavy, design: .rounded))
+        .foregroundStyle(TokMonGlass.mutedTint)
+        .lineLimit(1)
+      Text(metric.value)
+        .font(.system(size: 12, weight: .black, design: .rounded).monospacedDigit())
+        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.88))
+        .lineLimit(1)
+    }
+    .padding(.horizontal, 7)
+    .padding(.vertical, 6)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background {
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(Color.white.opacity(0.045))
+        .overlay {
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+        }
+    }
+  }
+}
+
+private struct CompactMetricTile: View {
+  let metric: AgentMonHudMetric
+  let hideDelta: Bool
+  let onSelect: (TokMonSeriesPresentation) -> Void
+
+  var body: some View {
+    Button {
+      onSelect(metric.series)
+    } label: {
+      VStack(alignment: .leading, spacing: 5) {
+        HStack {
+          Text(metric.series.compactLabel.uppercased())
+            .font(.system(size: 9, weight: .heavy, design: .rounded))
+            .foregroundStyle(TokMonGlass.mutedTint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+          Spacer(minLength: 0)
+          Text(metric.series.icon)
+            .font(.system(size: 10, weight: .black, design: .rounded))
+            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+        }
+        Text(metric.value)
+          .font(.system(size: 15, weight: .black, design: .rounded).monospacedDigit())
+          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.neutralTint)
+          .lineLimit(1)
+          .minimumScaleFactor(0.62)
+        if !hideDelta {
+          MetricDelta(metric.delta)
+        }
+      }
+      .padding(9)
+      .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
+      .hudCard(isSelected: metric.isSelected)
+      .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .focusable(false)
+  }
+}
+
+private struct MetricDelta: View {
+  let text: String
+
+  init(_ text: String) {
+    self.text = text
+  }
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 13, weight: .bold, design: .rounded))
+      .foregroundStyle(TokMonGlass.mutedTint)
+      .lineLimit(1)
+      .minimumScaleFactor(0.72)
+  }
+}
+
+private struct MetricValueText: View {
+  let value: String
+  let isSelected: Bool
+
+  var body: some View {
+    Text(value)
+      .font(.system(size: 20, weight: .black, design: .rounded).monospacedDigit())
+      .foregroundStyle(isSelected ? TokMonGlass.accent : TokMonGlass.neutralTint)
+      .lineLimit(1)
+      .fixedSize(horizontal: true, vertical: false)
+      .frame(minWidth: 76, alignment: .leading)
+      .frame(height: 24, alignment: .leading)
+      .transaction { transaction in
+        transaction.animation = nil
+      }
+  }
+}
+
+private struct AgentMonHudTrendCard: View {
+  let title: String
+  let valueLabel: String
+  let points: [TokMonTrendPoint]
+  let color: Color
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      AgentMonHudSectionHeader(title, trailing: valueLabel)
+      TrendLineChart(points: points, color: color)
+        .frame(height: 60)
+    }
+    .padding(10)
+    .hudCard()
+  }
+}
+
+private struct AgentMonHudActivityCard: View {
+  let days: [TokMonHeatmapDay]
+  let selectedSeries: TokMonSeriesKey
+  let colorForValue: (Double, Double) -> Color
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      AgentMonHudSectionHeader("Activity", trailing: days.isEmpty ? nil : "\(days.count)D")
+
+      if days.isEmpty {
+        Text("No recent activity.")
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
+      } else {
+        RecentActivityGrid(days: days, selectedSeries: selectedSeries, colorForValue: colorForValue)
+      }
+    }
+    .padding(10)
+    .hudCard()
+  }
+}
+
+private struct AgentMonHudBreakdownCard: View {
+  let title: String
+  let trailingTitle: String
+  let rows: [AgentMonHudBreakdownRow]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      AgentMonHudSectionHeader(title, trailing: trailingTitle)
+      if rows.isEmpty {
+        Text("No usage in the selected range.")
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+      } else {
+        VStack(spacing: 0) {
+          ForEach(rows) { row in
+            HStack(spacing: 14) {
+              Circle()
+                .fill(row.color)
+                .frame(width: 8, height: 8)
+              VStack(alignment: .leading, spacing: 3) {
+                Text(row.title)
+                  .font(.system(size: 13, weight: .heavy, design: .rounded))
+                  .foregroundStyle(TokMonGlass.neutralTint)
+                  .lineLimit(1)
+                  .truncationMode(.middle)
+                Text(row.subtitle)
+                  .font(.system(size: 11, weight: .bold, design: .rounded))
+                  .foregroundStyle(TokMonGlass.mutedTint)
+                  .lineLimit(1)
+              }
+              Spacer(minLength: 12)
+              Text(row.value)
+                .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
+                .foregroundStyle(TokMonGlass.neutralTint.opacity(0.82))
+                .lineLimit(1)
+            }
+            .padding(.vertical, 7)
+            if row.id != rows.last?.id {
+              Divider().overlay(Color.white.opacity(0.08))
+            }
+          }
+        }
+      }
+    }
+    .padding(10)
+    .hudCard()
+  }
+}
+
+private struct AgentMonHudSectionHeader: View {
+  let title: String
+  let trailing: String?
+
+  init(_ title: String, trailing: String?) {
+    self.title = title
+    self.trailing = trailing
+  }
+
+  var body: some View {
+    HStack {
+      Text(title)
+        .font(.system(size: 14, weight: .heavy, design: .rounded))
+        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.84))
+      Spacer()
+      if let trailing {
+        Text(trailing)
+          .font(.system(size: 12, weight: .heavy, design: .rounded))
+          .foregroundStyle(TokMonGlass.neutralTint.opacity(0.78))
+          .lineLimit(1)
+      }
+    }
+  }
+}
+
+private struct RecentActivityGrid: View {
+  let days: [TokMonHeatmapDay]
+  let selectedSeries: TokMonSeriesKey
+  let colorForValue: (Double, Double) -> Color
+
+  var body: some View {
+    let layout = TokMonHeatmapLayout(days: days)
+    let maxValue = days.map { dayValue($0, series: selectedSeries) }.max() ?? 0
+    GeometryReader { proxy in
+      let metrics = TokMonHeatmapLayout.metrics(
+        availableWidth: proxy.size.width,
+        weekCount: layout.weeks.count,
+        labelWidth: 30,
+        minimumCellSize: 6,
+        maximumCellSize: 14,
+      )
+      let cellSize = metrics.cellSize
+      VStack(alignment: .leading, spacing: 4) {
+        HeatmapMonthAxis(layout: layout, metrics: metrics)
+        HStack(alignment: .top, spacing: 5) {
+          HeatmapWeekdayAxis(labels: layout.weekdayLabels, cellSize: cellSize, gap: metrics.gap)
+          HStack(alignment: .top, spacing: metrics.gap) {
+            ForEach(layout.weeks) { week in
+              VStack(spacing: metrics.gap) {
+                ForEach(0..<7, id: \.self) { weekdayIndex in
+                  let day = week.cells[weekdayIndex]
+                  RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    .fill(day.map { colorForValue(dayValue($0, series: selectedSeries), maxValue) } ?? Color.white.opacity(0.045))
+                    .frame(width: cellSize, height: cellSize)
+                    .help(day.map { "\($0.day): \($0.requests) requests" } ?? "No activity")
+                }
+              }
+            }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .frame(height: 118)
+  }
+
+  private func dayValue(_ day: TokMonHeatmapDay, series: TokMonSeriesKey) -> Double {
+    switch series {
+    case .total:
+      return Double(day.inputTokens + day.outputTokens + day.cacheRead)
+    case .requests:
+      return Double(day.requests)
+    case .input:
+      return Double(day.inputTokens)
+    case .output:
+      return Double(day.outputTokens)
+    case .cache:
+      return Double(day.cacheCreation)
+    case .cacheHit:
+      return Double(day.cacheRead)
+    case .cacheHitRate:
+      let denominator = day.inputTokens + day.cacheRead
+      guard denominator > 0 else { return 0 }
+      return Double(day.cacheRead) / Double(denominator)
+    case .cost:
+      return Double(day.inputTokens + day.outputTokens + day.cacheCreation + day.cacheRead)
+    }
+  }
+}
+
+private struct HeatmapMonthAxis: View {
+  let layout: TokMonHeatmapLayout
+  let metrics: TokMonHeatmapLayout.Metrics
+
+  var body: some View {
+    ZStack(alignment: .leading) {
+      Color.clear.frame(height: 12)
+      ForEach(layout.monthLabels) { month in
+        Text(month.label)
+          .font(.system(size: 9, weight: .bold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .offset(x: metrics.labelWidth + CGFloat(month.weekIndex) * (metrics.cellSize + metrics.gap))
+      }
+    }
+    .frame(width: metrics.usedWidth, height: 12, alignment: .leading)
+  }
+}
+
+private struct HeatmapWeekdayAxis: View {
+  let labels: [TokMonHeatmapLayout.WeekdayLabel]
+  let cellSize: CGFloat
+  let gap: CGFloat
+
+  var body: some View {
+    ZStack(alignment: .topLeading) {
+      Color.clear.frame(width: 18, height: cellSize * 7 + gap * 6)
+      ForEach(labels) { label in
+        Text(label.label)
+          .font(.system(size: 8, weight: .bold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(1)
+          .minimumScaleFactor(0.75)
+          .offset(y: CGFloat(label.weekdayIndex) * (cellSize + gap) - 1)
+      }
+    }
+    .frame(width: 26, height: cellSize * 7 + gap * 6, alignment: .topLeading)
+  }
 }
 
 private struct TrendLineChart: View {
   let points: [TokMonTrendPoint]
   let color: Color
-  let valueFormatter: (Double?) -> String
 
   var body: some View {
-    let values = points.map(\.value)
-    let maxValue = values.max() ?? 0
-    let minValue = values.min() ?? 0
-    let hasVariation = maxValue > minValue
-
     GeometryReader { proxy in
-      let size = proxy.size
-      let yAxisWidth: CGFloat = 44
-      let trailingInset: CGFloat = 2
-      let xAxisHeight: CGFloat = 22
-      let plotRect = CGRect(
+      let yAxisWidth: CGFloat = 36
+      let xAxisHeight: CGFloat = 14
+      let chartRect = CGRect(
         x: yAxisWidth,
         y: 0,
-        width: max(size.width - yAxisWidth - trailingInset, 1),
-        height: max(size.height - xAxisHeight, 1),
+        width: max(proxy.size.width - yAxisWidth, 1),
+        height: max(proxy.size.height - xAxisHeight, 1),
       )
-      let chartPoints = pathPoints(in: plotRect.size, minValue: minValue, maxValue: maxValue, hasVariation: hasVariation)
-        .map { CGPoint(x: $0.x + plotRect.minX, y: $0.y + plotRect.minY) }
-      let xAxisRect = CGRect(
-        x: plotRect.minX,
-        y: plotRect.maxY,
-        width: plotRect.width,
-        height: xAxisHeight,
-      )
-
-      ZStack {
-        RoundedRectangle(cornerRadius: 6)
-          .fill(Color(nsColor: .windowBackgroundColor).opacity(0.35))
-
-        ChartGrid(horizontalLines: 3, verticalLines: 4)
-          .stroke(Color.secondary.opacity(0.16), style: StrokeStyle(lineWidth: 0.7, dash: [3, 4]))
-          .frame(width: plotRect.width, height: plotRect.height)
-          .position(x: plotRect.midX, y: plotRect.midY)
-
-        ChartYAxisLabels(
-          minValue: minValue,
-          maxValue: maxValue,
-          formatter: valueFormatter,
-          horizontalLines: 3,
-        )
-        .frame(width: yAxisWidth - 8, height: plotRect.height)
-        .position(x: (yAxisWidth - 8) / 2, y: plotRect.midY)
-
-        Path { path in
-          guard !chartPoints.isEmpty else { return }
-          path.move(to: chartPoints[0])
-          if chartPoints.count == 2 {
-            path.addLine(to: chartPoints[1])
-          } else {
-            for index in 0..<(chartPoints.count - 1) {
-              let previous = chartPoints[max(index - 1, 0)]
-              let current = chartPoints[index]
-              let next = chartPoints[index + 1]
-              let nextNext = chartPoints[min(index + 2, chartPoints.count - 1)]
-              let controlScale: CGFloat = 0.18
-              let rawControl1 = CGPoint(
-                x: current.x + (next.x - previous.x) * controlScale,
-                y: current.y + (next.y - previous.y) * controlScale,
-              )
-              let rawControl2 = CGPoint(
-                x: next.x - (nextNext.x - current.x) * controlScale,
-                y: next.y - (nextNext.y - current.y) * controlScale,
-              )
-              let control1 = boundedControlPoint(rawControl1, from: current, to: next)
-              let control2 = boundedControlPoint(rawControl2, from: current, to: next)
-              path.addCurve(to: next, control1: control1, control2: control2)
+      let scale = TrendChartScale(points: points)
+      let chartPoints = normalizedPoints(in: chartRect.size, scale: scale)
+      VStack(spacing: 2) {
+        HStack(spacing: 4) {
+          TrendYAxisLabels(scale: scale, height: chartRect.height, formatValue: formatAxisValue)
+            .frame(width: yAxisWidth, height: chartRect.height)
+          ZStack {
+            ChartGrid(horizontalLines: 3, verticalLines: 6)
+              .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            if chartPoints.count > 1 {
+              smoothedTrendFill(points: chartPoints, size: chartRect.size)
+                .fill(
+                  LinearGradient(
+                    colors: [color.opacity(0.22), TokMonGlass.success.opacity(0.12), Color.clear],
+                    startPoint: .leading,
+                    endPoint: .trailing,
+                  )
+                )
+              smoothedTrendPath(points: chartPoints)
+                .stroke(color.opacity(0.42), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
           }
+          .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-
-        if let lastPoint = chartPoints.last {
-          Circle()
-            .fill(color)
-            .frame(width: 6, height: 6)
-            .position(lastPoint)
-        }
-
-        ChartXAxisLabels(ticks: xAxisTicks)
-          .frame(width: xAxisRect.width, height: xAxisRect.height)
-          .position(x: xAxisRect.midX, y: xAxisRect.midY)
+        TrendXAxisLabels(points: points, leadingPadding: yAxisWidth + 4)
+          .frame(height: xAxisHeight)
       }
     }
-    .frame(maxWidth: .infinity)
   }
 
-  private var xAxisTicks: [(index: Int, label: String, alignment: Alignment)] {
+  private func normalizedPoints(in size: CGSize, scale: TrendChartScale) -> [CGPoint] {
     guard !points.isEmpty else { return [] }
-    let maxTicks = min(points.count, 5)
-    let indexes: [Int]
-
-    if maxTicks == 1 {
-      indexes = [0]
-    } else {
-      indexes = (0..<maxTicks).reduce(into: []) { result, tick in
-        let rawIndex = Double(tick) * Double(points.count - 1) / Double(maxTicks - 1)
-        let index = Int(rawIndex.rounded())
-        if result.last != index {
-          result.append(index)
-        }
-      }
-    }
-
-    return indexes.enumerated().map { position, index in
-      let alignment: Alignment
-      if position == 0 {
-        alignment = .leading
-      } else if position == indexes.count - 1 {
-        alignment = .trailing
-      } else {
-        alignment = .center
-      }
-
-      return (index, compactXAxisLabel(points[index].label), alignment)
-    }
-  }
-
-  private func compactXAxisLabel(_ label: String) -> String {
-    if let hourRange = label.range(of: #" \d{2}:00$"#, options: .regularExpression) {
-      return String(label[hourRange].dropFirst())
-    }
-
-    if label.count >= 10 {
-      let start = label.index(label.startIndex, offsetBy: 5)
-      let end = label.index(label.startIndex, offsetBy: 10)
-      return String(label[start..<end])
-    }
-
-    return label
-  }
-
-  private func pathPoints(in size: CGSize, minValue: Double, maxValue: Double, hasVariation: Bool) -> [CGPoint] {
-    guard !points.isEmpty, size.width > 0, size.height > 0 else { return [] }
-    let horizontalStep = points.count > 1 ? size.width / CGFloat(points.count - 1) : 0
-    let verticalPadding: CGFloat = 3
-    let drawableHeight = max(size.height - verticalPadding * 2, 1)
-
+    let horizontalInset: CGFloat = 4
+    let drawableWidth = max(size.width - horizontalInset * 2, 1)
+    let step = points.count > 1 ? drawableWidth / CGFloat(points.count - 1) : 0
     return points.enumerated().map { index, point in
-      let x = points.count > 1 ? CGFloat(index) * horizontalStep : size.width / 2
-      let normalized = hasVariation ? (point.value - minValue) / (maxValue - minValue) : 0.5
-      let y = verticalPadding + CGFloat(1 - normalized) * drawableHeight
+      let x = horizontalInset + CGFloat(index) * step
+      let normalized = scale.normalized(point.value)
+      let y = size.height - CGFloat(normalized) * max(size.height - 12, 1) - 6
       return CGPoint(x: x, y: y)
+    }
+  }
+
+  private func formatAxisValue(_ value: Double) -> String {
+    if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
+    if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
+    return String(format: "%.0f", value)
+  }
+
+  private func smoothedTrendPath(points: [CGPoint]) -> Path {
+    Path { path in
+      guard let first = points.first else { return }
+      path.move(to: first)
+      addSmoothedCurve(to: &path, points: points)
+    }
+  }
+
+  private func smoothedTrendFill(points: [CGPoint], size: CGSize) -> Path {
+    Path { path in
+      guard let first = points.first, let last = points.last else { return }
+      path.move(to: CGPoint(x: first.x, y: size.height))
+      path.addLine(to: first)
+      addSmoothedCurve(to: &path, points: points)
+      path.addLine(to: CGPoint(x: last.x, y: size.height))
+      path.closeSubpath()
+    }
+  }
+
+  private func addSmoothedCurve(to path: inout Path, points: [CGPoint]) {
+    guard points.count > 1 else { return }
+
+    for index in 0..<(points.count - 1) {
+      let current = points[index]
+      let next = points[index + 1]
+      let previous = index > 0 ? points[index - 1] : current
+      let following = index + 2 < points.count ? points[index + 2] : next
+      let tension: CGFloat = 0.18
+      let rawFirstControl = CGPoint(
+        x: current.x + (next.x - previous.x) * tension,
+        y: current.y + (next.y - previous.y) * tension,
+      )
+      let rawSecondControl = CGPoint(
+        x: next.x - (following.x - current.x) * tension,
+        y: next.y - (following.y - current.y) * tension,
+      )
+      let firstControl = boundedControlPoint(rawFirstControl, from: current, to: next)
+      let secondControl = boundedControlPoint(rawSecondControl, from: current, to: next)
+
+      path.addCurve(to: next, control1: firstControl, control2: secondControl)
     }
   }
 
@@ -1147,92 +1348,402 @@ private struct TrendLineChart: View {
   }
 }
 
+private struct TrendChartScale {
+  let minValue: Double
+  let maxValue: Double
+  let range: Double
+
+  init(points: [TokMonTrendPoint]) {
+    let values = points.map(\.value)
+    let rawMin = min(values.min() ?? 0, 0)
+    let rawMax = values.max() ?? 0
+    minValue = rawMin
+    maxValue = rawMax
+    range = max(rawMax - rawMin, 1)
+  }
+
+  func normalized(_ value: Double) -> Double {
+    (value - minValue) / range
+  }
+}
+
+private struct TrendYAxisLabels: View {
+  let scale: TrendChartScale
+  let height: CGFloat
+  let formatValue: (Double) -> String
+
+  var body: some View {
+    VStack(alignment: .trailing) {
+      Text(formatValue(scale.maxValue))
+      Spacer()
+      Text(formatValue((scale.maxValue + scale.minValue) / 2))
+      Spacer()
+      Text(formatValue(scale.minValue))
+    }
+    .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit())
+    .foregroundStyle(TokMonGlass.mutedTint)
+    .frame(height: height)
+  }
+}
+
+private struct TrendXAxisLabels: View {
+  let points: [TokMonTrendPoint]
+  let leadingPadding: CGFloat
+
+  var body: some View {
+    GeometryReader { proxy in
+      ZStack(alignment: .leading) {
+        ForEach(axisTickIndices, id: \.self) { index in
+          Text(shortAxisLabel(points[index].label))
+            .frame(width: 46, alignment: index == axisTickIndices.last ? .trailing : .center)
+            .offset(x: tickOffset(index: index, width: proxy.size.width))
+        }
+      }
+    }
+    .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit())
+    .foregroundStyle(TokMonGlass.mutedTint)
+    .lineLimit(1)
+    .padding(.leading, leadingPadding)
+  }
+
+  private var axisTickIndices: [Int] {
+    guard points.count > 1 else { return points.isEmpty ? [] : [0] }
+    let desiredTickCount = min(points.count, 5)
+    return (0..<desiredTickCount).map { tick in
+      Int((Double(points.count - 1) * Double(tick) / Double(desiredTickCount - 1)).rounded())
+    }.reduce(into: []) { result, index in
+      if result.last != index {
+        result.append(index)
+      }
+    }
+  }
+
+  private var isSingleHourlyDay: Bool {
+    let dayLabels = Set(points.compactMap { point -> String? in
+      guard point.label.count >= 10 else { return nil }
+      return String(point.label.prefix(10))
+    })
+    return dayLabels.count == 1 && points.contains { $0.label.count >= 16 }
+  }
+
+  private func tickOffset(index: Int, width: CGFloat) -> CGFloat {
+    guard points.count > 1 else { return 0 }
+    let labelWidth: CGFloat = 46
+    let drawableWidth = max(width - labelWidth, 1)
+    let progress = CGFloat(index) / CGFloat(points.count - 1)
+    return drawableWidth * progress
+  }
+
+  private func shortAxisLabel(_ label: String?) -> String {
+    guard let label else { return "" }
+    if label.count >= 16 {
+      let timeStart = label.index(label.startIndex, offsetBy: 11)
+      let timeEnd = label.index(label.startIndex, offsetBy: 16)
+      if isSingleHourlyDay {
+        return String(label[timeStart..<timeEnd])
+      }
+      let start = label.index(label.startIndex, offsetBy: 5)
+      let end = label.index(label.startIndex, offsetBy: 16)
+      return String(label[start..<end])
+    }
+    if label.count >= 10 {
+      let start = label.index(label.startIndex, offsetBy: 5)
+      return String(label[start...])
+    }
+    return label
+  }
+}
+
 private struct ChartGrid: Shape {
   let horizontalLines: Int
   let verticalLines: Int
 
   func path(in rect: CGRect) -> Path {
     var path = Path()
-
-    if horizontalLines > 0 {
-      for index in 1...horizontalLines {
-        let y = rect.minY + rect.height * CGFloat(index) / CGFloat(horizontalLines + 1)
-        path.move(to: CGPoint(x: rect.minX, y: y))
-        path.addLine(to: CGPoint(x: rect.maxX, y: y))
-      }
+    for index in 1...horizontalLines {
+      let y = rect.minY + rect.height * CGFloat(index) / CGFloat(horizontalLines + 1)
+      path.move(to: CGPoint(x: rect.minX, y: y))
+      path.addLine(to: CGPoint(x: rect.maxX, y: y))
     }
-
-    if verticalLines > 0 {
-      for index in 1...verticalLines {
-        let x = rect.minX + rect.width * CGFloat(index) / CGFloat(verticalLines + 1)
-        path.move(to: CGPoint(x: x, y: rect.minY))
-        path.addLine(to: CGPoint(x: x, y: rect.maxY))
-      }
+    for index in 1...verticalLines {
+      let x = rect.minX + rect.width * CGFloat(index) / CGFloat(verticalLines + 1)
+      path.move(to: CGPoint(x: x, y: rect.minY))
+      path.addLine(to: CGPoint(x: x, y: rect.maxY))
     }
-
     return path
   }
 }
 
-private struct ChartYAxisLabels: View {
-  let minValue: Double
-  let maxValue: Double
-  let formatter: (Double?) -> String
-  let horizontalLines: Int
+private struct RequestRowView: View {
+  let row: TokMonRecordRow
+  let isExpanded: Bool
+  let costRates: TokMonCostRates
+  let sourceLabel: String
+  let sourceColor: Color
+  let formatCompact: (Double?) -> String
+  let formatCost: (Double?) -> String
+  let onToggleDetails: () -> Void
+  let onJumpToSession: (() -> Void)?
 
   var body: some View {
-    GeometryReader { proxy in
-      ZStack(alignment: .topTrailing) {
-        ForEach(labelTicks, id: \.offset) { tick in
-          Text(formatter(tick.value))
-            .font(.system(size: 8, weight: .medium, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .position(x: proxy.size.width / 2, y: proxy.size.height * tick.offset)
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text(row.model)
+          .font(.system(size: 14, weight: .heavy, design: .rounded))
+          .lineLimit(1)
+        Spacer()
+        Text(shortTimestamp(row.createdAt))
+          .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+          .foregroundStyle(TokMonGlass.mutedTint)
+      }
+      HStack(spacing: 10) {
+        Text(sourceLabel)
+          .font(.system(size: 12, weight: .bold, design: .rounded))
+          .foregroundStyle(sourceColor)
+        Text(row.sessionId)
+          .font(.system(size: 12, weight: .medium, design: .monospaced))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      HStack(alignment: .bottom, spacing: 10) {
+        RequestTokenChipGrid(
+          chips: [
+            TokenChipData(label: "In", value: formatCompact(Double(row.inputTokens))),
+            TokenChipData(label: "Out", value: formatCompact(Double(row.outputTokens))),
+            TokenChipData(label: "Cache", value: formatCompact(Double(row.cacheCreation + row.cacheRead))),
+            TokenChipData(label: "$", value: formatCost(cost)),
+          ],
+        )
+        VStack(alignment: .trailing, spacing: 5) {
+          Button(isExpanded ? "Hide" : "Details") {
+            onToggleDetails()
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(TokMonGlass.mutedTint)
+          if let onJumpToSession {
+            Button("Jump", action: onJumpToSession)
+              .buttonStyle(.plain)
+              .foregroundStyle(TokMonGlass.mutedTint)
+          }
+        }
+        .font(.system(size: 11, weight: .bold, design: .rounded))
+      }
+      if isExpanded {
+        VStack(alignment: .leading, spacing: 3) {
+          DetailLine(label: "Created", value: row.createdAt)
+          DetailLine(label: "Session", value: row.sessionId)
+          DetailLine(label: "Cache Created", value: formatCompact(Double(row.cacheCreation)))
+          DetailLine(label: "Cache Read", value: formatCompact(Double(row.cacheRead)))
+          DetailLine(label: "Reasoning", value: formatCompact(Double(row.reasoningTokens)))
         }
       }
     }
+    .padding(14)
+    .hudInsetCard()
   }
 
-  private var labelTicks: [(offset: CGFloat, value: Double)] {
-    let count = max(horizontalLines + 2, 2)
-    let range = maxValue - minValue
-
-    return (0..<count).map { index in
-      let fraction = Double(index) / Double(count - 1)
-      let offset = CGFloat(fraction)
-      let value = maxValue - range * fraction
-      return (offset, value)
-    }
+  private var cost: Double {
+    costRates.cost(
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheCreation: row.cacheCreation,
+      cacheRead: row.cacheRead,
+    )
   }
 }
 
-private struct ChartXAxisLabels: View {
-  let ticks: [(index: Int, label: String, alignment: Alignment)]
+private struct TokenChipData: Identifiable {
+  let label: String
+  let value: String
+
+  var id: String { label }
+}
+
+private struct RequestTokenChipGrid: View {
+  let chips: [TokenChipData]
 
   var body: some View {
-    HStack(spacing: 0) {
-      ForEach(ticks, id: \.index) { tick in
-        Text(tick.label)
-          .font(.system(size: 8, weight: .medium, design: .monospaced))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.7)
-          .frame(maxWidth: .infinity, alignment: tick.alignment)
+    LazyVGrid(
+      columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2),
+      alignment: .leading,
+      spacing: 5,
+    ) {
+      ForEach(chips) { chip in
+        TokenChip(label: chip.label, value: chip.value)
       }
     }
-    .padding(.top, 5)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
+}
+
+private struct SessionRowView: View {
+  let session: TokMonUsageSession
+  let isSelected: Bool
+  let costRates: TokMonCostRates
+  let sourceLabel: String
+  let sourceColor: Color
+  let formatCompact: (Double?) -> String
+  let formatCost: (Double?) -> String
+  let onSelect: () -> Void
+
+  var body: some View {
+    Button(action: onSelect) {
+      HStack(spacing: 12) {
+        Circle()
+          .fill(sourceColor)
+          .frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(session.title ?? session.sessionId)
+            .font(.system(size: 14, weight: .heavy, design: .rounded))
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Text("\(sourceLabel) · \(session.model) · \(session.requests) req")
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundStyle(TokMonGlass.mutedTint)
+            .lineLimit(1)
+        }
+        Spacer()
+        VStack(alignment: .trailing, spacing: 4) {
+          Text(formatCompact(Double(session.inputTokens + session.outputTokens + session.cacheRead)))
+            .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
+          Text(formatCost(cost))
+            .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+            .foregroundStyle(TokMonGlass.mutedTint)
+        }
+      }
+      .padding(14)
+      .hudInsetCard(isSelected: isSelected)
+    }
+    .buttonStyle(.plain)
+    .focusable(false)
+  }
+
+  private var cost: Double {
+    costRates.cost(
+      inputTokens: session.inputTokens,
+      outputTokens: session.outputTokens,
+      cacheCreation: session.cacheCreation,
+      cacheRead: session.cacheRead,
+    )
+  }
+}
+
+private struct DetailLine: View {
+  let label: String
+  let value: String
+
+  var body: some View {
+    HStack {
+      Text(label)
+        .foregroundStyle(TokMonGlass.mutedTint)
+      Spacer()
+      Text(value)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .font(.system(size: 12, weight: .semibold, design: .rounded))
+  }
+}
+
+private struct TokenChip: View {
+  let label: String
+  let value: String
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Text(label)
+        .foregroundStyle(TokMonGlass.mutedTint)
+      Text(value)
+        .foregroundStyle(TokMonGlass.neutralTint)
+    }
+    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+    .lineLimit(1)
+  }
+}
+
+private struct LoadMoreButton: View {
+  let title: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(title, systemImage: "plus.circle")
+        .font(.system(size: 13, weight: .bold, design: .rounded))
+        .frame(maxWidth: .infinity)
+    }
+    .tokMonGlassButton()
+    .focusable(false)
+  }
+}
+
+private struct HudCardModifier: ViewModifier {
+  var isSelected = false
+
+  func body(content: Content) -> some View {
+    content
+      .background {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(TokMonGlass.hudCardFill)
+          .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+              .fill(
+                LinearGradient(
+                  colors: [Color.white.opacity(0.05), Color.clear],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing,
+                )
+              )
+          }
+          .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+              .strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.42) : TokMonGlass.hudCardStroke, lineWidth: 1)
+          }
+      }
+  }
+}
+
+private struct HudInsetCardModifier: ViewModifier {
+  var isSelected = false
+
+  func body(content: Content) -> some View {
+    content
+      .background {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .fill(Color.black.opacity(0.14))
+          .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+              .strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.36) : Color.white.opacity(0.08), lineWidth: 1)
+          }
+      }
+  }
+}
+
+private extension View {
+  func hudCard(isSelected: Bool = false) -> some View {
+    modifier(HudCardModifier(isSelected: isSelected))
+  }
+
+  func hudInsetCard(isSelected: Bool = false) -> some View {
+    modifier(HudInsetCardModifier(isSelected: isSelected))
+  }
+}
+
+private func shortTimestamp(_ value: String) -> String {
+  if value.count >= 16 {
+    let start = value.index(value.startIndex, offsetBy: 5)
+    let end = value.index(value.startIndex, offsetBy: 16)
+    return String(value[start..<end])
+  }
+  return value
 }
 
 private struct TokMonSeriesPresentation {
   let key: TokMonSeriesKey
   let label: String
   let icon: String
-  let color: TokMonMetricColor
   let isCost: Bool
+  let isPercent: Bool
 
   init(rawValue: String) {
     self.init(key: TokMonSeriesKey(rawValue))
@@ -1243,39 +1754,44 @@ private struct TokMonSeriesPresentation {
     switch key {
     case .requests:
       label = "Requests"
-      icon = "⚡"
-      color = .green
+      icon = "#"
       isCost = false
+      isPercent = false
     case .input:
       label = "Input Tokens"
       icon = "→"
-      color = .purple
       isCost = false
+      isPercent = false
     case .output:
       label = "Output Tokens"
       icon = "←"
-      color = .pink
       isCost = false
+      isPercent = false
     case .cache:
       label = "Cache Created"
       icon = "◆"
-      color = .orange
       isCost = false
+      isPercent = false
     case .cacheHit:
       label = "Cache Hit"
       icon = "✦"
-      color = .red
       isCost = false
+      isPercent = false
+    case .cacheHitRate:
+      label = "Hit Rate"
+      icon = "%"
+      isCost = false
+      isPercent = true
     case .cost:
       label = "Est. Cost"
       icon = "$"
-      color = .teal
       isCost = true
+      isPercent = false
     case .total:
       label = "Total Tokens"
-      icon = "∑"
-      color = .accent
+      icon = "Σ"
       isCost = false
+      isPercent = false
     }
   }
 
@@ -1285,71 +1801,38 @@ private struct TokMonSeriesPresentation {
   static let output = TokMonSeriesPresentation(key: .output)
   static let cache = TokMonSeriesPresentation(key: .cache)
   static let cacheHit = TokMonSeriesPresentation(key: .cacheHit)
+  static let cacheHitRate = TokMonSeriesPresentation(key: .cacheHitRate)
   static let cost = TokMonSeriesPresentation(key: .cost)
-}
 
-private enum TokMonMetricColor {
-  case accent
-  case green
-  case orange
-  case pink
-  case purple
-  case red
-  case teal
-
-  var swiftUIColor: Color {
-    Color(nsColor: nsColor)
-  }
-
-  private var nsColor: NSColor {
-    switch self {
-    case .accent:
-      NSColor(red: 0x58 / 255, green: 0xa6 / 255, blue: 0xff / 255, alpha: 1)
-    case .green:
-      NSColor(red: 0x3f / 255, green: 0xb9 / 255, blue: 0x50 / 255, alpha: 1)
-    case .orange:
-      NSColor(red: 0xd2 / 255, green: 0x99 / 255, blue: 0x22 / 255, alpha: 1)
-    case .pink:
-      NSColor(red: 0xf7 / 255, green: 0x78 / 255, blue: 0xba / 255, alpha: 1)
-    case .purple:
-      NSColor(red: 0xbc / 255, green: 0x8c / 255, blue: 0xff / 255, alpha: 1)
-    case .red:
-      NSColor(red: 0xf8 / 255, green: 0x51 / 255, blue: 0x49 / 255, alpha: 1)
-    case .teal:
-      NSColor(red: 0x2d / 255, green: 0xd4 / 255, blue: 0xbf / 255, alpha: 1)
+  var compactLabel: String {
+    switch key {
+    case .input:
+      "Input"
+    case .output:
+      "Output"
+    case .cache:
+      "Cache New"
+    case .cacheHit:
+      "Cache Hit"
+    case .cacheHitRate:
+      "Hit Rate"
+    case .cost:
+      "Cost"
+    case .requests:
+      "Requests"
+    case .total:
+      "Total"
     }
   }
-}
 
-private struct InfoRow: View {
-  let label: String
-  let value: String
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline) {
-      Text(label)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .frame(width: 44, alignment: .leading)
-      Text(value)
-        .font(.caption.monospacedDigit())
-        .lineLimit(1)
-        .truncationMode(.middle)
-      Spacer(minLength: 0)
+  var tintColor: Color {
+    switch key {
+    case .cacheHitRate, .cost:
+      TokMonGlass.success
+    case .cache, .cacheHit:
+      TokMonGlass.warning
+    default:
+      TokMonGlass.accent
     }
-  }
-}
-
-private struct SectionTitle: View {
-  let title: String
-
-  init(_ title: String) {
-    self.title = title
-  }
-
-  var body: some View {
-    Text(title.uppercased())
-      .font(.caption2.weight(.semibold))
-      .foregroundStyle(.secondary)
   }
 }

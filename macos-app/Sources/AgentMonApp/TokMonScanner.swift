@@ -25,8 +25,11 @@ final class TokMonScanner {
   }
 
   private func scanCodex(directory: URL) throws -> Int {
-    try scanFiles(in: directory) { fileURL in
-      try scanCodexFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
+    return try scanFiles(in: directory) { fileURL in
+      try scanCodexFile(
+        fileURL,
+        fallbackSessionId: codexFallbackSessionId(for: fileURL),
+      )
     }
   }
 
@@ -57,8 +60,17 @@ final class TokMonScanner {
     guard let fileSize = try? byteSize(fileURL) else {
       return 0
     }
+    let fileMtime = fileModificationStamp(fileURL)
     let state = try database.scanState(filePath: filePath)
-    guard let range = appendRange(fileSize: fileSize, offset: state.offset) else {
+    if let fileMtime, state.offset == fileSize, state.lastMtime == fileMtime {
+      return 0
+    }
+    let shouldRescanFromStart = fileSize < state.offset
+      || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
+    let range = shouldRescanFromStart
+      ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
+      : appendRange(fileSize: fileSize, offset: state.offset)
+    guard let range else {
       return 0
     }
     guard let lines = try? readLines(fileURL, range: range) else {
@@ -66,12 +78,30 @@ final class TokMonScanner {
     }
 
     var count = 0
-    var lastUsageKey = state.lastUsageKey
+    var lastUsageKey = range.offset == 0 ? nil : state.lastUsageKey
+    var model = range.offset == 0 ? nil : state.model
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var projectPath: String?
     for line in lines {
-      guard let object = parseJSONObject(line),
-            let parsed = parseClaudeUsageRecord(object, fallbackSessionId: fallbackSessionId) else {
+      guard let object = parseJSONObject(line) else {
         continue
       }
+      if let timestamp = stringValue(object["timestamp"]) {
+        startedAt = startedAt ?? timestamp
+        lastActiveAt = timestamp
+      }
+      projectPath = projectPath ?? normalizedPrompt(stringValue(object["cwd"]))
+      if let prompt = claudeUserMessage(object) {
+        firstPrompt = firstPrompt ?? prompt
+        lastPrompt = prompt
+      }
+      guard let parsed = parseClaudeUsageRecord(object, fallbackSessionId: fallbackSessionId) else {
+        continue
+      }
+      model = parsed.usage.model
       let usageKey = parsed.messageId.isEmpty ? claudeUsageKey(parsed.usage) : parsed.messageId
       if usageKey == lastUsageKey {
         continue
@@ -87,20 +117,43 @@ final class TokMonScanner {
       state: TokMonScanState(
         offset: range.nextOffset,
         sessionId: fallbackSessionId,
-        model: state.model,
+        model: model,
         lastUsageKey: lastUsageKey,
+        lastMtime: fileMtime,
       ),
+    )
+    try upsertClaudeSessionMetadata(
+      sessionId: fallbackSessionId,
+      model: model,
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
     )
     return count
   }
 
-  private func scanCodexFile(_ fileURL: URL, fallbackSessionId: String) throws -> Int {
+  private func scanCodexFile(
+    _ fileURL: URL,
+    fallbackSessionId: String,
+  ) throws -> Int {
     let filePath = fileURL.path
     guard let fileSize = try? byteSize(fileURL) else {
       return 0
     }
+    let fileMtime = fileModificationStamp(fileURL)
     let state = try database.scanState(filePath: filePath)
-    guard let range = appendRange(fileSize: fileSize, offset: state.offset) else {
+    if let fileMtime, state.offset == fileSize, state.lastMtime == fileMtime {
+      return 0
+    }
+    let shouldRescanFromStart = fileSize < state.offset
+      || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
+    let range = shouldRescanFromStart
+      ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
+      : appendRange(fileSize: fileSize, offset: state.offset)
+    guard let range else {
       return 0
     }
     guard let lines = try? readLines(fileURL, range: range) else {
@@ -111,10 +164,21 @@ final class TokMonScanner {
     var resolvedSessionId = range.offset == 0 ? fallbackSessionId : (state.sessionId ?? fallbackSessionId)
     var lastModel = range.offset == 0 ? "unknown" : (state.model ?? "unknown")
     var lastUsageKey = range.offset == 0 ? nil : state.lastUsageKey
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var projectPath: String?
 
     for line in lines {
       guard let object = parseJSONObject(line) else {
         continue
+      }
+      if let timestamp = stringValue(object["timestamp"]) {
+        if startedAt == nil {
+          startedAt = timestamp
+        }
+        lastActiveAt = timestamp
       }
 
       if let type = object["type"] as? String, type == "session_meta" || type == "turn_context" {
@@ -128,6 +192,14 @@ final class TokMonScanner {
            !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           lastModel = model
         }
+        projectPath = projectPath ?? normalizedPrompt(stringValue(payload?["cwd"]))
+      }
+
+      if let message = codexUserMessage(object) {
+        firstPrompt = firstPrompt ?? message
+        lastPrompt = message
+      } else if firstPrompt == nil, let message = codexResponseUserMessage(object) {
+        firstPrompt = message
       }
 
       guard let usage = codexLastTokenUsage(object), hasCodexTokenUsage(usage) else {
@@ -164,7 +236,18 @@ final class TokMonScanner {
         sessionId: resolvedSessionId,
         model: lastModel,
         lastUsageKey: lastUsageKey,
+        lastMtime: fileMtime,
       ),
+    )
+    try upsertCodexSessionMetadata(
+      sessionId: resolvedSessionId,
+      model: lastModel,
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
     )
     return count
   }
@@ -206,6 +289,34 @@ final class TokMonScanner {
     return (stringValue(messageObject["id"]) ?? "", record)
   }
 
+  private func claudeUserMessage(_ object: [String: Any]) -> String? {
+    guard object["type"] as? String == "user" else {
+      return nil
+    }
+    let messageObject: [String: Any]?
+    if let message = object["message"] as? [String: Any] {
+      messageObject = message
+    } else {
+      messageObject = parsePayload(object["message"])
+    }
+    let content = messageObject?["content"] ?? object["content"]
+    return extractClaudeText(from: content).flatMap(normalizedPrompt).flatMap { prompt in
+      prompt.hasPrefix("<") ? nil : prompt
+    }
+  }
+
+  private func extractClaudeText(from content: Any?) -> String? {
+    if let text = content as? String {
+      return text
+    }
+    guard let parts = content as? [[String: Any]] else {
+      return nil
+    }
+    return parts.compactMap { part in
+      stringValue(part["text"])
+    }.first
+  }
+
   private func codexLastTokenUsage(_ object: [String: Any]) -> [String: Any]? {
     guard object["type"] as? String == "event_msg",
           let payload = parsePayload(object["payload"]),
@@ -214,6 +325,214 @@ final class TokMonScanner {
       return nil
     }
     return info["last_token_usage"] as? [String: Any]
+  }
+
+  private func codexUserMessage(_ object: [String: Any]) -> String? {
+    guard object["type"] as? String == "event_msg",
+          let payload = parsePayload(object["payload"]),
+          payload["type"] as? String == "user_message" else {
+      return nil
+    }
+    return normalizedPrompt(stringValue(payload["message"]))
+  }
+
+  private func codexResponseUserMessage(_ object: [String: Any]) -> String? {
+    guard object["type"] as? String == "response_item",
+          let payload = parsePayload(object["payload"]),
+          payload["type"] as? String == "message",
+          payload["role"] as? String == "user" else {
+      return nil
+    }
+    return extractCodexText(from: payload["content"]).flatMap(normalizedPrompt)
+  }
+
+  private func extractCodexText(from content: Any?) -> String? {
+    if let text = content as? String {
+      return text
+    }
+    guard let parts = content as? [[String: Any]] else {
+      return nil
+    }
+    let text = parts.compactMap { part in
+      stringValue(part["text"])
+        ?? stringValue(part["input_text"])
+        ?? stringValue(part["output_text"])
+    }.joined(separator: "\n")
+    return text.isEmpty ? nil : text
+  }
+
+  private func normalizedPrompt(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
+  }
+
+  private func codexFallbackSessionId(for fileURL: URL) -> String {
+    let fileName = fileURL.deletingPathExtension().lastPathComponent
+    if let range = fileName.range(
+      of: #"[0-9A-Fa-f]{8,}-[0-9A-Fa-f-]{20,}"#,
+      options: .regularExpression,
+    ) {
+      return String(fileName[range])
+    }
+    return fileName
+  }
+
+  private func codexSessionMetadataSnapshot(
+    _ fileURL: URL,
+    fallbackSessionId: String,
+  ) -> (sessionId: String?, model: String?, firstPrompt: String?, lastPrompt: String?, startedAt: String?, lastActiveAt: String?, projectPath: String?) {
+    guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else {
+      return (fallbackSessionId, nil, nil, nil, nil, nil, nil)
+    }
+
+    var sessionId: String?
+    var model: String?
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var projectPath: String?
+
+    for line in text.components(separatedBy: "\n") {
+      guard let object = parseJSONObject(line) else {
+        continue
+      }
+      if let timestamp = stringValue(object["timestamp"]) {
+        startedAt = startedAt ?? timestamp
+        lastActiveAt = timestamp
+      }
+
+      if let type = object["type"] as? String, type == "session_meta" || type == "turn_context" {
+        let payload = parsePayload(object["payload"])
+        if type == "session_meta",
+           let id = normalizedPrompt(stringValue(payload?["id"])) {
+          sessionId = id
+        }
+        if let payloadModel = normalizedPrompt(stringValue(payload?["model"])) {
+          model = payloadModel
+        }
+        projectPath = projectPath ?? normalizedPrompt(stringValue(payload?["cwd"]))
+      }
+
+      if let message = codexUserMessage(object) {
+        firstPrompt = firstPrompt ?? message
+        lastPrompt = message
+      } else if firstPrompt == nil, let message = codexResponseUserMessage(object) {
+        firstPrompt = message
+      }
+    }
+
+    return (sessionId ?? fallbackSessionId, model, firstPrompt, lastPrompt ?? firstPrompt, startedAt, lastActiveAt, projectPath)
+  }
+
+  private func upsertCodexSessionMetadata(
+    sessionId: String,
+    model: String?,
+    firstPrompt: String?,
+    lastPrompt: String?,
+    startedAt: String?,
+    lastActiveAt: String?,
+    filePath: String,
+    projectPath: String?,
+  ) throws {
+    try database.upsertSessionMetadata(TokMonSessionMetadata(
+      id: sessionId,
+      source: "codex",
+      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: model == "unknown" ? nil : model,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
+    ))
+  }
+
+  private func upsertClaudeSessionMetadata(
+    sessionId: String,
+    model: String?,
+    firstPrompt: String?,
+    lastPrompt: String?,
+    startedAt: String?,
+    lastActiveAt: String?,
+    filePath: String,
+    projectPath: String?,
+  ) throws {
+    try database.upsertSessionMetadata(TokMonSessionMetadata(
+      id: sessionId,
+      source: "claude-code",
+      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: model == "unknown" ? nil : model,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
+    ))
+  }
+
+  private func claudeSessionMetadataSnapshot(
+    _ fileURL: URL,
+    fallbackSessionId: String,
+  ) -> (sessionId: String, model: String?, firstPrompt: String?, lastPrompt: String?, startedAt: String?, lastActiveAt: String?, projectPath: String?) {
+    guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else {
+      return (fallbackSessionId, nil, nil, nil, nil, nil, nil)
+    }
+
+    var model: String?
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var projectPath: String?
+
+    for line in text.components(separatedBy: "\n") {
+      guard let object = parseJSONObject(line) else {
+        continue
+      }
+      if let timestamp = stringValue(object["timestamp"]) {
+        startedAt = startedAt ?? timestamp
+        lastActiveAt = timestamp
+      }
+      projectPath = projectPath ?? normalizedPrompt(stringValue(object["cwd"]))
+      if let prompt = claudeUserMessage(object) {
+        firstPrompt = firstPrompt ?? prompt
+        lastPrompt = prompt
+      }
+      if object["type"] as? String == "assistant",
+         let message = object["message"] as? [String: Any],
+         let assistantModel = normalizedPrompt(stringValue(message["model"])) {
+        model = assistantModel
+      }
+    }
+
+    return (fallbackSessionId, model, firstPrompt, lastPrompt ?? firstPrompt, startedAt, lastActiveAt, projectPath)
+  }
+
+  private func sessionTitle(projectPath: String?, filePath: String, firstPrompt: String?) -> String? {
+    guard let prompt = firstPrompt else {
+      return nil
+    }
+    let projectName = normalizedPrompt(projectPath).map { URL(fileURLWithPath: $0).lastPathComponent }
+      ?? projectNameFromFilePath(filePath)
+    return "\(projectName) - \(prompt)"
+  }
+
+  private func projectNameFromFilePath(_ filePath: String) -> String {
+    let fileURL = URL(fileURLWithPath: filePath)
+    let parent = fileURL.deletingLastPathComponent()
+    if parent.lastPathComponent == "sessions" || parent.lastPathComponent.count == 2 || Int(parent.lastPathComponent) != nil {
+      let components = parent.pathComponents
+      if let index = components.lastIndex(of: "sessions"), index > 0 {
+        return components[index - 1]
+      }
+    }
+    return parent.lastPathComponent
   }
 
   private func parsePayload(_ payload: Any?) -> [String: Any]? {
@@ -259,10 +578,20 @@ final class TokMonScanner {
     return 0
   }
 
+  private func fileModificationStamp(_ fileURL: URL) -> String? {
+    guard
+      let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+      let modifiedAt = attributes[.modificationDate] as? Date
+    else {
+      return nil
+    }
+    return String(modifiedAt.timeIntervalSince1970)
+  }
+
   private func appendRange(fileSize: Int64, offset: Int64) -> AppendRange? {
     let start = fileSize < offset ? 0 : offset
     let length = fileSize - start
-    guard length > 0 else {
+    guard length >= 0 else {
       return nil
     }
     return AppendRange(offset: start, length: length, nextOffset: fileSize)

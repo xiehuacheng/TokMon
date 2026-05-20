@@ -10,20 +10,22 @@ actor TokMonEngineActor {
   func loadSettingsDraft() throws -> TokMonSettingsDraft {
     let config = try engine.configStore.loadConfig()
     let uiState = try engine.configStore.loadUIState()
+    let models = try engine.queryStore.models()
     return TokMonSettingsDraft(
       claudePath: config.sources["claude-code"]?.path ?? TokMonSettingsDraft().claudePath,
       codexPath: config.sources["codex"]?.path ?? TokMonSettingsDraft().codexPath,
       source: uiState.source,
       rangeLabel: resolvedRangeLabel(from: uiState),
-      liveMode: uiState.liveMode,
-      rangeMode: uiState.rangeMode,
-      interval: uiState.interval,
+      liveMode: true,
+      interval: TokMonRangePreset(label: uiState.rangeLabel).interval,
       activeSeries: uiState.activeSeries,
       refreshRate: uiState.refreshRate,
       inputRate: uiState.costRates.input,
       outputRate: uiState.costRates.output,
       cacheCreateRate: uiState.costRates.cacheCreate,
       cacheReadRate: uiState.costRates.cacheRead,
+      modelPricing: uiState.modelPricing,
+      availableModels: models,
     )
   }
 
@@ -34,6 +36,27 @@ actor TokMonEngineActor {
     try engine.configStore.saveConfig(config)
     let existingState = try engine.configStore.loadUIState()
     try engine.configStore.saveUIState(uiState(from: draft, preserving: existingState))
+  }
+
+  func updateDashboardRange(label: String) throws {
+    var uiState = try engine.configStore.loadUIState()
+    let preset = TokMonRangePreset(label: label)
+    uiState.rangeLabel = preset.label
+    uiState.rangeHours = preset.hours
+    uiState.rangeDays = preset.days
+    uiState.liveMode = true
+    uiState.rangeMode = "round"
+    uiState.interval = preset.interval
+    try engine.configStore.saveUIState(uiState)
+  }
+
+  func updateDashboardRangeAndRefreshRangeStats(
+    label: String,
+    preserving existingSnapshot: AgentMonStatsSnapshot,
+    now: Date,
+  ) throws -> AgentMonStatsSnapshot {
+    try updateDashboardRange(label: label)
+    return try refreshRangeStats(preserving: existingSnapshot, now: now)
   }
 
   func scan() throws -> Int {
@@ -64,16 +87,124 @@ actor TokMonEngineActor {
   ) throws -> AgentMonStatsSnapshot {
     let config = try engine.configStore.loadConfig()
     let rawUIState = try engine.configStore.loadUIState()
-    let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
     let inserted = try engine.scanner.scan(config: config)
+    return try statsSnapshot(
+      rawUIState: rawUIState,
+      now: now,
+      inserted: inserted,
+      recordsLimit: recordsLimit,
+      sessionsLimit: sessionsLimit,
+      selectedSession: selectedSession,
+    )
+  }
+
+  func refreshStatsWithoutScan(
+    now: Date,
+    recordsLimit: Int,
+    sessionsLimit: Int,
+    selectedSession: TokMonUsageSessionSelection?,
+  ) throws -> AgentMonStatsSnapshot {
+    try statsSnapshot(
+      rawUIState: engine.configStore.loadUIState(),
+      now: now,
+      inserted: 0,
+      recordsLimit: recordsLimit,
+      sessionsLimit: sessionsLimit,
+      selectedSession: selectedSession,
+    )
+  }
+
+  func refreshRangeStats(
+    preserving existingSnapshot: AgentMonStatsSnapshot,
+    now: Date,
+  ) throws -> AgentMonStatsSnapshot {
+    let rawUIState = try engine.configStore.loadUIState()
+    let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
     let filter = TokMonQueryFilter(
       from: dashboardState.from,
       to: dashboardState.to,
       source: dashboardState.source.isEmpty ? nil : dashboardState.source,
       model: nil,
     )
-    let summary = try engine.queryStore.summary(filter: filter)
-    let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval)
+    let summary = try engine.queryStore.summary(filter: filter, now: now)
+    let previousSummary = try TokMonStatsSnapshotBuilder
+      .previousFilter(from: dashboardState)
+      .map { try engine.queryStore.summary(filter: $0, now: now) }
+    let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval, now: now)
+
+    return AgentMonStatsSnapshot(
+      scanStatus: AgentMonScanStatus(
+        running: false,
+        phase: "Idle",
+        current: 0,
+        total: 0,
+        processed: 0,
+        startedAt: nil,
+        finishedAt: TokMonStatsSnapshotBuilder.formattedTimestamp(now),
+        error: nil,
+      ),
+      summary: summary,
+      previousSummary: previousSummary,
+      trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(trend, dashboardState: dashboardState),
+      heatmapDays: existingSnapshot.heatmapDays,
+      yearHeatmapDays: existingSnapshot.yearHeatmapDays,
+      recordsPage: existingSnapshot.recordsPage,
+      usageSessions: existingSnapshot.usageSessions,
+      selectedUsageSession: existingSnapshot.selectedUsageSession,
+      selectedSessionRecords: existingSnapshot.selectedSessionRecords,
+      dashboardState: dashboardState,
+      updatedAt: now,
+    )
+  }
+
+  func selectedUsageSessionRecords(
+    preserving existingSnapshot: AgentMonStatsSnapshot,
+    selectedSession: TokMonUsageSessionSelection,
+    now: Date,
+  ) throws -> [TokMonRecordRow] {
+    let dashboardState: TokMonDashboardState
+    if let existingDashboardState = existingSnapshot.dashboardState {
+      dashboardState = existingDashboardState
+    } else {
+      dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(
+        from: try engine.configStore.loadUIState(),
+        now: now,
+      )
+    }
+    let filter = TokMonQueryFilter(
+      from: dashboardState.from,
+      to: dashboardState.to,
+      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      model: nil,
+    )
+    return try engine.queryStore.recordsForSession(
+      filter: filter,
+      source: selectedSession.source,
+      sessionId: selectedSession.sessionId,
+      limit: 20,
+    )
+  }
+
+  private func statsSnapshot(
+    rawUIState: TokMonUIState,
+    now: Date,
+    inserted: Int,
+    recordsLimit: Int,
+    sessionsLimit: Int,
+    selectedSession: TokMonUsageSessionSelection?,
+  ) throws -> AgentMonStatsSnapshot {
+    let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
+    let filter = TokMonQueryFilter(
+      from: dashboardState.from,
+      to: dashboardState.to,
+      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      model: nil,
+    )
+    let summary = try engine.queryStore.summary(filter: filter, now: now)
+    let previousSummary = try TokMonStatsSnapshotBuilder
+      .previousFilter(from: dashboardState)
+      .map { try engine.queryStore.summary(filter: $0, now: now) }
+    let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval, now: now)
     let heatmap = try engine.queryStore.heatmap(source: filter.source, model: filter.model, endingAt: now)
     let records = try engine.queryStore.records(filter: filter, page: 0, limit: recordsLimit)
     let sessions = try engine.queryStore.sessions(filter: filter, limit: sessionsLimit)
@@ -98,8 +229,10 @@ actor TokMonEngineActor {
         error: nil,
       ),
       summary: summary,
+      previousSummary: previousSummary,
       trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(trend, dashboardState: dashboardState),
       heatmapDays: heatmap,
+      yearHeatmapDays: [],
       recordsPage: records,
       usageSessions: sessions,
       selectedUsageSession: selectedSession,
@@ -110,17 +243,17 @@ actor TokMonEngineActor {
   }
 
   private func uiState(from draft: TokMonSettingsDraft, preserving existingState: TokMonUIState) -> TokMonUIState {
-    let range = rangeComponents(label: draft.rangeLabel)
+    let preset = TokMonRangePreset(label: draft.rangeLabel)
     return TokMonUIState(
       source: draft.source,
       from: existingState.from,
       to: existingState.to,
-      rangeLabel: draft.rangeLabel,
-      rangeHours: range.hours,
-      rangeDays: range.days,
-      liveMode: draft.liveMode,
-      rangeMode: draft.rangeMode,
-      interval: draft.interval,
+      rangeLabel: preset.label,
+      rangeHours: preset.hours,
+      rangeDays: preset.days,
+      liveMode: true,
+      rangeMode: "round",
+      interval: preset.interval,
       activeSeries: draft.activeSeries,
       refreshRate: max(1000, draft.refreshRate),
       costRates: TokMonCostRates(
@@ -129,7 +262,18 @@ actor TokMonEngineActor {
         cacheCreate: max(0, draft.cacheCreateRate),
         cacheRead: max(0, draft.cacheReadRate),
       ),
+      modelPricing: normalizedModelPricing(draft.modelPricing),
     )
+  }
+
+  private func normalizedModelPricing(_ pricing: [String: TokMonCostRates]) -> [String: TokMonCostRates] {
+    pricing.reduce(into: [:]) { result, item in
+      let model = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !model.isEmpty else {
+        return
+      }
+      result[model] = item.value.normalized()
+    }
   }
 
   private func parityContext(now: Date) throws -> TokMonParityContext {
@@ -381,6 +525,7 @@ actor TokMonEngineActor {
       TokMonUsageSession(
         sessionId: row.string(0),
         source: row.string(1),
+        title: nil,
         model: row.string(2),
         requests: row.int(3),
         inputTokens: row.int(4),
@@ -517,21 +662,6 @@ actor TokMonEngineActor {
     return TokMonSettingsDraft().rangeLabel
   }
 
-  private func rangeComponents(label: String) -> (hours: Int?, days: Int?) {
-    switch label {
-    case "1H":
-      return (1, nil)
-    case "24H":
-      return (24, nil)
-    case "30D":
-      return (nil, 30)
-    case "90D":
-      return (nil, 90)
-    default:
-      return (nil, 7)
-    }
-  }
-
   private func validateRebuildSources(config: TokMonConfig) throws {
     let directories = config.sources.values.map { expandedURL($0.path) }
     guard !directories.isEmpty else {
@@ -584,8 +714,14 @@ actor TokMonEngineActor {
     tablePrefix: String? = nil,
   ) -> (whereSQL: String, params: [TokMonSQLValue]) {
     let createdColumn = column("created_at", tablePrefix: tablePrefix)
-    var whereSQL = "WHERE datetime(\(createdColumn), 'localtime') BETWEEN datetime(?) AND datetime(?)"
-    var params: [TokMonSQLValue] = [.text(filter.from), .text(filter.to)]
+    var clauses: [String] = []
+    var params: [TokMonSQLValue] = []
+    if filter.hasTimeRange {
+      clauses.append("datetime(\(createdColumn), 'localtime') BETWEEN datetime(?) AND datetime(?)")
+      params.append(.text(filter.from))
+      params.append(.text(filter.to))
+    }
+    var whereSQL = clauses.isEmpty ? "WHERE 1 = 1" : "WHERE \(clauses.joined(separator: " AND "))"
     appendOptionalFilters(source: filter.source, model: filter.model, tablePrefix: tablePrefix, whereSQL: &whereSQL, params: &params)
     return (whereSQL, params)
   }

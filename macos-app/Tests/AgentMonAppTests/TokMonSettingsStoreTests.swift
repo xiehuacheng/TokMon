@@ -22,9 +22,8 @@ import Testing
   store.draft.claudePath = "~/custom-claude"
   store.draft.codexPath = "~/custom-codex"
   store.draft.source = "codex"
-  store.draft.rangeLabel = "24H"
+  store.draft.rangeLabel = "today"
   store.draft.liveMode = false
-  store.draft.rangeMode = "round"
   store.draft.interval = "hour"
   store.draft.activeSeries = "cost"
   store.draft.refreshRate = 5000
@@ -32,6 +31,10 @@ import Testing
   store.draft.outputRate = 4
   store.draft.cacheCreateRate = 5
   store.draft.cacheReadRate = 6
+  store.draft.modelPricing = [
+    "gpt-a": TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4),
+    "gpt-b": TokMonCostRates(input: -1, output: 5, cacheCreate: -2, cacheRead: 6),
+  ]
 
   try await store.save()
 
@@ -42,16 +45,51 @@ import Testing
   #expect(config.sources["codex"]?.path == "~/custom-codex")
   #expect(config.sources["future-source"]?.path == "~/future")
   #expect(uiState.source == "codex")
-  #expect(uiState.rangeLabel == "24H")
-  #expect(uiState.rangeHours == 24)
+  #expect(uiState.rangeLabel == "today")
+  #expect(uiState.rangeHours == nil)
   #expect(uiState.rangeDays == nil)
-  #expect(uiState.liveMode == false)
+  #expect(uiState.liveMode)
   #expect(uiState.rangeMode == "round")
   #expect(uiState.interval == "hour")
   #expect(uiState.activeSeries == "cost")
   #expect(uiState.refreshRate == 5000)
   #expect(uiState.costRates == TokMonCostRates(input: 3, output: 4, cacheCreate: 5, cacheRead: 6))
+  #expect(uiState.modelPricing["gpt-a"] == TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4))
+  #expect(uiState.modelPricing["gpt-b"] == TokMonCostRates(input: 0, output: 5, cacheCreate: 0, cacheRead: 6))
   #expect(store.statusMessage == "Settings saved.")
+}
+
+@MainActor
+@Test func settingsStoreLoadsAvailableModelsAndPerModelPricing() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveUIState(TokMonUIState(
+    source: "",
+    from: "",
+    to: "",
+    rangeLabel: "thisWeek",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "day",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+    modelPricing: [
+      "gpt-a": TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4),
+    ],
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-b", inputTokens: 1, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s2", model: "gpt-a", inputTokens: 1, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-13T01:00:00.000Z"))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonSettingsStore(engine: engine)
+
+  try await store.load()
+
+  #expect(store.draft.modelPricing["gpt-a"] == TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4))
+  #expect(store.draft.availableModels.map(\.model) == ["gpt-b", "gpt-a"])
 }
 
 @MainActor
@@ -88,18 +126,18 @@ import Testing
 }
 
 @MainActor
-@Test func settingsStorePreservesFixedRangeWhenSavingUnownedFields() async throws {
+@Test func settingsStoreKeepsCalendarRangeWhenSavingUnownedFields() async throws {
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveUIState(TokMonUIState(
     source: "",
     from: "2026-05-01 00:00:00",
     to: "2026-05-02 23:59:59",
-    rangeLabel: nil,
+    rangeLabel: "thisMonth",
     rangeHours: nil,
     rangeDays: nil,
-    liveMode: false,
-    rangeMode: "exact",
+    liveMode: true,
+    rangeMode: "round",
     interval: "day",
     activeSeries: "total",
     refreshRate: 3000,
@@ -113,9 +151,9 @@ import Testing
   try await store.save()
 
   let state = try configStore.loadUIState()
-  #expect(state.from == "2026-05-01 00:00:00")
-  #expect(state.to == "2026-05-02 23:59:59")
-  #expect(state.liveMode == false)
+  #expect(state.rangeLabel == "thisMonth")
+  #expect(state.liveMode)
+  #expect(state.rangeMode == "round")
   #expect(state.refreshRate == 4000)
 }
 

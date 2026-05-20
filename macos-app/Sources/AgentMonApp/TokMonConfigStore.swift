@@ -99,21 +99,21 @@ final class TokMonConfigStore {
     }
 
     let defaults = TokMonUIState.default
-    let rangeLabel = optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel)
-    let inferredRange = rangeComponents(label: rangeLabel)
+    let preset = TokMonRangePreset(label: optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel))
     return TokMonUIState(
       source: stringValue(object["source"]) ?? defaults.source,
       from: stringValue(object["from"]) ?? defaults.from,
       to: stringValue(object["to"]) ?? defaults.to,
-      rangeLabel: rangeLabel,
-      rangeHours: optionalIntValue(in: object, key: "rangeHours", default: inferredRange.hours),
-      rangeDays: optionalIntValue(in: object, key: "rangeDays", default: inferredRange.days),
-      liveMode: boolValue(object["liveMode"]) ?? defaults.liveMode,
-      rangeMode: stringValue(object["rangeMode"]) ?? defaults.rangeMode,
-      interval: stringValue(object["interval"]) ?? defaults.interval,
+      rangeLabel: preset.label,
+      rangeHours: preset.hours,
+      rangeDays: preset.days,
+      liveMode: true,
+      rangeMode: "round",
+      interval: preset.interval,
       activeSeries: stringValue(object["activeSeries"]) ?? defaults.activeSeries,
       refreshRate: intValue(object["refreshRate"]) ?? defaults.refreshRate,
       costRates: normalizedCostRates(from: object["costRates"]),
+      modelPricing: normalizedModelPricing(from: object["modelPricing"]),
     )
   }
 
@@ -128,6 +128,19 @@ final class TokMonConfigStore {
       cacheCreate: doubleValue(object["cache_create"]) ?? TokMonUIState.default.costRates.cacheCreate,
       cacheRead: doubleValue(object["cache_read"]) ?? TokMonUIState.default.costRates.cacheRead,
     )
+  }
+
+  private func normalizedModelPricing(from rawValue: Any?) -> [String: TokMonCostRates] {
+    guard let object = rawValue as? [String: Any] else {
+      return TokMonUIState.default.modelPricing
+    }
+
+    return object.reduce(into: [:]) { result, item in
+      guard !item.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return
+      }
+      result[item.key] = normalizedCostRates(from: item.value)
+    }
   }
 
   private func jsonObject(from data: Data) -> [String: Any]? {
@@ -154,21 +167,6 @@ final class TokMonConfigStore {
     return intValue(value) ?? defaultValue
   }
 
-  private func rangeComponents(label: String?) -> (hours: Int?, days: Int?) {
-    switch label {
-    case "1H":
-      return (1, nil)
-    case "24H":
-      return (24, nil)
-    case "30D":
-      return (nil, 30)
-    case "90D":
-      return (nil, 90)
-    default:
-      return (nil, 7)
-    }
-  }
-
   private func stringValue(_ value: Any?) -> String? {
     value as? String
   }
@@ -178,23 +176,27 @@ final class TokMonConfigStore {
   }
 
   private func intValue(_ value: Any?) -> Int? {
-    if value is Bool {
+    guard let number = value as? NSNumber else {
       return nil
     }
-    guard let number = value as? NSNumber else {
+    if isJSONBoolean(number) {
       return nil
     }
     return number.intValue
   }
 
   private func doubleValue(_ value: Any?) -> Double? {
-    if value is Bool {
-      return nil
-    }
     guard let number = value as? NSNumber else {
       return nil
     }
+    if isJSONBoolean(number) {
+      return nil
+    }
     return number.doubleValue
+  }
+
+  private func isJSONBoolean(_ value: NSNumber) -> Bool {
+    CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
   }
 
   private func write<T: Encodable>(_ value: T, to url: URL) throws {

@@ -11,8 +11,14 @@ final class TokMonQueryStore {
     self.database = database
   }
 
-  func summary(filter: TokMonQueryFilter) throws -> TokMonSummary {
+  func summary(filter: TokMonQueryFilter, now: Date = Date()) throws -> TokMonSummary {
+    if let rollupSummary = try summaryFromRollupSegments(filter: filter, now: now) {
+      return rollupSummary
+    }
+
     let scoped = scopedWhere(filter: filter)
+    let sourceColumn = column("source", tablePrefix: scoped.tablePrefix)
+    let modelColumn = column("model", tablePrefix: scoped.tablePrefix)
     let total = try requiredDatabase.queryRows("""
       SELECT COUNT(*) as total_requests,
              COALESCE(SUM(input_tokens), 0) as total_input,
@@ -41,7 +47,7 @@ final class TokMonQueryStore {
     )
 
     let bySource = try requiredDatabase.queryRows("""
-      SELECT source,
+      SELECT \(sourceColumn) as source,
              COUNT(*) as requests,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
@@ -49,7 +55,7 @@ final class TokMonQueryStore {
              COALESCE(SUM(cache_read), 0) as cache_read
       FROM usage_records
       \(scoped.whereSQL)
-      GROUP BY source
+      GROUP BY \(sourceColumn)
     """, params: scoped.params) { row in
       TokMonSourceTotals(
         source: row.string(0),
@@ -62,8 +68,8 @@ final class TokMonQueryStore {
     }
 
     let byModel = try requiredDatabase.queryRows("""
-      SELECT model,
-             source,
+      SELECT \(modelColumn) as model,
+             \(sourceColumn) as source,
              COUNT(*) as requests,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
@@ -71,7 +77,7 @@ final class TokMonQueryStore {
              COALESCE(SUM(cache_read), 0) as cache_read
       FROM usage_records
       \(scoped.whereSQL)
-      GROUP BY model, source
+      GROUP BY \(modelColumn), \(sourceColumn)
       ORDER BY requests DESC
     """, params: scoped.params) { row in
       TokMonModelTotals(
@@ -88,17 +94,20 @@ final class TokMonQueryStore {
     return TokMonSummary(total: total, bySource: bySource, byModel: byModel)
   }
 
-  func trend(filter: TokMonQueryFilter, interval: String) throws -> [TokMonTrendBucket] {
-    let scoped = scopedWhere(filter: filter)
+  func trend(filter: TokMonQueryFilter, interval: String, now: Date = Date()) throws -> [TokMonTrendBucket] {
+    let scoped = scopedWhere(filter: filter, now: now, preferRollups: interval == "day")
     let format = interval == "day" ? "%Y-%m-%d" : "%Y-%m-%d %H:00"
+    let bucketExpression = scoped.usesRollups ? "strftime('\(format)', period_start)" : "strftime('\(format)', created_at, 'localtime')"
+    let requestsExpression = scoped.usesRollups ? "COALESCE(SUM(requests), 0)" : "COUNT(*)"
+    let tableAlias = scoped.tablePrefix.map { " \($0)" } ?? ""
     return try requiredDatabase.queryRows("""
-      SELECT strftime('\(format)', created_at, 'localtime') as bucket,
+      SELECT \(bucketExpression) as bucket,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
              COALESCE(SUM(cache_read), 0) as cache_read,
-             COUNT(*) as requests
-      FROM usage_records
+             \(requestsExpression) as requests
+      FROM \(scoped.tableName)\(tableAlias)
       \(scoped.whereSQL)
       GROUP BY bucket
       ORDER BY bucket
@@ -114,10 +123,10 @@ final class TokMonQueryStore {
     }
   }
 
-  func heatmap(source: String?, model: String?, endingAt: Date = Date()) throws -> [TokMonHeatmapDay] {
+  func heatmap(source: String?, model: String?, endingAt: Date = Date(), days: Int = 140) throws -> [TokMonHeatmapDay] {
     let calendar = Calendar.current
     let endDay = calendar.startOfDay(for: endingAt)
-    guard let startDay = calendar.date(byAdding: .day, value: -364, to: endDay) else {
+    guard let startDay = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: endDay) else {
       return []
     }
 
@@ -126,7 +135,7 @@ final class TokMonQueryStore {
     sqlFormatter.timeZone = .current
     sqlFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
 
-    var whereSQL = "WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)"
+    var whereSQL = "WHERE grain = 'day' AND datetime(period_start) BETWEEN datetime(?) AND datetime(?)"
     var params: [TokMonSQLValue] = [
       .text(sqlFormatter.string(from: startDay)),
       .text(sqlFormatter.string(from: calendar.date(byAdding: DateComponents(day: 1, second: -1), to: endDay) ?? endDay)),
@@ -134,13 +143,13 @@ final class TokMonQueryStore {
     appendOptionalFilters(source: source, model: model, tablePrefix: nil, whereSQL: &whereSQL, params: &params)
 
     let rows = try requiredDatabase.queryRows("""
-      SELECT strftime('%Y-%m-%d', created_at, 'localtime') as day,
-             COUNT(*) as requests,
+      SELECT strftime('%Y-%m-%d', period_start) as day,
+             COALESCE(SUM(requests), 0) as requests,
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
              COALESCE(SUM(cache_read), 0) as cache_read
-      FROM usage_records
+      FROM tokmon_usage_rollups
       \(whereSQL)
       GROUP BY day
     """, params: params) { row in
@@ -263,33 +272,62 @@ final class TokMonQueryStore {
     rowParams.append(.int(max(1, limit)))
 
     return try requiredDatabase.queryRows("""
-      SELECT session_id,
-             source,
-             CASE WHEN COUNT(DISTINCT model) = 1 THEN MIN(model) ELSE 'Mixed' END as model,
-             COUNT(*) as requests,
-             COALESCE(SUM(input_tokens), 0) as input_tokens,
-             COALESCE(SUM(output_tokens), 0) as output_tokens,
-             COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read,
-             MIN(created_at) as first_at,
-             MAX(created_at) as last_at
-      FROM usage_records
-      \(whereSQL)
-      GROUP BY session_id, source
-      ORDER BY last_at DESC
+      SELECT grouped.session_id,
+             grouped.source,
+             COALESCE(metadata_exact.title, metadata_file.title) as title,
+             COALESCE(metadata_exact.first_prompt, metadata_file.first_prompt) as first_prompt,
+             COALESCE(metadata_exact.project_path, metadata_file.project_path) as project_path,
+             COALESCE(metadata_exact.file_path, metadata_file.file_path) as metadata_file_path,
+             grouped.model,
+             grouped.requests,
+             grouped.input_tokens,
+             grouped.output_tokens,
+             grouped.cache_creation,
+             grouped.cache_read,
+             grouped.first_at,
+             grouped.last_at
+      FROM (
+        SELECT session_id,
+               source,
+               CASE WHEN COUNT(DISTINCT model) = 1 THEN MIN(model) ELSE 'Mixed' END as model,
+               COUNT(*) as requests,
+               COALESCE(SUM(input_tokens), 0) as input_tokens,
+               COALESCE(SUM(output_tokens), 0) as output_tokens,
+               COALESCE(SUM(cache_creation), 0) as cache_creation,
+               COALESCE(SUM(cache_read), 0) as cache_read,
+               MIN(created_at) as first_at,
+               MAX(created_at) as last_at
+        FROM usage_records
+        \(whereSQL)
+        GROUP BY session_id, source
+      ) grouped
+      LEFT JOIN tokmon_session_metadata metadata_exact
+        ON metadata_exact.source = grouped.source
+        AND metadata_exact.id = grouped.session_id
+      LEFT JOIN tokmon_session_metadata metadata_file
+        ON metadata_file.source = grouped.source
+        AND metadata_exact.id IS NULL
+        AND substr(metadata_file.file_path, -length(grouped.session_id || '.jsonl')) = grouped.session_id || '.jsonl'
+      ORDER BY grouped.last_at DESC
       LIMIT ?
     """, params: rowParams) { row in
       TokMonUsageSession(
         sessionId: row.string(0),
         source: row.string(1),
-        model: row.string(2),
-        requests: row.int(3),
-        inputTokens: row.int(4),
-        outputTokens: row.int(5),
-        cacheCreation: row.int(6),
-        cacheRead: row.int(7),
-        firstAt: row.string(8),
-        lastAt: row.string(9),
+        title: sessionTitle(
+          fallbackTitle: row.string(2).isEmpty ? nil : row.string(2),
+          firstPrompt: row.string(3).isEmpty ? nil : row.string(3),
+          projectPath: row.string(4).isEmpty ? nil : row.string(4),
+          filePath: row.string(5).isEmpty ? nil : row.string(5),
+        ),
+        model: row.string(6),
+        requests: row.int(7),
+        inputTokens: row.int(8),
+        outputTokens: row.int(9),
+        cacheCreation: row.int(10),
+        cacheRead: row.int(11),
+        firstAt: row.string(12),
+        lastAt: row.string(13),
       )
     }
   }
@@ -303,12 +341,335 @@ final class TokMonQueryStore {
     }
   }
 
-  private func scopedWhere(filter: TokMonQueryFilter, tablePrefix: String? = nil) -> (whereSQL: String, params: [TokMonSQLValue]) {
-    let createdColumn = column("created_at", tablePrefix: tablePrefix)
-    var whereSQL = "WHERE datetime(\(createdColumn), 'localtime') BETWEEN datetime(?) AND datetime(?)"
-    var params: [TokMonSQLValue] = [.text(filter.from), .text(filter.to)]
-    appendOptionalFilters(source: filter.source, model: filter.model, tablePrefix: tablePrefix, whereSQL: &whereSQL, params: &params)
-    return (whereSQL, params)
+  private func summaryFromRollupSegments(filter: TokMonQueryFilter, now: Date) throws -> TokMonSummary? {
+    if isAllRange(filter) {
+      return try summaryFromYearRollups(filter: filter)
+    }
+
+    guard let segments = rollupSegments(filter: filter, now: now), !segments.isEmpty else {
+      return nil
+    }
+    let segmentsEnd = segments
+      .compactMap { parseDate($0.end) }
+      .max()
+    let rawTail = rawUsageTailSegment(filter: filter, after: segmentsEnd)
+
+    var unionQueries = segments.map { segment in
+      """
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      FROM tokmon_usage_rollups
+      WHERE grain = '\(segment.grain)'
+        AND datetime(period_start) BETWEEN datetime(?) AND datetime(?)
+      """
+    }
+    if rawTail != nil {
+      unionQueries.append("""
+        SELECT source,
+               model,
+               COUNT(*) as requests,
+               COALESCE(SUM(input_tokens), 0) as input_tokens,
+               COALESCE(SUM(output_tokens), 0) as output_tokens,
+               COALESCE(SUM(cache_creation), 0) as cache_creation,
+               COALESCE(SUM(cache_read), 0) as cache_read,
+               COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+        FROM usage_records
+        WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)
+        GROUP BY source, model
+        """)
+    }
+    let joinedUnionSQL = unionQueries.joined(separator: "\nUNION ALL\n")
+    var params = segments.flatMap { segment in
+      [TokMonSQLValue.text(segment.start), TokMonSQLValue.text(segment.end)]
+    }
+    if let rawTail {
+      params.append(.text(rawTail.start))
+      params.append(.text(rawTail.end))
+    }
+    let filteredSQL = appendOuterFilters(
+      to: """
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      FROM (\(joinedUnionSQL)) rollup_segments
+      """,
+      filter: filter,
+    )
+    let filteredParams = appendOuterFilterParams(to: params, filter: filter)
+
+    return try summaryFromAggregatedRowsSQL(filteredSQL, params: filteredParams)
+  }
+
+  private func summaryFromYearRollups(filter: TokMonQueryFilter) throws -> TokMonSummary {
+    let filteredSQL = appendOuterFilters(
+      to: """
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      FROM tokmon_usage_rollups
+      WHERE grain = 'year'
+      """,
+      filter: filter,
+    )
+    let filteredParams = appendOuterFilterParams(to: [], filter: filter)
+
+    return try summaryFromAggregatedRowsSQL(filteredSQL, params: filteredParams)
+  }
+
+  private func summaryFromAggregatedRowsSQL(_ filteredSQL: String, params filteredParams: [TokMonSQLValue]) throws -> TokMonSummary {
+    let total = try requiredDatabase.queryRows("""
+      SELECT COALESCE(SUM(requests), 0) as total_requests,
+             COALESCE(SUM(input_tokens), 0) as total_input,
+             COALESCE(SUM(output_tokens), 0) as total_output,
+             COALESCE(SUM(cache_creation), 0) as total_cache_creation,
+             COALESCE(SUM(cache_read), 0) as total_cache_read,
+             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning
+      FROM (\(filteredSQL)) filtered_rollups
+    """, params: filteredParams) { row in
+      TokMonTotals(
+        totalRequests: row.int(0),
+        totalInput: row.int(1),
+        totalOutput: row.int(2),
+        totalCacheCreation: row.int(3),
+        totalCacheRead: row.int(4),
+        totalReasoning: row.int(5),
+      )
+    }.first ?? TokMonTotals(
+      totalRequests: 0,
+      totalInput: 0,
+      totalOutput: 0,
+      totalCacheCreation: 0,
+      totalCacheRead: 0,
+      totalReasoning: 0,
+    )
+
+    let bySource = try requiredDatabase.queryRows("""
+      SELECT source,
+             COALESCE(SUM(requests), 0) as requests,
+             COALESCE(SUM(input_tokens), 0) as input_tokens,
+             COALESCE(SUM(output_tokens), 0) as output_tokens,
+             COALESCE(SUM(cache_creation), 0) as cache_creation,
+             COALESCE(SUM(cache_read), 0) as cache_read
+      FROM (\(filteredSQL)) filtered_rollups
+      GROUP BY source
+    """, params: filteredParams) { row in
+      TokMonSourceTotals(
+        source: row.string(0),
+        requests: row.int(1),
+        inputTokens: row.int(2),
+        outputTokens: row.int(3),
+        cacheCreation: row.int(4),
+        cacheRead: row.int(5),
+      )
+    }
+
+    let byModel = try requiredDatabase.queryRows("""
+      SELECT model,
+             source,
+             COALESCE(SUM(requests), 0) as requests,
+             COALESCE(SUM(input_tokens), 0) as input_tokens,
+             COALESCE(SUM(output_tokens), 0) as output_tokens,
+             COALESCE(SUM(cache_creation), 0) as cache_creation,
+             COALESCE(SUM(cache_read), 0) as cache_read
+      FROM (\(filteredSQL)) filtered_rollups
+      GROUP BY model, source
+      ORDER BY requests DESC
+    """, params: filteredParams) { row in
+      TokMonModelTotals(
+        model: row.string(0),
+        source: row.string(1),
+        requests: row.int(2),
+        inputTokens: row.int(3),
+        outputTokens: row.int(4),
+        cacheCreation: row.int(5),
+        cacheRead: row.int(6),
+      )
+    }
+
+    return TokMonSummary(total: total, bySource: bySource, byModel: byModel)
+  }
+
+  private func isAllRange(_ filter: TokMonQueryFilter) -> Bool {
+    filter.hasTimeRange
+      && filter.from <= "0001-01-01 00:00:00"
+      && filter.to >= "9999-12-31 23:59:59"
+  }
+
+  private func rawUsageTailSegment(filter: TokMonQueryFilter, after segmentsEnd: Date?) -> (start: String, end: String)? {
+    guard let segmentsEnd, let filterEnd = parseDate(filter.to) else {
+      return nil
+    }
+    guard let start = Calendar.current.date(byAdding: .second, value: 1, to: segmentsEnd), start <= filterEnd else {
+      return nil
+    }
+    return (formatDate(start), filter.to)
+  }
+
+  private struct RollupSegment {
+    let grain: String
+    let start: String
+    let end: String
+  }
+
+  private func rollupSegments(filter: TokMonQueryFilter, now: Date) -> [RollupSegment]? {
+    guard filter.hasTimeRange else {
+      return nil
+    }
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    guard let from = formatter.date(from: filter.from), formatter.date(from: filter.to) != nil else {
+      return nil
+    }
+
+    let calendar = Calendar.current
+    let startOfToday = calendar.startOfDay(for: now)
+    let rollupEnd = min(parseDate(filter.to) ?? now, startOfToday)
+    guard from < startOfToday, from == calendar.startOfDay(for: from) else {
+      return nil
+    }
+
+    var cursor = from
+    var segments: [RollupSegment] = []
+
+    while let nextYear = calendar.date(byAdding: .year, value: 1, to: cursor),
+          nextYear <= rollupEnd,
+          isStartOfYear(cursor, calendar: calendar) {
+      segments.append(.init(grain: "year", start: formatDate(cursor), end: formatDate(calendar.date(byAdding: .second, value: -1, to: nextYear) ?? cursor)))
+      cursor = nextYear
+    }
+
+    while let nextMonth = calendar.date(byAdding: .month, value: 1, to: cursor),
+          nextMonth <= rollupEnd,
+          isStartOfMonth(cursor, calendar: calendar) {
+      segments.append(.init(grain: "month", start: formatDate(cursor), end: formatDate(calendar.date(byAdding: .second, value: -1, to: nextMonth) ?? cursor)))
+      cursor = nextMonth
+    }
+
+    while let nextWeek = calendar.date(byAdding: .day, value: 7, to: cursor),
+          nextWeek <= rollupEnd,
+          isStartOfWeek(cursor, calendar: calendar) {
+      segments.append(.init(grain: "week", start: formatDate(cursor), end: formatDate(calendar.date(byAdding: .second, value: -1, to: nextWeek) ?? cursor)))
+      cursor = nextWeek
+    }
+
+    while let nextDay = calendar.date(byAdding: .day, value: 1, to: cursor),
+          nextDay <= rollupEnd {
+      segments.append(.init(grain: "day", start: formatDate(cursor), end: formatDate(calendar.date(byAdding: .second, value: -1, to: nextDay) ?? cursor)))
+      cursor = nextDay
+    }
+
+    guard !segments.isEmpty else {
+      return nil
+    }
+    return segments
+  }
+
+  private func appendOuterFilters(to sql: String, filter: TokMonQueryFilter) -> String {
+    var clauses: [String] = []
+    if let source = filter.source, !source.isEmpty {
+      clauses.append("source = ?")
+    }
+    if let model = filter.model, !model.isEmpty {
+      clauses.append("model = ?")
+    }
+    guard !clauses.isEmpty else {
+      return sql
+    }
+    return "\(sql) WHERE \(clauses.joined(separator: " AND "))"
+  }
+
+  private func appendOuterFilterParams(to params: [TokMonSQLValue], filter: TokMonQueryFilter) -> [TokMonSQLValue] {
+    var result = params
+    if let source = filter.source, !source.isEmpty {
+      result.append(.text(source))
+    }
+    if let model = filter.model, !model.isEmpty {
+      result.append(.text(model))
+    }
+    return result
+  }
+
+  private func isStartOfYear(_ date: Date, calendar: Calendar) -> Bool {
+    calendar.component(.month, from: date) == 1 && calendar.component(.day, from: date) == 1 && isStartOfDay(date, calendar: calendar)
+  }
+
+  private func isStartOfMonth(_ date: Date, calendar: Calendar) -> Bool {
+    calendar.component(.day, from: date) == 1 && isStartOfDay(date, calendar: calendar)
+  }
+
+  private func isStartOfWeek(_ date: Date, calendar: Calendar) -> Bool {
+    (calendar.component(.weekday, from: date) + 5) % 7 == 0 && isStartOfDay(date, calendar: calendar)
+  }
+
+  private func isStartOfDay(_ date: Date, calendar: Calendar) -> Bool {
+    calendar.component(.hour, from: date) == 0
+      && calendar.component(.minute, from: date) == 0
+      && calendar.component(.second, from: date) == 0
+  }
+
+  private func scopedWhere(
+    filter: TokMonQueryFilter,
+    tablePrefix: String? = nil,
+    now: Date = Date(),
+    preferRollups: Bool = false,
+  ) -> (whereSQL: String, params: [TokMonSQLValue], tableName: String, tablePrefix: String?, usesRollups: Bool) {
+    let usesRollups = preferRollups && filter.hasTimeRange && canUseDayRollups(filter: filter, now: now)
+    let resolvedTableName = usesRollups ? "tokmon_usage_rollups" : "usage_records"
+    let resolvedTablePrefix = tablePrefix
+    let createdColumn = column(usesRollups ? "period_start" : "created_at", tablePrefix: resolvedTablePrefix)
+    var clauses: [String] = []
+    var params: [TokMonSQLValue] = []
+    if usesRollups {
+      clauses.append("\(column("grain", tablePrefix: resolvedTablePrefix)) = 'day'")
+    }
+    if filter.hasTimeRange {
+      if usesRollups {
+        clauses.append("datetime(\(createdColumn)) BETWEEN datetime(?) AND datetime(?)")
+      } else {
+        clauses.append("datetime(\(createdColumn), 'localtime') BETWEEN datetime(?) AND datetime(?)")
+      }
+      params.append(.text(filter.from))
+      params.append(.text(filter.to))
+    }
+    var whereSQL = clauses.isEmpty ? "WHERE 1 = 1" : "WHERE \(clauses.joined(separator: " AND "))"
+    appendOptionalFilters(source: filter.source, model: filter.model, tablePrefix: resolvedTablePrefix, whereSQL: &whereSQL, params: &params)
+    return (whereSQL, params, resolvedTableName, resolvedTablePrefix, usesRollups)
+  }
+
+  private func canUseDayRollups(filter: TokMonQueryFilter, now: Date) -> Bool {
+    guard filter.hasTimeRange else {
+      return false
+    }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    guard let from = formatter.date(from: filter.from), let to = formatter.date(from: filter.to) else {
+      return false
+    }
+    let calendar = Calendar.current
+    let startOfNow = calendar.startOfDay(for: now)
+    guard from < startOfNow else {
+      return false
+    }
+    return (calendar.dateComponents([.second], from: from).second ?? 0) == 0
+      && (calendar.dateComponents([.minute], from: from).minute ?? 0) == 0
+      && (calendar.dateComponents([.hour], from: from).hour ?? 0) == 0
+      && to >= now
+  }
+
+  private func formatDate(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter.string(from: date)
+  }
+
+  private func parseDate(_ value: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter.date(from: value)
   }
 
   private func appendOptionalFilters(
@@ -333,6 +694,35 @@ final class TokMonQueryStore {
       return name
     }
     return "\(tablePrefix).\(name)"
+  }
+
+  private func sessionTitle(
+    fallbackTitle: String?,
+    firstPrompt: String?,
+    projectPath: String?,
+    filePath: String?,
+  ) -> String? {
+    guard let firstPrompt, !firstPrompt.isEmpty else {
+      return fallbackTitle
+    }
+
+    let projectName = projectPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+      ?? filePath.map(projectNameFromFilePath)
+      ?? ""
+    guard !projectName.isEmpty else {
+      return firstPrompt
+    }
+    return "\(projectName) - \(firstPrompt)"
+  }
+
+  private func projectNameFromFilePath(_ filePath: String) -> String {
+    let fileURL = URL(fileURLWithPath: filePath)
+    let parent = fileURL.deletingLastPathComponent()
+    let components = parent.pathComponents
+    if let index = components.lastIndex(of: "sessions"), index > 0 {
+      return components[index - 1]
+    }
+    return parent.lastPathComponent
   }
 
   private func fillHeatmapDays(

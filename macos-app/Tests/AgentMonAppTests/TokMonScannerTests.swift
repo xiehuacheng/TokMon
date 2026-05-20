@@ -16,6 +16,14 @@ import Testing
           "model": "gpt-test",
         ],
       ],
+      [
+        "type": "event_msg",
+        "timestamp": "2026-05-14T00:59:00.000Z",
+        "payload": [
+          "type": "user_message",
+          "message": "Plan native TokMon sessions",
+        ],
+      ],
       codexTokenCountLine(
         timestamp: "2026-05-14T01:00:00.000Z",
         inputTokens: 20,
@@ -59,9 +67,13 @@ import Testing
   #expect(records.map(\.outputTokens) == [5, 10])
   #expect(records.map(\.cacheRead) == [3, 4])
   #expect(records.map(\.reasoningTokens) == [2, 1])
+
+  let metadata = try database.sessionMetadata(source: "codex", id: "session-123")
+  #expect(metadata?.title == "codex-sessions - Plan native TokMon sessions")
+  #expect(metadata?.firstPrompt == "Plan native TokMon sessions")
 }
 
-@Test func scannerSkipsUnchangedFilesAndRescansTruncatedFiles() throws {
+@Test func scannerSkipsUnchangedFilesAndRescansTruncatedFiles() async throws {
   let dataDir = try makeTokMonTempDir()
   let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
   try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
@@ -96,7 +108,12 @@ import Testing
   #expect(try scanner.scan(config: config) == 1)
   let firstOffset = try fileByteSize(logURL)
   #expect(try database.scanState(filePath: scanStatePath).offset == firstOffset)
+  let firstScanState = try database.scanState(filePath: scanStatePath)
+
+  try await Task.sleep(nanoseconds: 2_500_000_000)
   #expect(try scanner.scan(config: config) == 0)
+  let secondScanState = try database.scanState(filePath: scanStatePath)
+  #expect(secondScanState == firstScanState)
 
   try writeJSONL(
     [
@@ -123,6 +140,136 @@ import Testing
   #expect(records.last?.model == "gpt-after")
   #expect(try database.scanState(filePath: scanStatePath).offset < firstOffset)
   #expect(try database.scanState(filePath: scanStatePath).offset == fileByteSize(logURL))
+}
+
+@Test func scannerUsesCodexSessionIndexThreadNameAsSessionTitle() throws {
+  let dataDir = try makeTokMonTempDir()
+  let codexHome = dataDir.appendingPathComponent("codex-home", isDirectory: true)
+  let sessionsDir = codexHome.appendingPathComponent("sessions", isDirectory: true)
+  try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+  let logURL = sessionsDir.appendingPathComponent("indexed.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "indexed-session",
+          "model": "gpt-indexed",
+        ],
+      ],
+      [
+        "type": "event_msg",
+        "timestamp": "2026-05-14T02:00:00.000Z",
+        "payload": [
+          "type": "user_message",
+          "message": "First user prompt fallback",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T02:01:00.000Z",
+        inputTokens: 11,
+        outputTokens: 4,
+      ),
+    ],
+    to: logURL,
+  )
+  try JSONLine([
+    "id": "indexed-session",
+    "thread_name": "Indexed Codex Title",
+    "updated_at": "2026-05-14T02:05:00.000Z",
+  ]).write(to: codexHome.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: sessionsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let metadata = try database.sessionMetadata(source: "codex", id: "indexed-session")
+  #expect(metadata?.title == "codex-home - First user prompt fallback")
+  #expect(metadata?.firstPrompt == "First user prompt fallback")
+}
+
+@Test func scannerBackfillsCodexTitleForLegacyUnchangedScanState() throws {
+  let dataDir = try makeTokMonTempDir()
+  let codexHome = dataDir.appendingPathComponent("codex-home", isDirectory: true)
+  let nestedSessionsDir = codexHome
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("2026", isDirectory: true)
+    .appendingPathComponent("05", isDirectory: true)
+  try FileManager.default.createDirectory(at: nestedSessionsDir, withIntermediateDirectories: true)
+  let logURL = nestedSessionsDir.appendingPathComponent("rollout-2026-05-14T01-00-00-real-session-id.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "real-session-id",
+          "model": "gpt-indexed",
+        ],
+      ],
+      [
+        "type": "event_msg",
+        "timestamp": "2026-05-14T02:00:00.000Z",
+        "payload": [
+          "type": "user_message",
+          "message": "Fallback title from prompt",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T02:01:00.000Z",
+        inputTokens: 11,
+        outputTokens: 4,
+      ),
+    ],
+    to: logURL,
+  )
+  try JSONLine([
+    "id": "real-session-id",
+    "thread_name": "Session Index Real Title",
+    "updated_at": "2026-05-14T02:05:00.000Z",
+  ]).write(to: codexHome.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "real-session-id",
+    model: "gpt-indexed",
+    inputTokens: 11,
+    outputTokens: 4,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T02:01:00.000Z",
+  ))
+  try database.setScanState(
+    filePath: scannerFilePath(logURL),
+    state: TokMonScanState(
+      offset: fileByteSize(logURL),
+      sessionId: nil,
+      model: nil,
+      lastUsageKey: nil,
+    ),
+  )
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: nestedSessionsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 0)
+
+  let metadata = try database.sessionMetadata(source: "codex", id: "real-session-id")
+  #expect(metadata?.title == "codex-home - Fallback title from prompt")
+  #expect(metadata?.firstPrompt == "Fallback title from prompt")
+  #expect(metadata?.model == "gpt-indexed")
+  let sessions = try TokMonQueryStore(database: database).sessions(limit: 10)
+  #expect(sessions.first?.title == "codex-home - Fallback title from prompt")
 }
 
 @Test func scannerDedupesClaudeAssistantUsageByMessageId() throws {

@@ -5,8 +5,8 @@ import SwiftUI
 final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private let runtime = AgentMonRuntime.shared
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-  private let popover = NSPopover()
-  private var popoverDelegate: AgentMonPopoverDelegate?
+  private var statusPanel: NSPanel?
+  private var outsideClickMonitor: Any?
 
   override init() {
     super.init()
@@ -15,6 +15,7 @@ final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    closeStatusPanel()
     runtime.stop()
   }
 
@@ -29,60 +30,118 @@ final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
     statusItem.button?.image = statusImage
     statusItem.button?.imagePosition = .imageOnly
     statusItem.button?.target = self
-    statusItem.button?.action = #selector(togglePopover)
+    statusItem.button?.action = #selector(toggleStatusPanel)
     statusItem.button?.contentTintColor = .labelColor
-
-    popover.behavior = .transient
-    popoverDelegate = AgentMonPopoverDelegate(
-      didShow: { [weak self] in
-        if self?.runtime.usesNativeTokMonEngine == true {
-          self?.runtime.stats.startObserving()
-        } else {
-          self?.runtime.stats.startObserving(appURL: self?.runtime.server.appURL)
-        }
-        self?.setStatusItemHighlighted(true)
-      },
-      didClose: { [weak self] in
-        self?.runtime.stats.stopObserving()
-        self?.setStatusItemHighlighted(false)
-      },
-    )
-    popover.delegate = popoverDelegate
-    popover.contentSize = NSSize(width: 360, height: 500)
-    popover.contentViewController = NSHostingController(
-      rootView: StatusPopoverView()
-        .environmentObject(runtime)
-        .environmentObject(runtime.server)
-        .environmentObject(runtime.stats)
-        .environment(\.controlActiveState, .active),
-    )
   }
 
-  @objc private func togglePopover() {
-    guard let button = statusItem.button else { return }
-
-    if popover.isShown {
-      popover.performClose(nil)
-      setStatusItemHighlighted(false)
+  @objc private func toggleStatusPanel() {
+    if statusPanel?.isVisible == true {
+      closeStatusPanel()
       return
     }
 
+    showStatusPanel()
+  }
+
+  private func showStatusPanel() {
+    guard let button = statusItem.button else { return }
+
     setStatusItemHighlighted(true)
-    NSApplication.shared.activate(ignoringOtherApps: true)
     Task { @MainActor in
-      if runtime.usesNativeTokMonEngine {
-        runtime.stats.startObserving()
-      } else {
-        runtime.stats.startObserving(appURL: runtime.server.appURL)
-      }
+      runtime.stats.startObserving()
       await runtime.stats.refresh()
     }
-    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+
+    let panel = makeStatusPanel()
+    panel.setFrame(statusPanelFrame(relativeTo: button), display: false)
+    statusPanel = panel
+    panel.orderFrontRegardless()
+    panel.makeKeyAndOrderFront(nil)
     DispatchQueue.main.async { [weak self] in
-      self?.setStatusItemHighlighted(true)
-      NSApplication.shared.activate(ignoringOtherApps: true)
-      self?.popover.contentViewController?.view.window?.makeKey()
+      self?.installOutsideClickMonitor()
     }
+  }
+
+  private func closeStatusPanel() {
+    statusPanel?.orderOut(nil)
+    statusPanel?.delegate = nil
+    statusPanel = nil
+    runtime.stats.stopObserving()
+    removeOutsideClickMonitor()
+    setStatusItemHighlighted(false)
+  }
+
+  private func makeStatusPanel() -> NSPanel {
+    let hostingController = NSHostingController(
+      rootView: StatusPopoverView()
+        .environmentObject(runtime)
+        .environmentObject(runtime.stats)
+        .environment(\.controlActiveState, .active),
+    )
+    let view = hostingController.view
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor.clear.cgColor
+
+    let panel = AgentMonStatusPanel(
+      contentRect: NSRect(origin: .zero, size: NSSize(width: 360, height: 740)),
+      styleMask: [.borderless],
+      backing: .buffered,
+      defer: false,
+    )
+    panel.contentViewController = hostingController
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = false
+    panel.level = .statusBar
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.hidesOnDeactivate = false
+    panel.isReleasedWhenClosed = false
+    makePanelWindowTransparent(panel)
+    return panel
+  }
+
+  private func makePanelWindowTransparent(_ window: NSWindow) {
+    guard let view = window.contentViewController?.view else {
+      return
+    }
+
+    window.isOpaque = false
+    window.backgroundColor = .clear
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor.clear.cgColor
+  }
+
+  private func statusPanelFrame(relativeTo button: NSStatusBarButton) -> NSRect {
+    guard let buttonWindow = button.window, let screen = buttonWindow.screen ?? NSScreen.main else {
+      return NSRect(x: 0, y: 0, width: 360, height: 740)
+    }
+
+    let panelSize = NSSize(width: 360, height: 740)
+    let buttonFrameInScreen = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+    let screenFrame = screen.visibleFrame
+    let preferredX = buttonFrameInScreen.midX - panelSize.width / 2
+    let x = min(max(preferredX, screenFrame.minX + 8), screenFrame.maxX - panelSize.width - 8)
+    let y = screenFrame.maxY - panelSize.height
+
+    return NSRect(origin: NSPoint(x: x, y: y), size: panelSize)
+  }
+
+  private func installOutsideClickMonitor() {
+    removeOutsideClickMonitor()
+    outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+      Task { @MainActor in
+        self?.closeStatusPanel()
+      }
+    }
+  }
+
+  private func removeOutsideClickMonitor() {
+    guard let outsideClickMonitor else {
+      return
+    }
+
+    NSEvent.removeMonitor(outsideClickMonitor)
+    self.outsideClickMonitor = nil
   }
 
   private func setStatusItemHighlighted(_ highlighted: Bool) {
@@ -92,22 +151,9 @@ final class AgentMonApplicationDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
-private final class AgentMonPopoverDelegate: NSObject, NSPopoverDelegate {
-  private let didShow: () -> Void
-  private let didClose: () -> Void
-
-  init(didShow: @escaping () -> Void, didClose: @escaping () -> Void) {
-    self.didShow = didShow
-    self.didClose = didClose
-  }
-
-  func popoverDidShow(_ notification: Notification) {
-    didShow()
-  }
-
-  func popoverDidClose(_ notification: Notification) {
-    didClose()
-  }
+private final class AgentMonStatusPanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { true }
 }
 
 let app = NSApplication.shared

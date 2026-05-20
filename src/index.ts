@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { closeDb, getDb, rebuildRuntimeDatabase } from "./db.js";
 import { dedupeCodexUsageRecords, removeZeroClaudeUsageRecords } from "./db.js";
 import { loadConfig, scanAll } from "./scanner/index.js";
@@ -82,7 +81,6 @@ app.route("/api/sessions", sessionsRoutes);
 app.route("/api/skills", skillsRoutes);
 app.route("/api/mcp", mcpRoutes);
 app.route("/api/settings", settingsRoutes);
-app.use("/*", serveStatic({ root: "./public" }));
 
 const port = config.port;
 console.log(`AgentMon running on http://localhost:${port}`);

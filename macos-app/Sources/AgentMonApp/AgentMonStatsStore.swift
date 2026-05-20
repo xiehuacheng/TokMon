@@ -3,8 +3,10 @@ import Foundation
 struct AgentMonStatsSnapshot: Sendable {
   var scanStatus: AgentMonScanStatus?
   var summary: TokMonSummary?
+  var previousSummary: TokMonSummary?
   var trendBuckets: [TokMonTrendBucket] = []
   var heatmapDays: [TokMonHeatmapDay] = []
+  var yearHeatmapDays: [TokMonHeatmapDay] = []
   var recordsPage: TokMonRecordsPage?
   var usageSessions: [TokMonUsageSession] = []
   var selectedUsageSession: TokMonUsageSessionSelection?
@@ -33,25 +35,18 @@ struct AgentMonScanStatus: Decodable, Equatable, Sendable {
   let error: String?
 }
 
-private struct ActivityRequest: Encodable {
-  let name: String
-  let ttlMs: Int
-}
-
 @MainActor
 final class AgentMonStatsStore: ObservableObject {
   @Published private(set) var snapshot = AgentMonStatsSnapshot.empty
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
+  private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
-  private var appURL: URL?
   private var timerTask: Task<Void, Never>?
   private var recordsLimit = 20
   private var usageSessionsLimit = 50
   private var selectedUsageSession: TokMonUsageSessionSelection?
-  private let activityName = "status-popover"
-  private let activityTtlMilliseconds = 10_000
 
   init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engine.map { TokMonEngineActor(engine: $0) }
@@ -61,6 +56,12 @@ final class AgentMonStatsStore: ObservableObject {
   init(engineActor: TokMonEngineActor, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engineActor
     self.nowProvider = nowProvider
+  }
+
+  init(startupError: String, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+    nativeEngineActor = nil
+    self.nowProvider = nowProvider
+    errorMessage = startupError
   }
 
   private let nowProvider: @Sendable () -> Date
@@ -78,14 +79,7 @@ final class AgentMonStatsStore: ObservableObject {
     usesNativeEngine && !snapshot.usageSessions.isEmpty && snapshot.usageSessions.count >= usageSessionsLimit
   }
 
-  func configure(appURL: URL) {
-    self.appURL = appURL
-  }
-
-  func startObserving(appURL: URL? = nil) {
-    if let appURL {
-      self.appURL = appURL
-    }
+  func startObserving() {
     if timerTask == nil {
       timerTask = Task { [weak self] in
         while !Task.isCancelled {
@@ -95,16 +89,17 @@ final class AgentMonStatsStore: ObservableObject {
         }
       }
     }
-    requestRefresh()
   }
 
   func stopObserving() {
     timerTask?.cancel()
     timerTask = nil
-    releaseActivity()
   }
 
   func refresh() async {
+    guard !isRefreshing, !isUpdatingDashboardRange else {
+      return
+    }
     isRefreshing = true
     defer { isRefreshing = false }
 
@@ -116,8 +111,6 @@ final class AgentMonStatsStore: ObservableObject {
           sessionsLimit: usageSessionsLimit,
           selectedSession: selectedUsageSession,
         )
-      } else if let appURL {
-        try await refreshHTTP(appURL: appURL)
       }
       errorMessage = nil
     } catch {
@@ -125,8 +118,10 @@ final class AgentMonStatsStore: ObservableObject {
       snapshot = AgentMonStatsSnapshot(
         scanStatus: snapshot.scanStatus,
         summary: snapshot.summary,
+        previousSummary: snapshot.previousSummary,
         trendBuckets: snapshot.trendBuckets,
         heatmapDays: snapshot.heatmapDays,
+        yearHeatmapDays: snapshot.yearHeatmapDays,
         recordsPage: snapshot.recordsPage,
         usageSessions: snapshot.usageSessions,
         selectedUsageSession: snapshot.selectedUsageSession,
@@ -134,6 +129,24 @@ final class AgentMonStatsStore: ObservableObject {
         dashboardState: snapshot.dashboardState,
         updatedAt: snapshot.updatedAt,
       )
+    }
+  }
+
+  func refreshCurrentRange() async {
+    guard let nativeEngineActor, !isRefreshing, !isUpdatingDashboardRange else {
+      return
+    }
+    isRefreshing = true
+    defer { isRefreshing = false }
+
+    do {
+      snapshot = try await nativeEngineActor.refreshRangeStats(
+        preserving: snapshot,
+        now: nowProvider(),
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
     }
   }
 
@@ -149,10 +162,30 @@ final class AgentMonStatsStore: ObservableObject {
     requestRefresh()
   }
 
+  func updateDashboardRange(_ label: String) async {
+    guard let nativeEngineActor else { return }
+    guard !isUpdatingDashboardRange else { return }
+
+    isUpdatingDashboardRange = true
+    defer { isUpdatingDashboardRange = false }
+    do {
+      snapshot = try await nativeEngineActor.updateDashboardRangeAndRefreshRangeStats(
+        label: label,
+        preserving: snapshot,
+        now: nowProvider(),
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   func selectUsageSession(source: String, sessionId: String) {
     guard usesNativeEngine else { return }
     selectedUsageSession = TokMonUsageSessionSelection(source: source, sessionId: sessionId)
-    requestRefresh()
+    snapshot.selectedUsageSession = selectedUsageSession
+    snapshot.selectedSessionRecords = []
+    requestSelectedUsageSessionRecords()
   }
 
   func clearSelectedUsageSession() {
@@ -167,132 +200,32 @@ final class AgentMonStatsStore: ObservableObject {
     return UInt64(milliseconds) * 1_000_000
   }
 
-  private func refreshHTTP(appURL: URL) async throws {
-    try await renewActivity(appURL: appURL)
-    _ = try? await triggerTokMonScan(appURL: appURL)
-
-    async let scanStatus = fetchScanStatus(appURL: appURL)
-    async let dashboardState = fetchDashboardState(appURL: appURL)
-
-    let resolvedScanStatus = try await scanStatus
-    let resolvedDashboardState = try await dashboardState
-    async let summary = fetchTokMonSummary(appURL: appURL, dashboardState: resolvedDashboardState)
-    async let trend = fetchTokMonTrend(appURL: appURL, dashboardState: resolvedDashboardState)
-    let resolvedSummary = try await summary
-    let resolvedTrend = try await trend
-
-    snapshot = AgentMonStatsSnapshot(
-      scanStatus: resolvedScanStatus,
-      summary: resolvedSummary,
-      trendBuckets: TokMonStatsSnapshotBuilder.fillTrendBuckets(resolvedTrend, dashboardState: resolvedDashboardState),
-      heatmapDays: snapshot.heatmapDays,
-      recordsPage: snapshot.recordsPage,
-      usageSessions: snapshot.usageSessions,
-      selectedUsageSession: snapshot.selectedUsageSession,
-      selectedSessionRecords: snapshot.selectedSessionRecords,
-      dashboardState: resolvedDashboardState,
-      updatedAt: Date(),
-    )
-  }
-
   private func requestRefresh() {
     Task { [weak self] in
       await self?.refresh()
     }
   }
 
-  private func releaseActivity() {
-    guard nativeEngineActor == nil, let appURL else { return }
-    Task.detached { [activityName] in
-      var request = URLRequest(url: appURL.appendingPathComponent("api/activity/\(activityName)"))
-      request.httpMethod = "DELETE"
-      request.timeoutInterval = 1.5
-      _ = try? await URLSession.shared.data(for: request)
-    }
-  }
-
-  private nonisolated func renewActivity(appURL: URL) async throws {
-    var request = URLRequest(url: appURL.appendingPathComponent("api/activity"))
-    request.httpMethod = "POST"
-    request.timeoutInterval = 1.5
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONEncoder().encode(ActivityRequest(name: activityName, ttlMs: activityTtlMilliseconds))
-
-    let (_, response) = try await URLSession.shared.data(for: request)
-    try validate(response: response, url: request.url ?? appURL)
-  }
-
-  private nonisolated func triggerTokMonScan(appURL: URL) async throws {
-    let url = appURL.appendingPathComponent("api/tokmon/scan")
-    let (data, response) = try await URLSession.shared.data(from: url)
-    try validate(response: response, url: url)
-    _ = data
-  }
-
-  private nonisolated func fetchScanStatus(appURL: URL) async throws -> AgentMonScanStatus {
-    let url = appURL.appendingPathComponent("api/scan-status")
-    let (data, response) = try await URLSession.shared.data(from: url)
-    try validate(response: response, url: url)
-    return try JSONDecoder().decode(AgentMonScanStatus.self, from: data)
-  }
-
-  private nonisolated func fetchDashboardState(appURL: URL) async throws -> TokMonDashboardState {
-    let url = appURL.appendingPathComponent("api/tokmon/dashboard-state")
-    let (data, response) = try await URLSession.shared.data(from: url)
-    try validate(response: response, url: url)
-    return try JSONDecoder().decode(TokMonDashboardState.self, from: data)
-  }
-
-  private nonisolated func fetchTokMonSummary(appURL: URL, dashboardState: TokMonDashboardState) async throws -> TokMonSummary {
-    let url = try makeTokMonURL(appURL: appURL, endpoint: "summary", dashboardState: dashboardState, includeInterval: false)
-    let (data, response) = try await URLSession.shared.data(from: url)
-    try validate(response: response, url: url)
-    return try JSONDecoder().decode(TokMonSummary.self, from: data)
-  }
-
-  private nonisolated func fetchTokMonTrend(appURL: URL, dashboardState: TokMonDashboardState) async throws -> [TokMonTrendBucket] {
-    let url = try makeTokMonURL(appURL: appURL, endpoint: "trend", dashboardState: dashboardState, includeInterval: true)
-    let (data, response) = try await URLSession.shared.data(from: url)
-    try validate(response: response, url: url)
-    return try JSONDecoder().decode([TokMonTrendBucket].self, from: data)
-  }
-
-  private nonisolated func makeTokMonURL(
-    appURL: URL,
-    endpoint: String,
-    dashboardState: TokMonDashboardState,
-    includeInterval: Bool,
-  ) throws -> URL {
-    var components = URLComponents(url: appURL.appendingPathComponent("api/tokmon/\(endpoint)"), resolvingAgainstBaseURL: false)
-    var queryItems = [
-      URLQueryItem(name: "from", value: dashboardState.from),
-      URLQueryItem(name: "to", value: dashboardState.to),
-    ]
-
-    if includeInterval {
-      queryItems.append(URLQueryItem(name: "interval", value: dashboardState.interval))
-    }
-
-    if !dashboardState.source.isEmpty {
-      queryItems.append(URLQueryItem(name: "source", value: dashboardState.source))
-    }
-
-    components?.queryItems = queryItems
-
-    guard let url = components?.url else {
-      throw AgentMonAppError("Could not build TokMon \(endpoint) URL.")
-    }
-
-    return url
-  }
-
-  private nonisolated func validate(response: URLResponse, url: URL) throws {
-    guard let httpResponse = response as? HTTPURLResponse else {
-      throw AgentMonAppError("No HTTP response from \(url.absoluteString).")
-    }
-
-    guard (200..<300).contains(httpResponse.statusCode) else {
-      throw AgentMonAppError("\(url.path) returned HTTP \(httpResponse.statusCode).")
+  private func requestSelectedUsageSessionRecords() {
+    guard let nativeEngineActor, let selectedUsageSession else { return }
+    let currentSnapshot = snapshot
+    Task { [weak self] in
+      do {
+        let records = try await nativeEngineActor.selectedUsageSessionRecords(
+          preserving: currentSnapshot,
+          selectedSession: selectedUsageSession,
+          now: self?.nowProvider() ?? Date(),
+        )
+        await MainActor.run {
+          guard self?.selectedUsageSession == selectedUsageSession else { return }
+          self?.snapshot.selectedSessionRecords = records
+          self?.errorMessage = nil
+        }
+      } catch {
+        await MainActor.run {
+          self?.errorMessage = error.localizedDescription
+        }
+      }
     }
   }
 }
@@ -309,11 +242,22 @@ enum TokMonStatsSnapshotBuilder {
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = .current
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    let bucketFormatter = DateFormatter()
+    bucketFormatter.locale = Locale(identifier: "en_US_POSIX")
+    bucketFormatter.timeZone = .current
+    bucketFormatter.dateFormat = interval == .day ? "yyyy-MM-dd" : "yyyy-MM-dd HH:00"
 
-    guard
-      let rawStart = formatter.date(from: dashboardState.from),
-      let rawEnd = formatter.date(from: dashboardState.to)
-    else {
+    let rawStart: Date?
+    let rawEnd: Date?
+    if dashboardState.rangeLabel == TokMonRangePreset.all.label {
+      rawStart = buckets.first.flatMap { bucketFormatter.date(from: $0.bucket) }
+      rawEnd = buckets.last.flatMap { bucketFormatter.date(from: $0.bucket) }
+    } else {
+      rawStart = formatter.date(from: dashboardState.from)
+      rawEnd = formatter.date(from: dashboardState.to)
+    }
+
+    guard let rawStart, let rawEnd else {
       return buckets
     }
 
@@ -346,22 +290,38 @@ enum TokMonStatsSnapshotBuilder {
   }
 
   static func currentDashboardState(from uiState: TokMonUIState, now: Date) -> TokMonDashboardState {
-    let range = resolvedRange(for: uiState, now: now)
+    let preset = TokMonRangePreset(label: uiState.rangeLabel)
+    let range = resolvedRange(for: preset, uiState: uiState, now: now)
     return TokMonDashboardState(
       source: uiState.source,
       from: range.from,
       to: range.to,
-      interval: uiState.interval,
-      liveMode: uiState.liveMode,
-      rangeMode: uiState.rangeMode,
-      rangeLabel: uiState.rangeLabel,
-      rangeHours: uiState.rangeHours,
-      rangeDays: uiState.rangeDays,
+      interval: preset.interval,
+      liveMode: true,
+      rangeMode: "round",
+      rangeLabel: preset.label,
+      rangeHours: preset.hours,
+      rangeDays: preset.days,
       refreshRate: uiState.refreshRate,
       activeSeries: uiState.activeSeries,
       estimatedCost: 0,
       costRates: uiState.costRates,
+      modelPricing: uiState.modelPricing,
       updatedAt: isoTimestamp(now),
+    )
+  }
+
+  static func previousFilter(from dashboardState: TokMonDashboardState) -> TokMonQueryFilter? {
+    let preset = TokMonRangePreset(label: dashboardState.rangeLabel)
+    guard preset != .all,
+          let range = previousRange(for: preset, from: dashboardState.from, to: dashboardState.to) else {
+      return nil
+    }
+    return TokMonQueryFilter(
+      from: range.from,
+      to: range.to,
+      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      model: nil,
     )
   }
 
@@ -373,39 +333,59 @@ enum TokMonStatsSnapshotBuilder {
     return formatter.string(from: date)
   }
 
-  private static func resolvedRange(for uiState: TokMonUIState, now: Date) -> (from: String, to: String) {
-    if !uiState.liveMode {
-      return (
-        uiState.from.isEmpty ? "2000-01-01 00:00:00" : uiState.from,
-        uiState.to.isEmpty ? "2099-12-31 23:59:59" : uiState.to
-      )
-    }
+  private static func resolvedRange(
+    for preset: TokMonRangePreset,
+    uiState: TokMonUIState,
+    now: Date,
+  ) -> (from: String, to: String) {
+    let calendar = Calendar.current
+    let today = calendar.startOfDay(for: now)
+    let currentEnd = formattedDashboardBoundary(now, seconds: 59)
 
-    guard uiState.liveMode, uiState.rangeHours != nil || uiState.rangeDays != nil else {
-      return ("2000-01-01 00:00:00", "2099-12-31 23:59:59")
+    switch preset {
+    case .today:
+      return (formattedDashboardBoundary(today, seconds: 0), currentEnd)
+    case .thisWeek:
+      let weekdayIndex = (calendar.component(.weekday, from: today) + 5) % 7
+      let start = calendar.date(byAdding: .day, value: -weekdayIndex, to: today) ?? today
+      return (formattedDashboardBoundary(start, seconds: 0), currentEnd)
+    case .thisMonth:
+      let start = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
+      return (formattedDashboardBoundary(start, seconds: 0), currentEnd)
+    case .all:
+      return ("0001-01-01 00:00:00", "9999-12-31 23:59:59")
+    }
+  }
+
+  private static func previousRange(
+    for preset: TokMonRangePreset,
+    from: String,
+    to: String,
+  ) -> (from: String, to: String)? {
+    guard let currentFrom = parseDashboardBoundary(from),
+          let currentTo = parseDashboardBoundary(to) else {
+      return nil
     }
 
     let calendar = Calendar.current
-    let from: Date
-    if let rangeHours = uiState.rangeHours {
-      if uiState.rangeMode == "round" {
-        let roundedNow = calendar.dateInterval(of: .hour, for: now)?.start ?? now
-        from = calendar.date(byAdding: .hour, value: -rangeHours + 1, to: roundedNow) ?? now
-      } else {
-        from = calendar.date(byAdding: .hour, value: -rangeHours, to: now) ?? now
-      }
-    } else if let rangeDays = uiState.rangeDays {
-      if uiState.rangeMode == "round" {
-        let today = calendar.startOfDay(for: now)
-        from = calendar.date(byAdding: .day, value: -rangeDays + 1, to: today) ?? now
-      } else {
-        from = calendar.date(byAdding: .day, value: -rangeDays, to: now) ?? now
-      }
-    } else {
-      from = now
+    let component: Calendar.Component
+    switch preset {
+    case .today:
+      component = .day
+    case .thisWeek:
+      component = .day
+    case .thisMonth:
+      component = .month
+    case .all:
+      return nil
     }
 
-    return (formattedDashboardBoundary(from, seconds: 0), formattedDashboardBoundary(now, seconds: 59))
+    let value = preset == .thisWeek ? -7 : -1
+    guard let previousFrom = calendar.date(byAdding: component, value: value, to: currentFrom),
+          let previousTo = calendar.date(byAdding: component, value: value, to: currentTo) else {
+      return nil
+    }
+    return (formattedTimestamp(previousFrom), formattedTimestamp(previousTo))
   }
 
   private static func trendBucketKey(for date: Date, interval: TokMonTrendInterval) -> String {
@@ -431,6 +411,14 @@ enum TokMonStatsSnapshotBuilder {
     formatter.timeZone = .current
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
     return formatter.string(from: adjusted)
+  }
+
+  private static func parseDashboardBoundary(_ value: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter.date(from: value)
   }
 
   private static func isoTimestamp(_ date: Date) -> String {

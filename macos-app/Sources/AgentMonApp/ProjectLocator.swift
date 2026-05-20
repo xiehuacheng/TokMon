@@ -5,10 +5,6 @@ enum AgentMonProjectLocator {
     let fileManager = FileManager.default
     var candidates: [URL] = []
 
-    if let bundledRoot = bundledServerRoot(fileManager: fileManager) {
-      return bundledRoot
-    }
-
     if let explicitRoot = ProcessInfo.processInfo.environment["AGENTMON_PROJECT_ROOT"], !explicitRoot.isEmpty {
       candidates.append(URL(fileURLWithPath: explicitRoot))
     }
@@ -27,16 +23,6 @@ enum AgentMonProjectLocator {
     )
   }
 
-  static func bundledNodeURL(projectRoot: URL) -> URL? {
-    let nodeURL = projectRoot
-      .deletingLastPathComponent()
-      .appendingPathComponent("Node")
-      .appendingPathComponent("bin")
-      .appendingPathComponent("node")
-
-    return FileManager.default.isExecutableFile(atPath: nodeURL.path) ? nodeURL : nil
-  }
-
   static func appDataDir() throws -> URL {
     let fileManager = FileManager.default
     let supportRoot = try fileManager.url(
@@ -48,12 +34,6 @@ enum AgentMonProjectLocator {
     let dataDir = supportRoot.appendingPathComponent("AgentMon", isDirectory: true)
     try fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)
     return dataDir
-  }
-
-  private static func bundledServerRoot(fileManager: FileManager) -> URL? {
-    guard let resourcesURL = Bundle.main.resourceURL else { return nil }
-    let serverRoot = resourcesURL.appendingPathComponent("AgentMonServer", isDirectory: true)
-    return looksLikeAgentMonRoot(serverRoot, fileManager: fileManager) ? serverRoot : nil
   }
 
   private static func rootByWalkingUp(from startURL: URL, fileManager: FileManager) -> URL? {
@@ -72,10 +52,9 @@ enum AgentMonProjectLocator {
     return nil
   }
 
-  private static func looksLikeAgentMonRoot(_ url: URL, fileManager: FileManager) -> Bool {
+  static func looksLikeAgentMonRoot(_ url: URL, fileManager: FileManager) -> Bool {
     let requiredPaths = [
       "src/index.ts",
-      "public/index.html",
       "package.json",
     ]
 

@@ -2,160 +2,382 @@ import SwiftUI
 
 struct TokMonSettingsWindow: View {
   @ObservedObject var store: TokMonSettingsStore
+  @State private var selectedPricingModel = ""
 
   private let sources = [
     ("", "All Sources"),
     ("claude-code", "Claude Code"),
     ("codex", "Codex"),
   ]
-  private let ranges = ["1H", "24H", "7D", "30D", "90D"]
-  private let rangeModes = [("exact", "Exact"), ("round", "Round")]
-  private let intervals = [("hour", "Hour"), ("day", "Day")]
-  private let metrics = [
-    ("total", "Total Tokens"),
-    ("reqs", "Requests"),
-    ("input", "Input"),
-    ("output", "Output"),
-    ("cache", "Cache Created"),
-    ("cacheHit", "Cache Hit"),
-    ("cost", "Estimated Cost"),
-  ]
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      header
-      Form {
-        Section("Source Paths") {
-          TextField("Claude Code", text: $store.draft.claudePath)
-          TextField("Codex", text: $store.draft.codexPath)
-        }
+    TokMonLiquidGlassScene {
+      ZStack {
+        SettingsWindowShell()
+        VStack(alignment: .leading, spacing: 0) {
+          header
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
 
-        Section("Defaults") {
-          Picker("Source", selection: $store.draft.source) {
-            ForEach(sources, id: \.0) { value, label in
-              Text(label).tag(value)
-            }
-          }
-          Picker("Range", selection: $store.draft.rangeLabel) {
-            ForEach(ranges, id: \.self) { range in
-              Text(range).tag(range)
-            }
-          }
-          Toggle("Live Mode", isOn: $store.draft.liveMode)
-          Picker("Range Mode", selection: $store.draft.rangeMode) {
-            ForEach(rangeModes, id: \.0) { value, label in
-              Text(label).tag(value)
-            }
-          }
-          Picker("Interval", selection: $store.draft.interval) {
-            ForEach(intervals, id: \.0) { value, label in
-              Text(label).tag(value)
-            }
-          }
-          Picker("Metric", selection: $store.draft.activeSeries) {
-            ForEach(metrics, id: \.0) { value, label in
-              Text(label).tag(value)
-            }
-          }
-          Stepper(value: $store.draft.refreshRate, in: 1000...60000, step: 1000) {
-            Text("Refresh \(store.draft.refreshRate) ms")
-          }
-        }
+          ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 12) {
+              SettingsSection("Sources") {
+                FieldRow("Default") {
+                  Picker("Source", selection: $store.draft.source) {
+                    ForEach(sources, id: \.0) { value, label in
+                      Text(label).tag(value)
+                    }
+                  }
+                  .pickerStyle(.segmented)
+                  .labelsHidden()
+                  .frame(width: 330)
+                }
+                FieldRow("Claude Code") {
+                  TextField("~/.claude/projects", text: $store.draft.claudePath)
+                    .settingsTextField(width: 430)
+                }
+                FieldRow("Codex") {
+                  TextField("~/.codex/sessions", text: $store.draft.codexPath)
+                    .settingsTextField(width: 430)
+                }
+              }
 
-        Section("Cost Rates Per 1M Tokens") {
-          RateField(label: "Input", value: $store.draft.inputRate)
-          RateField(label: "Output", value: $store.draft.outputRate)
-          RateField(label: "Cache Create", value: $store.draft.cacheCreateRate)
-          RateField(label: "Cache Read", value: $store.draft.cacheReadRate)
-        }
+              SettingsSection("Model Pricing") {
+                modelPricingEditor
+              }
 
-        Section("Maintenance") {
-          HStack {
-            Button("Scan Now") {
-              Task { try? await store.scanNow() }
-            }
-            .disabled(store.isBusy)
+              SettingsSection("Maintenance") {
+                FieldRow("Actions") {
+                  HStack(spacing: 8) {
+                    Button("Scan Now") {
+                      Task { try? await store.scanNow() }
+                    }
+                    .tokMonGlassButton()
+                    .disabled(store.isBusy)
 
-            Button("Rebuild Database") {
-              Task { try? await store.rebuildAndRescan() }
+                    Button("Rebuild Database") {
+                      Task { try? await store.rebuildAndRescan() }
+                    }
+                    .tokMonGlassButton()
+                    .disabled(store.isBusy)
+                  }
+                }
+              }
             }
-            .disabled(store.isBusy)
-
-            Button("Check Parity") {
-              Task { try? await store.runParityCheck() }
-            }
-            .disabled(store.isBusy)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 14)
           }
-          parityStatus
+
+          footer
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
       }
-
-      footer
+      .preferredColorScheme(.dark)
     }
-    .padding(20)
-    .frame(minWidth: 520, minHeight: 560)
+    .frame(minWidth: 660, minHeight: 580)
     .task {
       try? await store.load()
+      selectedPricingModel = firstUnconfiguredPricingModel ?? ""
     }
   }
 
   private var header: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("TokMon Settings")
-        .font(.title3.weight(.semibold))
-      Text("Native token monitoring configuration")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    HStack(alignment: .center, spacing: 12) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+          .fill(Color.white.opacity(0.08))
+          .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+              .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+          }
+        Image(systemName: "gearshape")
+          .font(.system(size: 15, weight: .heavy))
+          .foregroundStyle(TokMonGlass.accent)
+      }
+      .frame(width: 34, height: 34)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text("TokMon Settings")
+          .font(.system(size: 15, weight: .heavy, design: .rounded))
+          .foregroundStyle(TokMonGlass.neutralTint)
+        Text("Native token monitoring")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+      }
+      Spacer()
     }
   }
 
   private var footer: some View {
-    HStack {
+    HStack(spacing: 10) {
       if store.isBusy {
         ProgressView()
-          .scaleEffect(0.7)
+          .scaleEffect(0.72)
       }
       Text(store.errorMessage ?? store.statusMessage)
-        .font(.caption)
-        .foregroundStyle(store.errorMessage == nil ? .secondary : Color.red)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(store.errorMessage == nil ? TokMonGlass.mutedTint : TokMonGlass.danger)
+        .lineLimit(1)
       Spacer()
       Button("Save") {
         Task { try? await store.save() }
       }
+      .tokMonGlassButton(prominent: true)
       .keyboardShortcut(.defaultAction)
       .disabled(store.isBusy)
     }
   }
 
-  private var parityStatus: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(store.parityReport?.summary ?? "Compares native queries with retained legacy route SQL semantics.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      if let differences = store.parityReport?.differences, !differences.isEmpty {
-        ForEach(differences.prefix(3)) { difference in
-          Text("\(difference.endpoint).\(difference.path): native \(difference.native), legacy \(difference.legacy)")
-            .font(.caption2.monospaced())
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+  private var modelPricingEditor: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 8) {
+        Picker("Model", selection: $selectedPricingModel) {
+          ForEach(availablePricingModels, id: \.self) { model in
+            Text(model).tag(model)
+          }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(width: 270)
+
+        Button("Add Model") {
+          addSelectedPricingModel()
+        }
+        .tokMonGlassButton()
+        .disabled(selectedPricingModel.isEmpty)
+      }
+
+      if configuredPricingModels.isEmpty {
+        Text("Add a model to configure pricing.")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+      } else {
+        VStack(alignment: .leading, spacing: 8) {
+          pricingHeader
+          ForEach(configuredPricingModels, id: \.self) { model in
+            ModelPricingRow(
+              model: model,
+              rates: pricingBinding(for: model),
+              onRemove: {
+                store.draft.modelPricing.removeValue(forKey: model)
+                selectedPricingModel = firstUnconfiguredPricingModel ?? ""
+              },
+            )
+          }
         }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .onChange(of: availablePricingModels, initial: true) { _, models in
+      if selectedPricingModel.isEmpty || !models.contains(selectedPricingModel) {
+        selectedPricingModel = models.first ?? ""
+      }
+    }
+  }
+
+  private var pricingHeader: some View {
+    HStack(spacing: 8) {
+      Text("Model")
+        .frame(width: 178, alignment: .leading)
+      Text("Input")
+        .frame(width: 74, alignment: .trailing)
+      Text("Output")
+        .frame(width: 74, alignment: .trailing)
+      Text("Cache W")
+        .frame(width: 74, alignment: .trailing)
+      Text("Cache R")
+        .frame(width: 74, alignment: .trailing)
+      Spacer(minLength: 0)
+    }
+    .font(.system(size: 10, weight: .bold, design: .rounded))
+    .foregroundStyle(TokMonGlass.mutedTint)
+  }
+
+  private var configuredPricingModels: [String] {
+    store.draft.modelPricing.keys.sorted()
+  }
+
+  private var availablePricingModels: [String] {
+    let configured = Set(configuredPricingModels)
+    let discovered = store.draft.availableModels
+      .map(\.model)
+      .filter { !$0.isEmpty && !configured.contains($0) }
+    let allModels = discovered + configuredPricingModels
+    return Array(NSOrderedSet(array: allModels)) as? [String] ?? allModels
+  }
+
+  private var firstUnconfiguredPricingModel: String? {
+    let configured = Set(configuredPricingModels)
+    return store.draft.availableModels
+      .map(\.model)
+      .first { !$0.isEmpty && !configured.contains($0) }
+  }
+
+  private func addSelectedPricingModel() {
+    guard !selectedPricingModel.isEmpty else {
+      return
+    }
+    store.draft.modelPricing[selectedPricingModel] = store.draft.modelPricing[selectedPricingModel] ?? .zero
+    selectedPricingModel = firstUnconfiguredPricingModel ?? selectedPricingModel
+  }
+
+  private func pricingBinding(for model: String) -> Binding<TokMonCostRates> {
+    Binding(
+      get: {
+        store.draft.modelPricing[model] ?? .zero
+      },
+      set: { rates in
+        store.draft.modelPricing[model] = rates
+      },
+    )
   }
 }
 
-private struct RateField: View {
-  let label: String
+private struct SettingsWindowShell: View {
+  var body: some View {
+    RoundedRectangle(cornerRadius: 24, style: .continuous)
+      .fill(.regularMaterial)
+      .overlay {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+          .fill(TokMonGlass.hudCardFill)
+      }
+      .overlay {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+          .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+      }
+      .shadow(color: Color.black.opacity(0.22), radius: 22, y: 10)
+      .allowsHitTesting(false)
+  }
+}
+
+private struct ModelPricingRow: View {
+  let model: String
+  @Binding var rates: TokMonCostRates
+  let onRemove: () -> Void
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(model)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(TokMonGlass.neutralTint)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .frame(width: 178, alignment: .leading)
+      CompactRateField(value: $rates.input)
+      CompactRateField(value: $rates.output)
+      CompactRateField(value: $rates.cacheCreate)
+      CompactRateField(value: $rates.cacheRead)
+      Button {
+        onRemove()
+      } label: {
+        Image(systemName: "minus.circle")
+          .font(.system(size: 13, weight: .semibold))
+      }
+      .tokMonGlassButton()
+      .help("Remove \(model) pricing")
+    }
+    .padding(10)
+    .settingsInsetCard()
+  }
+}
+
+private struct CompactRateField: View {
   @Binding var value: Double
 
   var body: some View {
-    HStack {
-      Text(label)
-      Spacer()
-      TextField(label, value: $value, format: .number.precision(.fractionLength(0...6)))
-        .multilineTextAlignment(.trailing)
-        .frame(width: 110)
+    TextField("0", value: $value, format: .number.precision(.fractionLength(0...6)))
+      .multilineTextAlignment(.trailing)
+      .monospacedDigit()
+      .settingsTextField(width: 74)
+  }
+}
+
+private struct SettingsSection<Content: View>: View {
+  private let title: String
+  @ViewBuilder private let content: Content
+
+  init(_ title: String, @ViewBuilder content: () -> Content) {
+    self.title = title
+    self.content = content()
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 9) {
+      Text(title)
+        .font(.system(size: 14, weight: .heavy, design: .rounded))
+        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.84))
+      VStack(alignment: .leading, spacing: 10) {
+        content
+      }
+      .padding(12)
+      .settingsCard()
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+private struct FieldRow<Content: View>: View {
+  private let label: String
+  @ViewBuilder private let content: Content
+
+  init(_ label: String, @ViewBuilder content: () -> Content) {
+    self.label = label
+    self.content = content()
+  }
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 14) {
+      Text(label)
+        .font(.system(size: 12, weight: .bold, design: .rounded))
+        .foregroundStyle(TokMonGlass.mutedTint)
+        .frame(width: 104, alignment: .trailing)
+      content
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+private extension View {
+  func settingsCard() -> some View {
+    background {
+      RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .fill(TokMonGlass.hudCardFill)
+        .overlay {
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+        }
+    }
+  }
+
+  func settingsInsetCard() -> some View {
+    background {
+      RoundedRectangle(cornerRadius: 13, style: .continuous)
+        .fill(Color.black.opacity(0.14))
+        .overlay {
+          RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        }
+    }
+  }
+
+  func settingsTextField(width: CGFloat) -> some View {
+    textFieldStyle(.plain)
+      .font(.system(size: 12, weight: .semibold, design: .rounded))
+      .foregroundStyle(TokMonGlass.neutralTint)
+      .padding(.horizontal, 10)
+      .frame(width: width, height: 28)
+      .background {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+          .fill(Color.black.opacity(0.16))
+          .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+              .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+          }
+      }
   }
 }
 
@@ -180,13 +402,14 @@ final class TokMonSettingsWindowController {
     }
 
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+      contentRect: NSRect(x: 0, y: 0, width: 660, height: 580),
       styleMask: [.titled, .closable, .miniaturizable],
       backing: .buffered,
       defer: false,
     )
     window.title = "TokMon Settings"
     window.center()
+    window.minSize = NSSize(width: 660, height: 580)
     window.contentView = NSHostingView(rootView: TokMonSettingsWindow(store: settingsStore))
     window.isReleasedWhenClosed = false
     window.makeKeyAndOrderFront(nil)

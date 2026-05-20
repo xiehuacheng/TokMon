@@ -18,10 +18,10 @@ struct TokMonConfig: Codable, Equatable {
 }
 
 struct TokMonCostRates: Codable, Equatable {
-  let input: Double
-  let output: Double
-  let cacheCreate: Double
-  let cacheRead: Double
+  var input: Double
+  var output: Double
+  var cacheCreate: Double
+  var cacheRead: Double
 
   enum CodingKeys: String, CodingKey {
     case input
@@ -31,6 +31,22 @@ struct TokMonCostRates: Codable, Equatable {
   }
 
   static let zero = TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0)
+
+  func normalized() -> TokMonCostRates {
+    TokMonCostRates(
+      input: max(0, input),
+      output: max(0, output),
+      cacheCreate: max(0, cacheCreate),
+      cacheRead: max(0, cacheRead),
+    )
+  }
+
+  func cost(inputTokens: Int, outputTokens: Int, cacheCreation: Int, cacheRead: Int) -> Double {
+    Double(inputTokens) / 1_000_000 * input
+      + Double(outputTokens) / 1_000_000 * output
+      + Double(cacheCreation) / 1_000_000 * cacheCreate
+      + Double(cacheRead) / 1_000_000 * self.cacheRead
+  }
 }
 
 struct TokMonUIState: Codable, Equatable {
@@ -46,21 +62,91 @@ struct TokMonUIState: Codable, Equatable {
   var activeSeries: String
   var refreshRate: Int
   var costRates: TokMonCostRates
+  var modelPricing: [String: TokMonCostRates] = [:]
 
   static let `default` = TokMonUIState(
     source: "",
     from: "",
     to: "",
-    rangeLabel: "7D",
+    rangeLabel: TokMonRangePreset.thisWeek.label,
     rangeHours: nil,
-    rangeDays: 7,
+    rangeDays: nil,
     liveMode: true,
-    rangeMode: "exact",
+    rangeMode: "round",
     interval: "day",
     activeSeries: "total",
     refreshRate: 3000,
     costRates: .zero,
+    modelPricing: [:],
   )
+}
+
+enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
+  case today
+  case thisWeek
+  case thisMonth
+  case all
+
+  init(label: String?) {
+    switch label {
+    case "today", "1H", "24H":
+      self = .today
+    case "thisWeek", "7D":
+      self = .thisWeek
+    case "thisMonth", "30D":
+      self = .thisMonth
+    case "all":
+      self = .all
+    default:
+      self = .thisWeek
+    }
+  }
+
+  var id: String { rawValue }
+  var label: String { rawValue }
+
+  var displayLabel: String {
+    switch self {
+    case .today:
+      "Today"
+    case .thisWeek:
+      "This Week"
+    case .thisMonth:
+      "This Month"
+    case .all:
+      "All"
+    }
+  }
+
+  var compactDisplayLabel: String {
+    switch self {
+    case .today:
+      "Today"
+    case .thisWeek:
+      "Week"
+    case .thisMonth:
+      "Month"
+    case .all:
+      "All"
+    }
+  }
+
+  var hours: Int? {
+    nil
+  }
+
+  var days: Int? {
+    nil
+  }
+
+  var interval: String {
+    switch self {
+    case .today:
+      "hour"
+    case .thisWeek, .thisMonth, .all:
+      "day"
+    }
+  }
 }
 
 struct TokMonUsageRecord: Equatable {
@@ -75,13 +161,27 @@ struct TokMonUsageRecord: Equatable {
   var createdAt: String
 }
 
+struct TokMonSessionMetadata: Equatable {
+  var id: String
+  var source: String
+  var title: String?
+  var firstPrompt: String?
+  var lastPrompt: String?
+  var model: String?
+  var startedAt: String?
+  var lastActiveAt: String?
+  var filePath: String?
+  var projectPath: String?
+}
+
 struct TokMonScanState: Equatable {
   var offset: Int64
   var sessionId: String?
   var model: String?
   var lastUsageKey: String?
+  var lastMtime: String? = nil
 
-  static let empty = TokMonScanState(offset: 0, sessionId: nil, model: nil, lastUsageKey: nil)
+  static let empty = TokMonScanState(offset: 0, sessionId: nil, model: nil, lastUsageKey: nil, lastMtime: nil)
 }
 
 struct TokMonQueryFilter: Equatable {
@@ -89,6 +189,10 @@ struct TokMonQueryFilter: Equatable {
   var to: String
   var source: String?
   var model: String?
+
+  var hasTimeRange: Bool {
+    !from.isEmpty && !to.isEmpty
+  }
 }
 
 struct TokMonSummary: Decodable {
@@ -99,6 +203,15 @@ struct TokMonSummary: Decodable {
   func estimatedCost(costRates: TokMonCostRates) -> Double {
     byModel.reduce(0) { sum, model in
       sum + model.value(for: .cost, costRates: costRates)
+    }
+  }
+
+  func estimatedCost(modelPricing: [String: TokMonCostRates]) -> Double {
+    byModel.reduce(0) { sum, model in
+      guard let rates = modelPricing[model.model] else {
+        return sum
+      }
+      return sum + model.value(for: .cost, costRates: rates)
     }
   }
 }
@@ -121,7 +234,37 @@ struct TokMonTotals: Decodable {
   }
 
   var totalTokens: Int {
-    totalInput + totalOutput
+    totalInput + totalOutput + totalCacheRead
+  }
+
+  var cacheHitRate: Double {
+    cacheHitRatio(inputTokens: totalInput, cacheRead: totalCacheRead)
+  }
+
+  func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
+    switch series {
+    case .total:
+      Double(totalTokens)
+    case .requests:
+      Double(totalRequests)
+    case .input:
+      Double(totalInput)
+    case .output:
+      Double(totalOutput)
+    case .cache:
+      Double(totalCacheCreation)
+    case .cacheHit:
+      Double(totalCacheRead)
+    case .cacheHitRate:
+      cacheHitRate
+    case .cost:
+      costRates.cost(
+        inputTokens: totalInput,
+        outputTokens: totalOutput,
+        cacheCreation: totalCacheCreation,
+        cacheRead: totalCacheRead,
+      )
+    }
   }
 }
 
@@ -145,7 +288,11 @@ struct TokMonSourceTotals: Decodable, Identifiable {
   }
 
   var totalTokens: Int {
-    inputTokens + outputTokens
+    inputTokens + outputTokens + cacheRead
+  }
+
+  var cacheHitRate: Double {
+    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -162,11 +309,15 @@ struct TokMonSourceTotals: Decodable, Identifiable {
       Double(cacheCreation)
     case .cacheHit:
       Double(cacheRead)
+    case .cacheHitRate:
+      cacheHitRate
     case .cost:
-      Double(inputTokens) / 1_000_000 * costRates.input
-        + Double(outputTokens) / 1_000_000 * costRates.output
-        + Double(cacheCreation) / 1_000_000 * costRates.cacheCreate
-        + Double(cacheRead) / 1_000_000 * costRates.cacheRead
+      costRates.cost(
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        cacheCreation: cacheCreation,
+        cacheRead: cacheRead,
+      )
     }
   }
 }
@@ -193,7 +344,11 @@ struct TokMonModelTotals: Decodable, Identifiable {
   }
 
   var totalTokens: Int {
-    inputTokens + outputTokens
+    inputTokens + outputTokens + cacheRead
+  }
+
+  var cacheHitRate: Double {
+    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -210,11 +365,15 @@ struct TokMonModelTotals: Decodable, Identifiable {
       Double(cacheCreation)
     case .cacheHit:
       Double(cacheRead)
+    case .cacheHitRate:
+      cacheHitRate
     case .cost:
-      Double(inputTokens) / 1_000_000 * costRates.input
-        + Double(outputTokens) / 1_000_000 * costRates.output
-        + Double(cacheCreation) / 1_000_000 * costRates.cacheCreate
-        + Double(cacheRead) / 1_000_000 * costRates.cacheRead
+      costRates.cost(
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        cacheCreation: cacheCreation,
+        cacheRead: cacheRead,
+      )
     }
   }
 }
@@ -226,6 +385,10 @@ struct TokMonTrendBucket: Decodable {
   let cacheCreation: Int
   let cacheRead: Int
   let requests: Int
+
+  var cacheHitRate: Double {
+    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
+  }
 
   init(
     bucket: String,
@@ -255,7 +418,7 @@ struct TokMonTrendBucket: Decodable {
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
     switch series {
     case .total:
-      Double(inputTokens + outputTokens)
+      Double(inputTokens + outputTokens + cacheRead)
     case .requests:
       Double(requests)
     case .input:
@@ -266,11 +429,15 @@ struct TokMonTrendBucket: Decodable {
       Double(cacheCreation)
     case .cacheHit:
       Double(cacheRead)
+    case .cacheHitRate:
+      cacheHitRate
     case .cost:
-      Double(inputTokens) / 1_000_000 * costRates.input
-        + Double(outputTokens) / 1_000_000 * costRates.output
-        + Double(cacheCreation) / 1_000_000 * costRates.cacheCreate
-        + Double(cacheRead) / 1_000_000 * costRates.cacheRead
+      costRates.cost(
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        cacheCreation: cacheCreation,
+        cacheRead: cacheRead,
+      )
     }
   }
 }
@@ -315,6 +482,7 @@ struct TokMonUsageSession: Equatable, Identifiable {
   var id: String { "\(source):\(sessionId)" }
   var sessionId: String
   var source: String
+  var title: String?
   var model: String
   var requests: Int
   var inputTokens: Int
@@ -346,6 +514,8 @@ enum TokMonSeriesKey {
       "cache"
     case .cacheHit:
       "cacheHit"
+    case .cacheHitRate:
+      "cacheHitRate"
     case .cost:
       "cost"
     }
@@ -357,6 +527,7 @@ enum TokMonSeriesKey {
   case output
   case cache
   case cacheHit
+  case cacheHitRate
   case cost
 
   init(_ rawValue: String) {
@@ -371,12 +542,22 @@ enum TokMonSeriesKey {
       self = .cache
     case "cacheHit":
       self = .cacheHit
+    case "cacheHitRate":
+      self = .cacheHitRate
     case "cost":
       self = .cost
     default:
       self = .total
     }
   }
+}
+
+private func cacheHitRatio(inputTokens: Int, cacheRead: Int) -> Double {
+  let denominator = inputTokens + cacheRead
+  guard denominator > 0 else {
+    return 0
+  }
+  return Double(cacheRead) / Double(denominator)
 }
 
 struct TokMonDashboardState: Decodable {
@@ -393,6 +574,7 @@ struct TokMonDashboardState: Decodable {
   let activeSeries: String
   let estimatedCost: Double
   let costRates: TokMonCostRates
+  let modelPricing: [String: TokMonCostRates]
   let updatedAt: String
 
   enum CodingKeys: String, CodingKey {
@@ -409,6 +591,7 @@ struct TokMonDashboardState: Decodable {
     case activeSeries
     case estimatedCost
     case costRates
+    case modelPricing
     case updatedAt
   }
 
@@ -426,6 +609,7 @@ struct TokMonDashboardState: Decodable {
     activeSeries: String,
     estimatedCost: Double,
     costRates: TokMonCostRates,
+    modelPricing: [String: TokMonCostRates] = [:],
     updatedAt: String,
   ) {
     self.source = source
@@ -441,6 +625,7 @@ struct TokMonDashboardState: Decodable {
     self.activeSeries = activeSeries
     self.estimatedCost = estimatedCost
     self.costRates = costRates
+    self.modelPricing = modelPricing
     self.updatedAt = updatedAt
   }
 
@@ -459,6 +644,7 @@ struct TokMonDashboardState: Decodable {
     activeSeries = try container.decodeIfPresent(String.self, forKey: .activeSeries) ?? "total"
     estimatedCost = try container.decodeIfPresent(Double.self, forKey: .estimatedCost) ?? 0
     costRates = try container.decodeIfPresent(TokMonCostRates.self, forKey: .costRates) ?? .zero
+    modelPricing = try container.decodeIfPresent([String: TokMonCostRates].self, forKey: .modelPricing) ?? [:]
     updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
   }
 

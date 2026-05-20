@@ -4,25 +4,20 @@ import SwiftUI
 final class AgentMonRuntime: ObservableObject {
   static let shared = AgentMonRuntime()
 
-  let server = AgentMonServer()
   let stats: AgentMonStatsStore
-  let usesNativeTokMonEngine: Bool
 
-  private let nativeEngineActor: TokMonEngineActor?
   private let settingsWindowController: TokMonSettingsWindowController?
   private var started = false
 
   init() {
-    if let engine = try? Self.makeTokMonEngine() {
+    do {
+      let engine = try Self.makeTokMonEngine()
       let engineActor = TokMonEngineActor(engine: engine)
-      nativeEngineActor = engineActor
       stats = AgentMonStatsStore(engineActor: engineActor)
-      usesNativeTokMonEngine = true
       settingsWindowController = TokMonSettingsWindowController(engineActor: engineActor)
-    } else {
-      nativeEngineActor = nil
-      stats = AgentMonStatsStore()
-      usesNativeTokMonEngine = false
+    } catch {
+      agentMonLog("AgentMon native TokMon engine failed to initialize: \(error.localizedDescription)")
+      stats = AgentMonStatsStore(startupError: error.localizedDescription)
       settingsWindowController = nil
     }
   }
@@ -30,19 +25,7 @@ final class AgentMonRuntime: ObservableObject {
   func start() {
     guard !started else { return }
     started = true
-    if usesNativeTokMonEngine {
-      agentMonLog("AgentMon runtime using native TokMon engine")
-    } else {
-      agentMonLog("AgentMon runtime starting service")
-      server.start()
-      stats.configure(appURL: server.appURL)
-    }
-  }
-
-  func openDashboard() {
-    start()
-    guard !usesNativeTokMonEngine else { return }
-    NSWorkspace.shared.open(server.appURL)
+    agentMonLog("AgentMon runtime using native TokMon engine")
   }
 
   func openSettings() {
@@ -51,17 +34,11 @@ final class AgentMonRuntime: ObservableObject {
 
   func quit() {
     stats.stopObserving()
-    if !usesNativeTokMonEngine {
-      server.stop(waitUntilExit: true)
-    }
     NSApplication.shared.terminate(nil)
   }
 
   func stop() {
     stats.stopObserving()
-    if !usesNativeTokMonEngine {
-      server.stop(waitUntilExit: true)
-    }
   }
 
   private static func makeTokMonEngine() throws -> TokMonEngine {

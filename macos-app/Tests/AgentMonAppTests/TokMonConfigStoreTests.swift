@@ -11,8 +11,9 @@ import Testing
 
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/.codex/sessions")
-  #expect(state.rangeLabel == "7D")
-  #expect(state.rangeDays == 7)
+  #expect(state.rangeLabel == "thisWeek")
+  #expect(state.rangeDays == nil)
+  #expect(state.rangeMode == "round")
   #expect(state.activeSeries == "total")
 }
 
@@ -37,6 +38,14 @@ import Testing
       "output": 2.2,
       "cache_create": 0.3,
       "cache_read": 0.4
+    },
+    "modelPricing": {
+      "gpt-a": {
+        "input": 3.1,
+        "output": 4.2,
+        "cache_create": 0.5,
+        "cache_read": 0.6
+      }
     }
   }
   """.write(to: legacyURL, atomically: true, encoding: .utf8)
@@ -49,13 +58,15 @@ import Testing
   #expect(state.to == "2026-05-14 00:00:00")
   #expect(state.interval == "hour")
   #expect(state.rangeMode == "round")
-  #expect(state.rangeLabel == "24H")
-  #expect(state.rangeHours == 24)
+  #expect(state.rangeLabel == "today")
+  #expect(state.rangeHours == nil)
+  #expect(state.rangeDays == nil)
   #expect(state.refreshRate == 5000)
   #expect(state.activeSeries == "output")
   #expect(state.costRates.output == 2.2)
   #expect(state.costRates.cacheCreate == 0.3)
   #expect(state.costRates.cacheRead == 0.4)
+  #expect(state.modelPricing["gpt-a"] == TokMonCostRates(input: 3.1, output: 4.2, cacheCreate: 0.5, cacheRead: 0.6))
   #expect(FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("tokmon-ui-state.json").path))
 }
 
@@ -75,6 +86,18 @@ import Testing
     "rangeHours": null,
     "costRates": {
       "output": 9.5
+    },
+    "modelPricing": {
+      "gpt-a": {
+        "input": 1.5,
+        "output": 2.5,
+        "cache_create": 3.5,
+        "cache_read": 4.5
+      },
+      "bad": {
+        "input": true,
+        "output": "expensive"
+      }
     }
   }
   """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
@@ -89,11 +112,13 @@ import Testing
   #expect(state.source == "codex")
   #expect(state.from == "")
   #expect(state.to == "")
-  #expect(state.rangeLabel == "7D")
+  #expect(state.rangeLabel == "thisWeek")
   #expect(state.rangeHours == nil)
-  #expect(state.rangeDays == 7)
+  #expect(state.rangeDays == nil)
   #expect(state.costRates.input == 0)
   #expect(state.costRates.output == 9.5)
+  #expect(state.modelPricing["gpt-a"] == TokMonCostRates(input: 1.5, output: 2.5, cacheCreate: 3.5, cacheRead: 4.5))
+  #expect(state.modelPricing["bad"] == TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0))
 }
 
 @Test func configStoreFallsBackWhenLegacyDashboardStateIsMalformed() throws {
