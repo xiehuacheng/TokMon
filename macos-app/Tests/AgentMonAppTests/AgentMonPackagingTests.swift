@@ -4,10 +4,17 @@ import Testing
 
 @Test func projectLocatorDoesNotRequireWebDashboardFiles() throws {
   let root = try makeTokMonTempDir()
-  let sourceDir = root.appendingPathComponent("src", isDirectory: true)
+  let appRoot = root.appendingPathComponent("macos-app", isDirectory: true)
+  let sourceDir = appRoot
+    .appendingPathComponent("Sources", isDirectory: true)
+    .appendingPathComponent("AgentMonApp", isDirectory: true)
   try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
-  try "".write(to: sourceDir.appendingPathComponent("index.ts"), atomically: true, encoding: .utf8)
-  try "{}".write(to: root.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+  try "// swift-tools-version: 6.0\n".write(
+    to: appRoot.appendingPathComponent("Package.swift"),
+    atomically: true,
+    encoding: .utf8,
+  )
+  try "// main\n".write(to: sourceDir.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
 
   #expect(AgentMonProjectLocator.looksLikeAgentMonRoot(root, fileManager: .default))
 }
@@ -418,7 +425,7 @@ import Testing
   #expect(view.contains("max(size.width - horizontalInset * 2, 1)"))
 }
 
-@Test func settingsWindowRemovesLegacyDashboardDefaultsAndParityControls() throws {
+@Test func settingsWindowOnlyExposesNativeMaintenanceActions() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -432,9 +439,10 @@ import Testing
   #expect(!settings.contains("SettingsSection(\"Defaults\")"))
   #expect(!settings.contains("FieldRow(\"Range\")"))
   #expect(!settings.contains("FieldRow(\"Metric\")"))
-  #expect(!settings.contains("FieldRow(\"Parity\")"))
-  #expect(!settings.contains("Button(\"Check Parity\")"))
   #expect(!settings.contains("private let metrics"))
+  #expect(settings.contains("SettingsSection(\"Maintenance\")"))
+  #expect(settings.contains("Button(\"Scan Now\")"))
+  #expect(settings.contains("Button(\"Rebuild Database\")"))
 }
 
 @Test func settingsWindowUsesPopoverHudGlassStyling() throws {

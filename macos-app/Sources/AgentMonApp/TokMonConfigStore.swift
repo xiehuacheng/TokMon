@@ -24,20 +24,12 @@ final class TokMonConfigStore {
 
   func loadUIState() throws -> TokMonUIState {
     let url = uiStateURL
-    if fileManager.fileExists(atPath: url.path) {
-      let data = try Data(contentsOf: url)
-      return normalizedUIState(from: data) ?? .default
-    }
-
-    let legacyURL = legacyDashboardStateURL
-    guard fileManager.fileExists(atPath: legacyURL.path) else {
+    guard fileManager.fileExists(atPath: url.path) else {
       return .default
     }
 
-    let legacyData = try Data(contentsOf: legacyURL)
-    let legacyState = normalizedUIState(from: legacyData) ?? .default
-    try saveUIState(legacyState)
-    return legacyState
+    let data = try Data(contentsOf: url)
+    return normalizedUIState(from: data) ?? .default
   }
 
   func saveUIState(_ state: TokMonUIState) throws {
@@ -62,10 +54,6 @@ final class TokMonConfigStore {
 
   private var uiStateURL: URL {
     dataDir.appendingPathComponent("tokmon-ui-state.json")
-  }
-
-  private var legacyDashboardStateURL: URL {
-    dataDir.appendingPathComponent("tokmon-dashboard-state.json")
   }
 
   private func normalizedConfig(from data: Data) -> TokMonConfig? {

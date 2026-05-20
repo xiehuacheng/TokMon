@@ -54,8 +54,8 @@ enum AgentMonProjectLocator {
 
   static func looksLikeAgentMonRoot(_ url: URL, fileManager: FileManager) -> Bool {
     let requiredPaths = [
-      "src/index.ts",
-      "package.json",
+      "macos-app/Package.swift",
+      "macos-app/Sources/AgentMonApp/main.swift",
     ]
 
     return requiredPaths.allSatisfy { relativePath in

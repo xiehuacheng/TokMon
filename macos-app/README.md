@@ -26,9 +26,6 @@ swift run AgentMon
 AGENTMON_PROJECT_ROOT=/Users/orange/Desktop/Project/AgentMon swift run AgentMon
 ```
 
-如需调试保留的 TypeScript 迁移参考 API，可以从仓库根目录运行 `npm run dev`；
-面向用户的交付入口仍是 macOS App。
-
 ## 打包为 .app
 
 在仓库根目录执行：
@@ -47,17 +44,15 @@ open release/AgentMon.app
 
 生成结果位于 `macos-app/release/AgentMon.app`，该目录已被 `.gitignore` 忽略。
 
-打包脚本不再内嵌 Node runtime 或 web dashboard 资源。
-
 ## 数据与运行时
 
-通过 App 启动时，原生 TokMon 数据目录为：
+AgentMon 的 TokMon 数据目录为：
 
 ```text
 AGENTMON_DATA_DIR=~/Library/Application Support/AgentMon
 ```
 
-因此独立版 App 的 SQLite 数据库、扫描状态和本地配置不会写回源码目录。
+因此 `.app` 的 SQLite 数据库、扫描状态和本地配置不会写回源码目录。
 
 ## 注意事项
 

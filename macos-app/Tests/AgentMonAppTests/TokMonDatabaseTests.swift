@@ -102,8 +102,8 @@ import Testing
       INSERT INTO usage_records
         (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at)
       VALUES
-        ('codex', 'legacy-1', 'gpt-legacy', 10, 3, 1, 2, 4, '2026-05-14T01:00:00.000Z'),
-        ('codex', 'legacy-2', 'gpt-legacy', 20, 7, 0, 5, 0, '2026-05-15T01:00:00.000Z');
+        ('codex', 'existing-1', 'gpt-existing', 10, 3, 1, 2, 4, '2026-05-14T01:00:00.000Z'),
+        ('codex', 'existing-2', 'gpt-existing', 20, 7, 0, 5, 0, '2026-05-15T01:00:00.000Z');
     """)
   }
 
@@ -182,36 +182,6 @@ import Testing
   #expect(try db.sessionMetadata(source: "claude-code", id: "claude-1") == nil)
 }
 
-@Test func databaseMigratesLegacyScanStateColumns() throws {
-  let dataDir = try makeTokMonTempDir()
-  let databaseURL = dataDir.appendingPathComponent("agentmon.db")
-  try withRawSQLiteDatabase(at: databaseURL) { db in
-    try rawSQLiteExec(db, """
-      CREATE TABLE tokmon_scan_state (
-        file_path TEXT PRIMARY KEY,
-        last_offset INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-      INSERT INTO tokmon_scan_state (file_path, last_offset)
-      VALUES ('/tmp/legacy.jsonl', 24);
-    """)
-  }
-
-  let db = try TokMonDatabase(appDataDir: dataDir)
-  let legacyState = try db.scanState(filePath: "/tmp/legacy.jsonl")
-  try db.setScanState(
-    filePath: "/tmp/legacy.jsonl",
-    state: TokMonScanState(offset: 48, sessionId: "session-legacy", model: "gpt-legacy", lastUsageKey: "legacy-key"),
-  )
-  let migratedState = try db.scanState(filePath: "/tmp/legacy.jsonl")
-
-  #expect(legacyState.offset == 24)
-  #expect(legacyState.sessionId == nil)
-  #expect(migratedState.offset == 48)
-  #expect(migratedState.sessionId == "session-legacy")
-  #expect(migratedState.model == "gpt-legacy")
-  #expect(migratedState.lastUsageKey == "legacy-key")
-}
 
 private func withRawSQLiteDatabase(at url: URL, _ body: (OpaquePointer?) throws -> Void) throws {
   var db: OpaquePointer?

@@ -194,7 +194,7 @@ import Testing
   #expect(metadata?.firstPrompt == "First user prompt fallback")
 }
 
-@Test func scannerBackfillsCodexTitleForLegacyUnchangedScanState() throws {
+@Test func scannerBackfillsCodexTitleForUnchangedScanState() throws {
   let dataDir = try makeTokMonTempDir()
   let codexHome = dataDir.appendingPathComponent("codex-home", isDirectory: true)
   let nestedSessionsDir = codexHome

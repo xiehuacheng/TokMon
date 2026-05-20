@@ -11,7 +11,6 @@ import Testing
   _ = TokMonDatabase.self
   _ = TokMonScanner.self
   _ = TokMonQueryStore.self
-  _ = TokMonParityVerifier.self
 }
 
 @Test func tokMonEngineBindsDefaultQueryStoreToDatabase() throws {

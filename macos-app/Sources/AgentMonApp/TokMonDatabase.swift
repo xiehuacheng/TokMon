@@ -368,7 +368,6 @@ final class TokMonDatabase {
       column: "project_path",
       definition: "project_path TEXT",
     )
-    try migrateTokMonScanState()
     try backfillUsageRollupsIfNeeded()
     try exec("""
 
@@ -511,29 +510,6 @@ final class TokMonDatabase {
     guard sqlite3_busy_timeout(requiredConnection, 5_000) == SQLITE_OK else {
       throw TokMonDatabaseError.sqlite(lastErrorMessage)
     }
-  }
-
-  private func migrateTokMonScanState() throws {
-    try addColumnIfMissing(
-      table: "tokmon_scan_state",
-      column: "session_id",
-      definition: "session_id TEXT",
-    )
-    try addColumnIfMissing(
-      table: "tokmon_scan_state",
-      column: "model",
-      definition: "model TEXT",
-    )
-    try addColumnIfMissing(
-      table: "tokmon_scan_state",
-      column: "last_usage_key",
-      definition: "last_usage_key TEXT",
-    )
-    try addColumnIfMissing(
-      table: "tokmon_scan_state",
-      column: "last_mtime",
-      definition: "last_mtime TEXT",
-    )
   }
 
   private func addColumnIfMissing(table: String, column: String, definition: String) throws {

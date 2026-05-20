@@ -154,7 +154,7 @@ import Testing
   #expect(sessions.first?.cacheRead == 0)
 }
 
-@Test func queryStoreAllRangeCanIncludeRecordsOutsideLegacyDashboardBounds() throws {
+@Test func queryStoreAllRangeCanIncludeRecordsOutsideCurrentCalendarBounds() throws {
   let dataDir = try makeTokMonTempDir()
   let db = try TokMonDatabase(appDataDir: dataDir)
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "ancient", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "1970-01-01T00:00:00.000Z"))

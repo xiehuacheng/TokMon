@@ -6,7 +6,6 @@ final class TokMonSettingsStore: ObservableObject {
   @Published private(set) var statusMessage = ""
   @Published private(set) var errorMessage: String?
   @Published private(set) var isBusy = false
-  @Published private(set) var parityReport: TokMonParityReport?
 
   private let engineActor: TokMonEngineActor
 
@@ -46,14 +45,6 @@ final class TokMonSettingsStore: ObservableObject {
     try await runBusyAction {
       let inserted = try await engineActor.rebuildAndRescan()
       statusMessage = inserted == 1 ? "Rebuilt database and scanned 1 record." : "Rebuilt database and scanned \(inserted) records."
-    }
-  }
-
-  func runParityCheck(now: Date = Date()) async throws {
-    try await runBusyAction {
-      let report = try await engineActor.legacyParityCheck(now: now)
-      parityReport = report
-      statusMessage = report.summary
     }
   }
 

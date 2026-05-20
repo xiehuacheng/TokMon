@@ -180,7 +180,7 @@ import Testing
 }
 
 @MainActor
-@Test func statsStoreHonorsThisWeekRangeFromNativeUIState() async throws {
+@Test func statsStoreRespectsThisWeekRangeFromUIState() async throws {
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
