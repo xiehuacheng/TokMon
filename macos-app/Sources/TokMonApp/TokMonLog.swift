@@ -1,8 +1,8 @@
 import Foundation
 
-func agentMonLog(_ message: String) {
+func tokMonLog(_ message: String) {
   let line = "\(Date()) \(message)\n"
-  let url = URL(fileURLWithPath: "/tmp/agentmon-macos.log")
+  let url = URL(fileURLWithPath: "/tmp/tokmon-macos.log")
 
   if let data = line.data(using: .utf8) {
     if FileManager.default.fileExists(atPath: url.path),

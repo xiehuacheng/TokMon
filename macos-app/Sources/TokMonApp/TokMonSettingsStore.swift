@@ -64,11 +64,13 @@ final class TokMonSettingsStore: ObservableObject {
 struct TokMonSettingsDraft: Equatable {
   var claudePath = TokMonConfig.default.sources["claude-code"]?.path ?? "~/.claude/projects"
   var codexPath = TokMonConfig.default.sources["codex"]?.path ?? "~/.codex/sessions"
+  var openCodePath = TokMonConfig.default.sources["opencode"]?.path ?? "~/.local/share/opencode"
   var source = TokMonUIState.default.source
   var rangeLabel = TokMonUIState.default.rangeLabel ?? "7D"
   var liveMode = TokMonUIState.default.liveMode
   var interval = TokMonUIState.default.interval
   var activeSeries = TokMonUIState.default.activeSeries
+  var menuBarDisplayMode = TokMonUIState.default.menuBarDisplayMode
   var refreshRate = TokMonUIState.default.refreshRate
   var inputRate = TokMonUIState.default.costRates.input
   var outputRate = TokMonUIState.default.costRates.output
@@ -87,7 +89,7 @@ enum TokMonSettingsError: LocalizedError {
     case .noReadableSourcePaths:
       "No configured TokMon source paths are readable. Rebuild was not started."
     case .noUsageLogsFound:
-      "No TokMon JSONL usage logs were found in the configured source paths. Rebuild was not started."
+      "No TokMon usage logs were found in the configured source paths. Rebuild was not started."
     }
   }
 }

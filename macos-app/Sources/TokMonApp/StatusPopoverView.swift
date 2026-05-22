@@ -1,12 +1,14 @@
 import SwiftUI
 
 struct StatusPopoverView: View {
-  @EnvironmentObject private var runtime: AgentMonRuntime
-  @EnvironmentObject private var stats: AgentMonStatsStore
+  @EnvironmentObject private var runtime: TokMonRuntime
+  @EnvironmentObject private var stats: TokMonStatsStore
   @State private var selectedPage = TokMonPopoverPage.overview
   @State private var selectedSeries = TokMonSeriesPresentation.total
   @State private var expandedRequestId: String?
   @State private var isTotalTokensExpanded = false
+  @State private var sessionRowFrames: [String: CGRect] = [:]
+  @Namespace private var pageRailSelectionNamespace
   private let numberFormatter: NumberFormatter = {
     let formatter = NumberFormatter()
     formatter.numberStyle = .decimal
@@ -14,31 +16,52 @@ struct StatusPopoverView: View {
   }()
 
   var body: some View {
-    TokMonLiquidGlassScene {
-      ScrollView(showsIndicators: false) {
-        VStack(alignment: .leading, spacing: 10) {
-          header
-          errorBanner
-          SystemMenuPageRail(
-            pages: availablePages,
-            selectedPage: selectedPage,
-            onSelect: { selectedPage = $0 },
-          )
-          rangeControl
-          currentPage
+    ZStack(alignment: .topLeading) {
+      TokMonLiquidGlassScene {
+        ZStack(alignment: .top) {
+          VStack(alignment: .leading, spacing: 10) {
+            pinnedHeader
+            ScrollView(showsIndicators: false) {
+              scrollingPageContent
+                .padding(.horizontal, 11)
+                .padding(.bottom, 11)
+                .frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)
+                .background(Color.black.opacity(0.001))
+                .contentShape(Rectangle())
+            }
+          }
+          .clipShape(StatusPanelContentMask())
         }
-        .padding(11)
-        .frame(maxWidth: .infinity, minHeight: 740, alignment: .topLeading)
-        .background(Color.black.opacity(0.001))
-        .contentShape(Rectangle())
+      }
+      .background(alignment: .top) {
+        StatusPanelShell()
+      }
+      .frame(width: statusPanelMainWidth, height: statusPanelHeight)
+      .background(Color.black.opacity(0.001))
+      .contentShape(Rectangle())
+      .coordinateSpace(name: StatusPopoverCoordinateSpace.main)
+      .padding(.leading, sessionBubbleWidth + sessionBubbleGutter)
+      if selectedPage == .sessions {
+        selectedSessionDrilldown
+          .offset(x: 0, y: selectedSessionBubbleY)
+          .animation(TokMonMotion.gentleSpring, value: selectedSessionBubbleY)
       }
     }
-    .background(alignment: .top) {
-      StatusPanelShell()
-    }
-    .frame(width: 360, height: 740)
+    .frame(width: statusPanelContentWidth, height: statusPanelHeight, alignment: .topLeading)
     .onChange(of: stats.snapshot.dashboardState?.activeSeries, initial: true) { _, activeSeries in
       selectedSeries = TokMonSeriesPresentation(rawValue: activeSeries ?? "total")
+    }
+    .onChange(of: selectedSessionBubbleY, initial: true) { _, _ in
+      syncSessionBubbleHitSurface()
+    }
+    .onChange(of: selectedPage, initial: true) { _, _ in
+      syncSessionBubbleHitSurface()
+    }
+    .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
+      syncSessionBubbleHitSurface()
+    }
+    .onDisappear {
+      runtime.statusPanelSessionBubbleY = nil
     }
   }
 
@@ -74,6 +97,29 @@ struct StatusPopoverView: View {
     }
   }
 
+  private var pinnedHeader: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      header
+      SystemMenuPageRail(
+        pages: availablePages,
+        selectedPage: selectedPage,
+        selectionNamespace: pageRailSelectionNamespace,
+        onSelect: selectPage,
+      )
+      rangeControl
+    }
+    .padding(.horizontal, 11)
+    .padding(.top, 11)
+    .padding(.bottom, 2)
+  }
+
+  private var scrollingPageContent: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      errorBanner
+      currentPage
+    }
+  }
+
   private var header: some View {
     HStack(alignment: .center, spacing: 10) {
       ZStack {
@@ -90,7 +136,7 @@ struct StatusPopoverView: View {
       .frame(width: 30, height: 30)
 
       VStack(alignment: .leading, spacing: 3) {
-        Text("AgentMon")
+        Text("TokMon")
           .font(.system(size: 14, weight: .heavy, design: .rounded))
           .foregroundStyle(TokMonGlass.neutralTint)
         Text("\(serverLine) · \(updatedLine)")
@@ -104,7 +150,7 @@ struct StatusPopoverView: View {
       HeaderIconButton(systemName: "gearshape", help: "TokMon Settings") {
         runtime.openSettings()
       }
-      HeaderIconButton(systemName: "power", help: "Quit AgentMon") {
+      HeaderIconButton(systemName: "power", help: "Quit TokMon") {
         runtime.quit()
       }
     }
@@ -133,36 +179,39 @@ struct StatusPopoverView: View {
 
   private var overviewPage: some View {
     VStack(alignment: .leading, spacing: 10) {
-      AgentMonHudMetricGrid(
+      TokMonHudMetricGrid(
         metrics: primaryMetrics,
         tokenDetails: secondaryMetrics,
         isTotalExpanded: isTotalTokensExpanded,
         onToggleTotalExpanded: toggleTotalTokensExpanded,
         onSelect: selectSeries,
       )
-      AgentMonHudTrendCard(
+      TokMonHudTrendCard(
         title: "Trend",
         valueLabel: selectedSeries.label,
         points: trendPoints(for: selectedSeries.key),
         color: selectedSeries.tintColor,
       )
-      AgentMonHudActivityCard(
+      TokMonHudActivityCard(
         days: stats.snapshot.heatmapDays,
         selectedSeries: selectedSeries.key,
+        costRates: aggregateCostRates,
         colorForValue: heatmapColor,
       )
-      AgentMonHudBreakdownCard(
+      TokMonHudBreakdownCard(
         title: "Top Models",
         trailingTitle: selectedSeries.isCost ? "Cost" : selectedSeries.label,
         rows: modelRows,
       )
-      AgentMonHudBreakdownCard(
+      TokMonHudBreakdownCard(
         title: "Sources",
         trailingTitle: selectedSeries.isCost ? "Cost" : selectedSeries.label,
         rows: sourceRows,
       )
     }
     .font(.system(size: 12, weight: .regular, design: .rounded))
+    .padding(9)
+    .hudCard()
   }
 
   private var requestsPage: some View {
@@ -170,7 +219,7 @@ struct StatusPopoverView: View {
     let total = stats.snapshot.recordsPage?.total ?? 0
 
     return VStack(alignment: .leading, spacing: 9) {
-      AgentMonHudSectionHeader("Requests", trailing: total > 0 ? "Showing \(rows.count) of \(total)" : nil)
+      TokMonHudSectionHeader("Requests", trailing: total > 0 ? "Showing \(rows.count) of \(total)" : nil)
       if rows.isEmpty {
         emptyState("No requests in the selected range.")
       } else {
@@ -206,7 +255,7 @@ struct StatusPopoverView: View {
     let sessions = stats.snapshot.usageSessions
 
     return VStack(alignment: .leading, spacing: 9) {
-      AgentMonHudSectionHeader("Sessions", trailing: sessions.isEmpty ? nil : "Latest \(sessions.count)")
+      TokMonHudSectionHeader("Sessions", trailing: sessions.isEmpty ? nil : "Latest \(sessions.count)")
       if sessions.isEmpty {
         emptyState("No usage sessions yet.")
       } else {
@@ -215,25 +264,36 @@ struct StatusPopoverView: View {
             session: session,
             isSelected: stats.snapshot.selectedUsageSession?.id == session.id,
             costRates: costRates(forSession: session),
-            sourceLabel: labelForSource(session.source),
+            projectName: sessionDisplayProjectName(for: session),
+            firstPrompt: sessionDisplayFirstPrompt(for: session),
             sourceColor: colorForSource(session.source),
             formatCompact: formatChartValue,
             formatCost: formatCost,
             onSelect: {
-              stats.selectUsageSession(source: session.source, sessionId: session.sessionId)
+              toggleUsageSessionSelection(session)
             },
           )
+          .background {
+            GeometryReader { proxy in
+              Color.clear.preference(
+                key: SessionRowFramePreferenceKey.self,
+                value: [session.id: proxy.frame(in: .named(StatusPopoverCoordinateSpace.main))],
+              )
+            }
+          }
         }
         if stats.canLoadMoreUsageSessions {
           LoadMoreButton(title: "Load More Sessions") {
             stats.loadMoreUsageSessions()
           }
         }
-        selectedSessionDrilldown
       }
     }
     .padding(9)
     .hudCard()
+    .onPreferenceChange(SessionRowFramePreferenceKey.self) { frames in
+      sessionRowFrames = frames
+    }
   }
 
   @ViewBuilder
@@ -241,94 +301,97 @@ struct StatusPopoverView: View {
     if let selection = stats.snapshot.selectedUsageSession {
       let rows = stats.snapshot.selectedSessionRecords
       let selectedSession = stats.snapshot.usageSessions.first { $0.id == selection.id }
+      let projectName = sessionProjectName(for: selectedSession, fallbackSource: selection.source)
+      let firstPrompt = sessionFirstPrompt(for: selectedSession, fallbackSessionId: selection.sessionId)
 
-      VStack(alignment: .leading, spacing: 10) {
-        HStack {
-          AgentMonHudSectionHeader("Session Requests", trailing: nil)
-          Spacer()
-          Button {
-            stats.clearSelectedUsageSession()
-          } label: {
-            Image(systemName: "xmark.circle.fill")
-              .font(.system(size: 15, weight: .semibold))
-          }
-          .buttonStyle(.plain)
-          .focusable(false)
-        }
-        Text("\(labelForSource(selection.source)) · \(selectedSession?.title ?? selection.sessionId)")
-          .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
-          .lineLimit(1)
-          .truncationMode(.middle)
+      VStack(alignment: .leading, spacing: 0) {
+        SessionDrilldownHeader(
+          projectName: projectName,
+          firstPrompt: firstPrompt,
+          onClose: {
+            withAnimation(TokMonMotion.gentleSpring) {
+              stats.clearSelectedUsageSession()
+            }
+          },
+        )
+        .padding(.bottom, 10)
 
-        if rows.isEmpty {
-          emptyState("No requests in this session for the selected range.")
-        } else {
-          ForEach(rows) { row in
-            RequestRowView(
-              row: row,
-              isExpanded: expandedRequestId == row.id,
-              costRates: costRates(forModel: row.model),
-              sourceLabel: labelForSource(row.source),
-              sourceColor: colorForSource(row.source),
-              formatCompact: formatChartValue,
-              formatCost: formatCost,
-              onToggleDetails: {
-                expandedRequestId = expandedRequestId == row.id ? nil : row.id
-              },
-              onJumpToSession: nil,
-            )
+        SessionDrilldownScrollShell {
+          if rows.isEmpty {
+            emptyState("No requests in this session for the selected range.")
+          } else {
+            VStack(alignment: .leading, spacing: 8) {
+              ForEach(rows) { row in
+                RequestRowView(
+                  row: row,
+                  isExpanded: expandedRequestId == row.id,
+                  costRates: costRates(forModel: row.model),
+                  sourceLabel: labelForSource(row.source),
+                  sourceColor: colorForSource(row.source),
+                  formatCompact: formatChartValue,
+                  formatCost: formatCost,
+                  onToggleDetails: {
+                    expandedRequestId = expandedRequestId == row.id ? nil : row.id
+                  },
+                  onJumpToSession: nil,
+                )
+              }
+            }
           }
         }
       }
       .padding(14)
-      .hudInsetCard()
+      .frame(width: sessionBubbleWidth, height: sessionBubbleMaxHeight, alignment: .topLeading)
+      .background(alignment: .top) {
+        StatusSessionBubbleShell()
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+      .shadow(color: Color.black.opacity(0.30), radius: 18, y: 9)
+      .transition(.tokMonPanelDrilldown)
     }
   }
 
-  private var primaryMetrics: [AgentMonHudMetric] {
+  private var primaryMetrics: [TokMonHudMetric] {
     let totals = stats.snapshot.summary?.total
     return [
-      AgentMonHudMetric(series: .total, value: formatCompact(totals?.totalTokens), delta: metricDelta(for: .total), isSelected: selectedSeries.key == .total),
-      AgentMonHudMetric(series: .cost, value: formatCost(currentEstimatedCost), delta: metricDelta(for: .cost), isSelected: selectedSeries.key == .cost),
-      AgentMonHudMetric(series: .requests, value: formatCompact(totals?.totalRequests), delta: metricDelta(for: .requests), isSelected: selectedSeries.key == .requests),
-      AgentMonHudMetric(series: .cacheHitRate, value: formatPercent(totals?.cacheHitRate), delta: metricDelta(for: .cacheHitRate), isSelected: selectedSeries.key == .cacheHitRate),
+      TokMonHudMetric(series: .total, value: formatCompact(totals?.totalTokens), delta: metricDelta(for: .total), isSelected: selectedSeries.key == .total),
+      TokMonHudMetric(series: .cost, value: formatCost(currentEstimatedCost), delta: metricDelta(for: .cost), isSelected: selectedSeries.key == .cost),
+      TokMonHudMetric(series: .requests, value: formatCompact(totals?.totalRequests), delta: metricDelta(for: .requests), isSelected: selectedSeries.key == .requests),
+      TokMonHudMetric(series: .cacheHitRate, value: formatPercent(totals?.cacheHitRate), delta: metricDelta(for: .cacheHitRate), isSelected: selectedSeries.key == .cacheHitRate),
     ]
   }
 
-  private var secondaryMetrics: [AgentMonHudMetric] {
+  private var secondaryMetrics: [TokMonHudMetric] {
     let totals = stats.snapshot.summary?.total
     return [
-      AgentMonHudMetric(series: .input, value: formatCompact(totals?.totalInput), delta: metricDelta(for: .input), isSelected: selectedSeries.key == .input),
-      AgentMonHudMetric(series: .output, value: formatCompact(totals?.totalOutput), delta: metricDelta(for: .output), isSelected: selectedSeries.key == .output),
-      AgentMonHudMetric(series: .cache, value: formatCompact(totals?.totalCacheCreation), delta: metricDelta(for: .cache), isSelected: selectedSeries.key == .cache),
-      AgentMonHudMetric(series: .cacheHit, value: formatCompact(totals?.totalCacheRead), delta: metricDelta(for: .cacheHit), isSelected: selectedSeries.key == .cacheHit),
+      TokMonHudMetric(series: .input, value: formatCompact(totals?.totalInput), delta: metricDelta(for: .input), isSelected: selectedSeries.key == .input),
+      TokMonHudMetric(series: .output, value: formatCompact(totals?.totalOutput), delta: metricDelta(for: .output), isSelected: selectedSeries.key == .output),
+      TokMonHudMetric(series: .cache, value: formatCompact(totals?.totalCacheCreation), delta: metricDelta(for: .cache), isSelected: selectedSeries.key == .cache),
+      TokMonHudMetric(series: .cacheHit, value: formatCompact(totals?.totalCacheRead), delta: metricDelta(for: .cacheHit), isSelected: selectedSeries.key == .cacheHit),
     ]
   }
 
-  private var modelRows: [AgentMonHudBreakdownRow] {
+  private var modelRows: [TokMonHudBreakdownRow] {
     Array((stats.snapshot.summary?.byModel ?? [])
       .sorted { modelValue($0, for: selectedSeries.key) > modelValue($1, for: selectedSeries.key) }
       .prefix(4))
       .map { model in
-        AgentMonHudBreakdownRow(
+        TokMonHudBreakdownRow(
           id: model.id,
           title: model.model,
-          subtitle: "\(model.requests) sessions",
           value: formatMetricValue(modelValue(model, for: selectedSeries.key)),
           color: colorForSource(model.source),
         )
       }
   }
 
-  private var sourceRows: [AgentMonHudBreakdownRow] {
+  private var sourceRows: [TokMonHudBreakdownRow] {
     (stats.snapshot.summary?.bySource ?? [])
       .sorted { sourceValue($0, for: selectedSeries.key) > sourceValue($1, for: selectedSeries.key) }
       .map { source in
-        AgentMonHudBreakdownRow(
+        TokMonHudBreakdownRow(
           id: source.id,
           title: labelForSource(source.source),
-          subtitle: "\(source.requests) requests",
           value: formatMetricValue(sourceValue(source, for: selectedSeries.key)),
           color: colorForSource(source.source),
         )
@@ -444,7 +507,7 @@ struct StatusPopoverView: View {
   }
 
   private func toggleTotalTokensExpanded() {
-    withAnimation(.interactiveSpring(response: 0.48, dampingFraction: 0.82, blendDuration: 0.16)) {
+    withAnimation(TokMonMotion.smoothSpring) {
       isTotalTokensExpanded.toggle()
     }
   }
@@ -453,9 +516,66 @@ struct StatusPopoverView: View {
     stats.usesNativeEngine ? TokMonPopoverPage.allCases : [.overview]
   }
 
+  private var statusPanelScrollContentHeight: CGFloat {
+    statusPanelHeight - 104
+  }
+
+  private var selectedSessionBubbleY: CGFloat {
+    guard let selection = stats.snapshot.selectedUsageSession,
+          let rowFrame = sessionRowFrames[selection.id] else {
+      return 42
+    }
+
+    let minimumY: CGFloat = 12
+    let maximumY = max(minimumY, statusPanelHeight - sessionBubbleMaxHeight - 12)
+    return min(max(rowFrame.minY - 6, minimumY), maximumY)
+  }
+
+  private func selectPage(_ page: TokMonPopoverPage) {
+    withAnimation(TokMonMotion.softSnappySpring) {
+      selectedPage = page
+    }
+  }
+
   private func jumpToSession(source: String, sessionId: String) {
-    stats.selectUsageSession(source: source, sessionId: sessionId)
-    selectedPage = .sessions
+    withAnimation(TokMonMotion.gentleSpring) {
+      stats.selectUsageSession(source: source, sessionId: sessionId)
+      selectedPage = .sessions
+    }
+  }
+
+  private func toggleUsageSessionSelection(_ session: TokMonUsageSession) {
+    withAnimation(TokMonMotion.gentleSpring) {
+      if stats.snapshot.selectedUsageSession?.id == session.id {
+        stats.clearSelectedUsageSession()
+      } else {
+        stats.selectUsageSession(source: session.source, sessionId: session.sessionId)
+      }
+    }
+  }
+
+  private func syncSessionBubbleHitSurface() {
+    runtime.statusPanelSessionBubbleY = selectedPage == .sessions && stats.snapshot.selectedUsageSession != nil ? selectedSessionBubbleY : nil
+  }
+
+  private func sessionProjectName(for session: TokMonUsageSession?, fallbackSource: String) -> String {
+    if let projectName = session?.projectName, !projectName.isEmpty {
+      return projectName
+    }
+    if let title = session?.title, let split = splitTokMonSessionTitle(title) {
+      return split.projectName
+    }
+    return labelForSource(fallbackSource)
+  }
+
+  private func sessionFirstPrompt(for session: TokMonUsageSession?, fallbackSessionId: String) -> String {
+    if let firstPrompt = session?.firstPrompt, !firstPrompt.isEmpty {
+      return firstPrompt
+    }
+    if let title = session?.title, let split = splitTokMonSessionTitle(title) {
+      return split.firstPrompt
+    }
+    return fallbackSessionId
   }
 
   private func trendPoints(for seriesKey: TokMonSeriesKey) -> [TokMonTrendPoint] {
@@ -499,6 +619,26 @@ struct StatusPopoverView: View {
       return modelPricing[session.model] ?? .zero
     }
     return aggregateCostRates
+  }
+
+  private func sessionDisplayProjectName(for session: TokMonUsageSession) -> String {
+    if let projectName = session.projectName, !projectName.isEmpty {
+      return projectName
+    }
+    if let title = session.title, let split = splitTokMonSessionTitle(title) {
+      return split.projectName
+    }
+    return labelForSource(session.source)
+  }
+
+  private func sessionDisplayFirstPrompt(for session: TokMonUsageSession) -> String {
+    if let firstPrompt = session.firstPrompt, !firstPrompt.isEmpty {
+      return firstPrompt
+    }
+    if let title = session.title, let split = splitTokMonSessionTitle(title) {
+      return split.firstPrompt
+    }
+    return session.sessionId
   }
 
   private func sourceValue(_ source: TokMonSourceTotals, for seriesKey: TokMonSeriesKey) -> Double {
@@ -553,6 +693,8 @@ struct StatusPopoverView: View {
       "Claude Code"
     case "codex":
       "Codex"
+    case "opencode":
+      "OpenCode"
     default:
       source
     }
@@ -564,6 +706,8 @@ struct StatusPopoverView: View {
       TokMonGlass.warning
     case "codex":
       TokMonGlass.accent
+    case "opencode":
+      TokMonGlass.success
     default:
       TokMonGlass.mutedTint
     }
@@ -575,6 +719,19 @@ struct StatusPopoverView: View {
     }
     let opacity = 0.30 + 0.55 * (value / maxValue)
     return TokMonGlass.success.opacity(opacity)
+  }
+
+  private func splitTokMonSessionTitle(_ title: String) -> (projectName: String, firstPrompt: String)? {
+    let separator = " - "
+    guard let range = title.range(of: separator) else {
+      return nil
+    }
+    let projectName = String(title[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let firstPrompt = String(title[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !projectName.isEmpty, !firstPrompt.isEmpty else {
+      return nil
+    }
+    return (projectName, firstPrompt)
   }
 }
 
@@ -597,7 +754,7 @@ private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
   }
 }
 
-private struct AgentMonHudMetric: Identifiable {
+private struct TokMonHudMetric: Identifiable {
   let series: TokMonSeriesPresentation
   let value: String
   let delta: String
@@ -606,12 +763,23 @@ private struct AgentMonHudMetric: Identifiable {
   var id: String { series.key.rawValue }
 }
 
-private struct AgentMonHudBreakdownRow: Identifiable {
+private struct TokMonHudBreakdownRow: Identifiable {
   let id: String
   let title: String
-  let subtitle: String
   let value: String
   let color: Color
+}
+
+private enum StatusPopoverCoordinateSpace {
+  static let main = "StatusPopoverMain"
+}
+
+private struct SessionRowFramePreferenceKey: PreferenceKey {
+  static let defaultValue: [String: CGRect] = [:]
+
+  static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+  }
 }
 
 private struct StatusPanelShell: View {
@@ -636,11 +804,105 @@ private struct StatusPanelShell: View {
         shellShape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
       }
       .shadow(color: Color.black.opacity(0.24), radius: 22, y: 10)
-      .allowsHitTesting(false)
+      .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
   }
 
   private var shellShape: RoundedRectangle {
     RoundedRectangle(cornerRadius: 30, style: .continuous)
+  }
+}
+
+private struct StatusSessionBubbleShell: View {
+  var body: some View {
+    shellShape
+      .fill(.regularMaterial)
+      .overlay { shellShape.fill(Color.black.opacity(0.34)) }
+      .overlay {
+        shellShape.fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(0.10),
+              Color.white.opacity(0.025),
+              Color.black.opacity(0.12),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing,
+          )
+        )
+      }
+      .overlay {
+        shellShape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+      }
+      .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+  }
+
+  private var shellShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: 24, style: .continuous)
+  }
+}
+
+private struct StatusPanelContentMask: Shape {
+  func path(in rect: CGRect) -> Path {
+    RoundedRectangle(cornerRadius: 24, style: .continuous)
+      .path(in: rect.insetBy(dx: 7, dy: 7))
+  }
+}
+
+private struct SessionDrilldownScrollShell<Content: View>: View {
+  @ViewBuilder let content: Content
+
+  init(@ViewBuilder content: () -> Content) {
+    self.content = content()
+  }
+
+  var body: some View {
+    ScrollView(showsIndicators: true) {
+      content
+        .frame(
+          maxWidth: sessionBubbleWidth - 28 - sessionBubbleScrollIndicatorReserve,
+          minHeight: sessionBubbleScrollHeight,
+          alignment: .topLeading,
+        )
+        .background(Color.black.opacity(0.001))
+        .contentShape(Rectangle())
+    }
+    .frame(maxWidth: .infinity, alignment: .topLeading)
+    .frame(height: sessionBubbleScrollHeight, alignment: .topLeading)
+    .background(Color.black.opacity(0.001))
+    .contentShape(Rectangle())
+  }
+}
+
+private struct SessionDrilldownHeader: View {
+  let projectName: String
+  let firstPrompt: String
+  let onClose: () -> Void
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(projectName)
+          .font(.system(size: 15, weight: .heavy, design: .rounded))
+          .lineLimit(2)
+          .minimumScaleFactor(0.88)
+        Text(firstPrompt)
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(2)
+          .truncationMode(.tail)
+      }
+      Spacer()
+      Button(action: onClose) {
+        Image(systemName: "xmark.circle.fill")
+          .font(.system(size: 15, weight: .semibold))
+          .frame(width: 24, height: 24)
+          .contentShape(Circle())
+      }
+      .buttonStyle(.plain)
+      .focusable(false)
+      .foregroundStyle(TokMonGlass.mutedTint)
+      .help("Close session details")
+    }
   }
 }
 
@@ -655,25 +917,26 @@ private struct HeaderIconButton: View {
         .font(.system(size: 14, weight: .bold))
         .foregroundStyle(TokMonGlass.neutralTint)
         .frame(width: 28, height: 28)
+        .background {
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.white.opacity(0.07))
+            .overlay {
+              RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
     .buttonStyle(.plain)
     .focusable(false)
     .help(help)
-    .background {
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(Color.white.opacity(0.07))
-        .overlay {
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-        }
-    }
   }
 }
 
 private struct SystemMenuPageRail: View {
   let pages: [TokMonPopoverPage]
   let selectedPage: TokMonPopoverPage
+  let selectionNamespace: Namespace.ID
   let onSelect: (TokMonPopoverPage) -> Void
 
   var body: some View {
@@ -692,12 +955,15 @@ private struct SystemMenuPageRail: View {
         .focusable(false)
         .foregroundStyle(selectedPage == page ? TokMonGlass.neutralTint : TokMonGlass.mutedTint)
         .background {
-          RoundedRectangle(cornerRadius: 11, style: .continuous)
-            .fill(selectedPage == page ? TokMonGlass.accent.opacity(0.18) : Color.clear)
-            .overlay {
-              RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(selectedPage == page ? TokMonGlass.accent.opacity(0.26) : Color.clear, lineWidth: 1)
-            }
+          if selectedPage == page {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+              .fill(TokMonGlass.accent.opacity(0.18))
+              .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                  .strokeBorder(TokMonGlass.accent.opacity(0.26), lineWidth: 1)
+              }
+              .matchedGeometryEffect(id: "pageRailSelection", in: selectionNamespace)
+          }
         }
       }
     }
@@ -741,9 +1007,9 @@ private struct RangePresetControl: View {
   }
 }
 
-private struct AgentMonHudMetricGrid: View {
-  let metrics: [AgentMonHudMetric]
-  let tokenDetails: [AgentMonHudMetric]
+private struct TokMonHudMetricGrid: View {
+  let metrics: [TokMonHudMetric]
+  let tokenDetails: [TokMonHudMetric]
   let isTotalExpanded: Bool
   let onToggleTotalExpanded: () -> Void
   let onSelect: (TokMonSeriesPresentation) -> Void
@@ -767,10 +1033,7 @@ private struct AgentMonHudMetricGrid: View {
               CompactMetricTile(metric: metric, hideDelta: true, onSelect: onSelect)
             }
           }
-          .transition(.asymmetric(
-            insertion: .move(edge: .top).combined(with: .opacity),
-            removal: .move(edge: .top).combined(with: .opacity),
-          ))
+          .transition(.tokMonSupportingMetrics)
         }
       } else {
         LazyVGrid(
@@ -792,17 +1055,15 @@ private struct AgentMonHudMetricGrid: View {
             }
           }
         }
-        .transition(.asymmetric(
-          insertion: .scale(scale: 0.98).combined(with: .opacity),
-          removal: .scale(scale: 0.98).combined(with: .opacity),
-        ))
+        .transition(.tokMonMetricGrid)
       }
     }
+    .animation(TokMonMotion.smoothSpring, value: isTotalExpanded)
   }
 }
 
 private struct PrimaryMetricTile: View {
-  let metric: AgentMonHudMetric
+  let metric: TokMonHudMetric
   var hideDelta = false
   let onSelect: (TokMonSeriesPresentation) -> Void
 
@@ -837,8 +1098,8 @@ private struct PrimaryMetricTile: View {
 }
 
 private struct TotalTokensMetricTile: View {
-  let metric: AgentMonHudMetric
-  let tokenDetails: [AgentMonHudMetric]
+  let metric: TokMonHudMetric
+  let tokenDetails: [TokMonHudMetric]
   let isExpanded: Bool
   let onToggleExpanded: () -> Void
   let onSelect: (TokMonSeriesPresentation) -> Void
@@ -878,10 +1139,7 @@ private struct TotalTokensMetricTile: View {
           }
         }
         .frame(width: 152)
-        .transition(.asymmetric(
-          insertion: .move(edge: .trailing).combined(with: .opacity),
-          removal: .move(edge: .trailing).combined(with: .opacity),
-        ))
+        .transition(.tokMonTokenDetailGrid)
       }
 
       Button {
@@ -891,15 +1149,15 @@ private struct TotalTokensMetricTile: View {
           .font(.system(size: 11, weight: .black))
           .foregroundStyle(TokMonGlass.neutralTint)
           .frame(width: 24, height: 24)
+          .background {
+            Circle()
+              .fill(Color.white.opacity(0.075))
+              .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
+          }
           .contentShape(Circle())
       }
       .buttonStyle(.plain)
       .focusable(false)
-      .background {
-        Circle()
-          .fill(Color.white.opacity(0.075))
-          .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
-      }
       .help(isExpanded ? "Hide token details" : "Show token details")
     }
     .padding(9)
@@ -910,7 +1168,7 @@ private struct TotalTokensMetricTile: View {
 }
 
 private struct TokenDetailMiniMetric: View {
-  let metric: AgentMonHudMetric
+  let metric: TokMonHudMetric
 
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
@@ -938,7 +1196,7 @@ private struct TokenDetailMiniMetric: View {
 }
 
 private struct CompactMetricTile: View {
-  let metric: AgentMonHudMetric
+  let metric: TokMonHudMetric
   let hideDelta: Bool
   let onSelect: (TokMonSeriesPresentation) -> Void
 
@@ -1011,7 +1269,7 @@ private struct MetricValueText: View {
   }
 }
 
-private struct AgentMonHudTrendCard: View {
+private struct TokMonHudTrendCard: View {
   let title: String
   let valueLabel: String
   let points: [TokMonTrendPoint]
@@ -1019,7 +1277,7 @@ private struct AgentMonHudTrendCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      AgentMonHudSectionHeader(title, trailing: valueLabel)
+      TokMonHudSectionHeader(title, trailing: valueLabel)
       TrendLineChart(points: points, color: color)
         .frame(height: 60)
     }
@@ -1028,14 +1286,15 @@ private struct AgentMonHudTrendCard: View {
   }
 }
 
-private struct AgentMonHudActivityCard: View {
+private struct TokMonHudActivityCard: View {
   let days: [TokMonHeatmapDay]
   let selectedSeries: TokMonSeriesKey
+  let costRates: TokMonCostRates
   let colorForValue: (Double, Double) -> Color
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      AgentMonHudSectionHeader("Activity", trailing: days.isEmpty ? nil : "\(days.count)D")
+      TokMonHudSectionHeader("Activity", trailing: days.isEmpty ? nil : "\(days.count)D")
 
       if days.isEmpty {
         Text("No recent activity.")
@@ -1043,7 +1302,12 @@ private struct AgentMonHudActivityCard: View {
           .foregroundStyle(TokMonGlass.mutedTint)
           .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
       } else {
-        RecentActivityGrid(days: days, selectedSeries: selectedSeries, colorForValue: colorForValue)
+        RecentActivityGrid(
+          days: days,
+          selectedSeries: selectedSeries,
+          costRates: costRates,
+          colorForValue: colorForValue,
+        )
       }
     }
     .padding(10)
@@ -1051,14 +1315,14 @@ private struct AgentMonHudActivityCard: View {
   }
 }
 
-private struct AgentMonHudBreakdownCard: View {
+private struct TokMonHudBreakdownCard: View {
   let title: String
   let trailingTitle: String
-  let rows: [AgentMonHudBreakdownRow]
+  let rows: [TokMonHudBreakdownRow]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      AgentMonHudSectionHeader(title, trailing: trailingTitle)
+      TokMonHudSectionHeader(title, trailing: trailingTitle)
       if rows.isEmpty {
         Text("No usage in the selected range.")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -1077,11 +1341,8 @@ private struct AgentMonHudBreakdownCard: View {
                   .foregroundStyle(TokMonGlass.neutralTint)
                   .lineLimit(1)
                   .truncationMode(.middle)
-                Text(row.subtitle)
-                  .font(.system(size: 11, weight: .bold, design: .rounded))
-                  .foregroundStyle(TokMonGlass.mutedTint)
-                  .lineLimit(1)
               }
+              .frame(maxWidth: .infinity, alignment: .leading)
               Spacer(minLength: 12)
               Text(row.value)
                 .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
@@ -1101,7 +1362,7 @@ private struct AgentMonHudBreakdownCard: View {
   }
 }
 
-private struct AgentMonHudSectionHeader: View {
+private struct TokMonHudSectionHeader: View {
   let title: String
   let trailing: String?
 
@@ -1129,16 +1390,18 @@ private struct AgentMonHudSectionHeader: View {
 private struct RecentActivityGrid: View {
   let days: [TokMonHeatmapDay]
   let selectedSeries: TokMonSeriesKey
+  let costRates: TokMonCostRates
   let colorForValue: (Double, Double) -> Color
 
   var body: some View {
     let layout = TokMonHeatmapLayout(days: days)
-    let maxValue = days.map { dayValue($0, series: selectedSeries) }.max() ?? 0
+    let maxValue = days.map { TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value }.max() ?? 0
     GeometryReader { proxy in
+      let heatmapLabelWidth: CGFloat = 31
       let metrics = TokMonHeatmapLayout.metrics(
         availableWidth: proxy.size.width,
         weekCount: layout.weeks.count,
-        labelWidth: 30,
+        labelWidth: heatmapLabelWidth,
         minimumCellSize: 6,
         maximumCellSize: 14,
       )
@@ -1152,10 +1415,18 @@ private struct RecentActivityGrid: View {
               VStack(spacing: metrics.gap) {
                 ForEach(0..<7, id: \.self) { weekdayIndex in
                   let day = week.cells[weekdayIndex]
-                  RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                    .fill(day.map { colorForValue(dayValue($0, series: selectedSeries), maxValue) } ?? Color.white.opacity(0.045))
-                    .frame(width: cellSize, height: cellSize)
-                    .help(day.map { "\($0.day): \($0.requests) requests" } ?? "No activity")
+                  ZStack {
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                      .fill(day.map { colorForValue(
+                        TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value,
+                        maxValue,
+                      ) } ?? Color.white.opacity(0.045))
+                  }
+                  .frame(width: cellSize, height: cellSize)
+                  .contentShape(Rectangle())
+                  .help(day.map {
+                    TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).helpText
+                  } ?? "No activity")
                 }
               }
             }
@@ -1165,29 +1436,6 @@ private struct RecentActivityGrid: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(height: 118)
-  }
-
-  private func dayValue(_ day: TokMonHeatmapDay, series: TokMonSeriesKey) -> Double {
-    switch series {
-    case .total:
-      return Double(day.inputTokens + day.outputTokens + day.cacheRead)
-    case .requests:
-      return Double(day.requests)
-    case .input:
-      return Double(day.inputTokens)
-    case .output:
-      return Double(day.outputTokens)
-    case .cache:
-      return Double(day.cacheCreation)
-    case .cacheHit:
-      return Double(day.cacheRead)
-    case .cacheHitRate:
-      let denominator = day.inputTokens + day.cacheRead
-      guard denominator > 0 else { return 0 }
-      return Double(day.cacheRead) / Double(denominator)
-    case .cost:
-      return Double(day.inputTokens + day.outputTokens + day.cacheCreation + day.cacheRead)
-    }
   }
 }
 
@@ -1500,8 +1748,8 @@ private struct RequestRowView: View {
         Text(sourceLabel)
           .font(.system(size: 12, weight: .bold, design: .rounded))
           .foregroundStyle(sourceColor)
-        Text(row.sessionId)
-          .font(.system(size: 12, weight: .medium, design: .monospaced))
+        Text(sessionDisplayLabel)
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
           .foregroundStyle(TokMonGlass.mutedTint)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -1512,19 +1760,25 @@ private struct RequestRowView: View {
             TokenChipData(label: "In", value: formatCompact(Double(row.inputTokens))),
             TokenChipData(label: "Out", value: formatCompact(Double(row.outputTokens))),
             TokenChipData(label: "Cache", value: formatCompact(Double(row.cacheCreation + row.cacheRead))),
-            TokenChipData(label: "$", value: formatCost(cost)),
+            TokenChipData(label: "Cost", value: formatCost(cost)),
           ],
         )
         VStack(alignment: .trailing, spacing: 5) {
-          Button(isExpanded ? "Hide" : "Details") {
+          Button {
             onToggleDetails()
+          } label: {
+            Text(isExpanded ? "Hide" : "Details")
+              .requestActionButton()
           }
           .buttonStyle(.plain)
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .focusable(false)
           if let onJumpToSession {
-            Button("Jump", action: onJumpToSession)
-              .buttonStyle(.plain)
-              .foregroundStyle(TokMonGlass.mutedTint)
+            Button(action: onJumpToSession) {
+              Text("Jump")
+                .requestActionButton()
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
           }
         }
         .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -1532,7 +1786,7 @@ private struct RequestRowView: View {
       if isExpanded {
         VStack(alignment: .leading, spacing: 3) {
           DetailLine(label: "Created", value: row.createdAt)
-          DetailLine(label: "Session", value: row.sessionId)
+          DetailLine(label: "Session", value: sessionDisplayLabel)
           DetailLine(label: "Cache Created", value: formatCompact(Double(row.cacheCreation)))
           DetailLine(label: "Cache Read", value: formatCompact(Double(row.cacheRead)))
           DetailLine(label: "Reasoning", value: formatCompact(Double(row.reasoningTokens)))
@@ -1550,6 +1804,10 @@ private struct RequestRowView: View {
       cacheCreation: row.cacheCreation,
       cacheRead: row.cacheRead,
     )
+  }
+
+  private var sessionDisplayLabel: String {
+    row.sessionTitle ?? row.sessionId
   }
 }
 
@@ -1581,7 +1839,8 @@ private struct SessionRowView: View {
   let session: TokMonUsageSession
   let isSelected: Bool
   let costRates: TokMonCostRates
-  let sourceLabel: String
+  let projectName: String
+  let firstPrompt: String
   let sourceColor: Color
   let formatCompact: (Double?) -> String
   let formatCost: (Double?) -> String
@@ -1594,14 +1853,15 @@ private struct SessionRowView: View {
           .fill(sourceColor)
           .frame(width: 8, height: 8)
         VStack(alignment: .leading, spacing: 4) {
-          Text(session.title ?? session.sessionId)
+          Text(projectName)
             .font(.system(size: 14, weight: .heavy, design: .rounded))
             .lineLimit(1)
             .truncationMode(.middle)
-          Text("\(sourceLabel) · \(session.model) · \(session.requests) req")
-            .font(.system(size: 12, weight: .bold, design: .rounded))
+          Text(firstPrompt)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
             .foregroundStyle(TokMonGlass.mutedTint)
-            .lineLimit(1)
+            .lineLimit(2)
+            .truncationMode(.tail)
         }
         Spacer()
         VStack(alignment: .trailing, spacing: 4) {
@@ -1614,6 +1874,7 @@ private struct SessionRowView: View {
       }
       .padding(14)
       .hudInsetCard(isSelected: isSelected)
+      .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
     .buttonStyle(.plain)
     .focusable(false)
@@ -1659,6 +1920,7 @@ private struct TokenChip: View {
     }
     .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
     .lineLimit(1)
+    .frame(height: 22, alignment: .leading)
   }
 }
 
@@ -1726,6 +1988,36 @@ private extension View {
 
   func hudInsetCard(isSelected: Bool = false) -> some View {
     modifier(HudInsetCardModifier(isSelected: isSelected))
+  }
+
+  func requestActionButton() -> some View {
+    foregroundStyle(TokMonGlass.neutralTint.opacity(0.86))
+      .padding(.horizontal, 12)
+      .frame(minWidth: 76, minHeight: 26)
+      .background {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(Color.white.opacity(0.065))
+          .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+          }
+      }
+      .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+  }
+
+  func sessionDrilldownActionButton() -> some View {
+    foregroundStyle(TokMonGlass.neutralTint.opacity(0.90))
+      .padding(.horizontal, 10)
+      .frame(minWidth: 76, minHeight: 24)
+      .background {
+        Capsule()
+          .fill(Color.white.opacity(0.065))
+          .overlay {
+            Capsule()
+              .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+          }
+      }
+      .contentShape(Capsule())
   }
 }
 

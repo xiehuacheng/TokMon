@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-  name: "AgentMonMac",
+  name: "TokMonMac",
   platforms: [
     .macOS(.v14),
   ],
   products: [
-    .executable(name: "AgentMon", targets: ["AgentMonApp"]),
+    .executable(name: "TokMon", targets: ["TokMonApp"]),
   ],
   targets: [
     .executableTarget(
-      name: "AgentMonApp",
-      path: "Sources/AgentMonApp",
+      name: "TokMonApp",
+      path: "Sources/TokMonApp",
       linkerSettings: [
         .linkedLibrary("sqlite3"),
       ],
     ),
     .testTarget(
-      name: "AgentMonAppTests",
-      dependencies: ["AgentMonApp"],
-      path: "Tests/AgentMonAppTests",
+      name: "TokMonAppTests",
+      dependencies: ["TokMonApp"],
+      path: "Tests/TokMonAppTests",
     ),
   ],
 )

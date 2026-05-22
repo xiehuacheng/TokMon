@@ -99,6 +99,9 @@ final class TokMonConfigStore {
       rangeMode: "round",
       interval: preset.interval,
       activeSeries: stringValue(object["activeSeries"]) ?? defaults.activeSeries,
+      menuBarDisplayMode: TokMonMenuBarDisplayMode(
+        rawValueOrDefault: stringValue(object["menuBarDisplayMode"]),
+      ),
       refreshRate: intValue(object["refreshRate"]) ?? defaults.refreshRate,
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),

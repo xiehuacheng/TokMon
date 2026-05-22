@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func queryStoreAggregatesSummaryTrendRecordsAndSessions() throws {
   let dataDir = try makeTokMonTempDir()
@@ -40,8 +40,52 @@ import Testing
   #expect(trend.first { $0.bucket == "2026-05-14 09:00" }?.value(for: .total, costRates: .zero) == 47)
   #expect(records.total == 3)
   #expect(records.rows.first?.sessionId == "c1")
+  #expect(records.rows.first?.sessionTitle == nil)
   #expect(sessions.first?.sessionId == "c1")
   #expect(sessions.first { $0.sessionId == "s1" }?.title == "tmp - Build native TokMon")
+  #expect(sessions.first { $0.sessionId == "s1" }?.projectName == "tmp")
+  #expect(sessions.first { $0.sessionId == "s1" }?.firstPrompt == "Build native TokMon")
+}
+
+@Test func queryStoreDoesNotSurfaceEnvironmentContextSessionMetadata() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "opencode",
+    sessionId: "bad-context",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-20T01:20:10.000Z",
+  ))
+  let environmentContext = "<environment_context>\n  <cwd>/tmp/ContextWork</cwd>\n</environment_context>"
+  try db.upsertSessionMetadata(TokMonSessionMetadata(
+    id: "bad-context",
+    source: "opencode",
+    title: "ContextWork - \(environmentContext)",
+    firstPrompt: environmentContext,
+    lastPrompt: environmentContext,
+    model: "gpt-test",
+    startedAt: "2026-05-20T01:20:00.000Z",
+    lastActiveAt: "2026-05-20T01:20:11.000Z",
+    filePath: "/tmp/opencode.db",
+    projectPath: "/tmp/ContextWork",
+  ))
+
+  let store = TokMonQueryStore(database: db)
+  let records = try store.records(
+    filter: TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil),
+    page: 0,
+    limit: 10,
+  )
+  let sessions = try store.sessions(limit: 10)
+
+  #expect(records.rows.first?.sessionTitle == nil)
+  #expect(sessions.first?.title == nil)
+  #expect(sessions.first?.firstPrompt == nil)
 }
 
 @Test func queryStoreSummaryCanUsePrecomputedRollupsForClosedDays() throws {

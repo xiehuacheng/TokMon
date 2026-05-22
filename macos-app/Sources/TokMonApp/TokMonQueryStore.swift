@@ -189,6 +189,7 @@ final class TokMonQueryStore {
     let rows = try requiredDatabase.queryRows("""
       SELECT u.source,
              u.session_id,
+             COALESCE(metadata_exact.title, metadata_file.title) as session_title,
              u.model,
              u.input_tokens,
              u.output_tokens,
@@ -197,6 +198,13 @@ final class TokMonQueryStore {
              u.reasoning_tokens,
              datetime(u.created_at, 'localtime') as created_at
       FROM usage_records u
+      LEFT JOIN tokmon_session_metadata metadata_exact
+        ON metadata_exact.source = u.source
+        AND metadata_exact.id = u.session_id
+      LEFT JOIN tokmon_session_metadata metadata_file
+        ON metadata_file.source = u.source
+        AND metadata_exact.id IS NULL
+        AND substr(metadata_file.file_path, -length(u.session_id || '.jsonl')) = u.session_id || '.jsonl'
       \(scoped.whereSQL)
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
@@ -204,13 +212,14 @@ final class TokMonQueryStore {
       TokMonRecordRow(
         source: row.string(0),
         sessionId: row.string(1),
-        model: row.string(2),
-        inputTokens: row.int(3),
-        outputTokens: row.int(4),
-        cacheCreation: row.int(5),
-        cacheRead: row.int(6),
-        reasoningTokens: row.int(7),
-        createdAt: row.string(8),
+        sessionTitle: displaySessionTitle(row.string(2)),
+        model: row.string(3),
+        inputTokens: row.int(4),
+        outputTokens: row.int(5),
+        cacheCreation: row.int(6),
+        cacheRead: row.int(7),
+        reasoningTokens: row.int(8),
+        createdAt: row.string(9),
       )
     }
 
@@ -232,6 +241,7 @@ final class TokMonQueryStore {
     return try requiredDatabase.queryRows("""
       SELECT u.source,
              u.session_id,
+             COALESCE(metadata_exact.title, metadata_file.title) as session_title,
              u.model,
              u.input_tokens,
              u.output_tokens,
@@ -240,6 +250,13 @@ final class TokMonQueryStore {
              u.reasoning_tokens,
              datetime(u.created_at, 'localtime') as created_at
       FROM usage_records u
+      LEFT JOIN tokmon_session_metadata metadata_exact
+        ON metadata_exact.source = u.source
+        AND metadata_exact.id = u.session_id
+      LEFT JOIN tokmon_session_metadata metadata_file
+        ON metadata_file.source = u.source
+        AND metadata_exact.id IS NULL
+        AND substr(metadata_file.file_path, -length(u.session_id || '.jsonl')) = u.session_id || '.jsonl'
       \(scoped.whereSQL)
       AND u.source = ?
       AND u.session_id = ?
@@ -249,13 +266,14 @@ final class TokMonQueryStore {
       TokMonRecordRow(
         source: row.string(0),
         sessionId: row.string(1),
-        model: row.string(2),
-        inputTokens: row.int(3),
-        outputTokens: row.int(4),
-        cacheCreation: row.int(5),
-        cacheRead: row.int(6),
-        reasoningTokens: row.int(7),
-        createdAt: row.string(8),
+        sessionTitle: displaySessionTitle(row.string(2)),
+        model: row.string(3),
+        inputTokens: row.int(4),
+        outputTokens: row.int(5),
+        cacheCreation: row.int(6),
+        cacheRead: row.int(7),
+        reasoningTokens: row.int(8),
+        createdAt: row.string(9),
       )
     }
   }
@@ -311,15 +329,22 @@ final class TokMonQueryStore {
       ORDER BY grouped.last_at DESC
       LIMIT ?
     """, params: rowParams) { row in
-      TokMonUsageSession(
+      let fallbackTitle = displaySessionTitle(row.string(2))
+      let firstPrompt = displayPrompt(row.string(3))
+      let projectName = sessionProjectName(
+        projectPath: row.string(4).isEmpty ? nil : row.string(4),
+        filePath: row.string(5).isEmpty ? nil : row.string(5),
+      )
+      return TokMonUsageSession(
         sessionId: row.string(0),
         source: row.string(1),
         title: sessionTitle(
-          fallbackTitle: row.string(2).isEmpty ? nil : row.string(2),
-          firstPrompt: row.string(3).isEmpty ? nil : row.string(3),
-          projectPath: row.string(4).isEmpty ? nil : row.string(4),
-          filePath: row.string(5).isEmpty ? nil : row.string(5),
+          fallbackTitle: fallbackTitle,
+          firstPrompt: firstPrompt,
+          projectName: projectName,
         ),
+        projectName: projectName,
+        firstPrompt: firstPrompt,
         model: row.string(6),
         requests: row.int(7),
         inputTokens: row.int(8),
@@ -699,20 +724,41 @@ final class TokMonQueryStore {
   private func sessionTitle(
     fallbackTitle: String?,
     firstPrompt: String?,
-    projectPath: String?,
-    filePath: String?,
+    projectName: String?,
   ) -> String? {
     guard let firstPrompt, !firstPrompt.isEmpty else {
       return fallbackTitle
     }
 
-    let projectName = projectPath.map { URL(fileURLWithPath: $0).lastPathComponent }
-      ?? filePath.map(projectNameFromFilePath)
-      ?? ""
+    let projectName = projectName ?? ""
     guard !projectName.isEmpty else {
       return firstPrompt
     }
     return "\(projectName) - \(firstPrompt)"
+  }
+
+  private func displaySessionTitle(_ value: String) -> String? {
+    guard let title = displayPrompt(value) else {
+      return nil
+    }
+    return title.contains("<environment_context>") ? nil : title
+  }
+
+  private func displayPrompt(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed.hasPrefix("<environment_context>") ? nil : trimmed
+  }
+
+  private func sessionProjectName(projectPath: String?, filePath: String?) -> String? {
+    let projectName = projectPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+      ?? filePath.map(projectNameFromFilePath)
+    guard let projectName, !projectName.isEmpty else {
+      return nil
+    }
+    return projectName
   }
 
   private func projectNameFromFilePath(_ filePath: String) -> String {

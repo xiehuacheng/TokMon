@@ -13,6 +13,7 @@ struct TokMonConfig: Codable, Equatable {
     sources: [
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
       "codex": TokMonSourceConfig(path: "~/.codex/sessions"),
+      "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
     ],
   )
 }
@@ -49,6 +50,32 @@ struct TokMonCostRates: Codable, Equatable {
   }
 }
 
+enum TokMonMenuBarDisplayMode: String, Codable, CaseIterable, Identifiable {
+  case iconOnly
+  case totalTokens
+  case estimatedCost
+  case requests
+
+  var id: String { rawValue }
+
+  var displayLabel: String {
+    switch self {
+    case .iconOnly:
+      "Icon Only"
+    case .totalTokens:
+      "Total Tokens"
+    case .estimatedCost:
+      "Est. Cost"
+    case .requests:
+      "Requests"
+    }
+  }
+
+  init(rawValueOrDefault value: String?) {
+    self = value.flatMap(Self.init(rawValue:)) ?? .iconOnly
+  }
+}
+
 struct TokMonUIState: Codable, Equatable {
   var source: String
   var from: String
@@ -60,6 +87,7 @@ struct TokMonUIState: Codable, Equatable {
   var rangeMode: String
   var interval: String
   var activeSeries: String
+  var menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly
   var refreshRate: Int
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]
@@ -75,6 +103,7 @@ struct TokMonUIState: Codable, Equatable {
     rangeMode: "round",
     interval: "day",
     activeSeries: "total",
+    menuBarDisplayMode: .iconOnly,
     refreshRate: 3000,
     costRates: .zero,
     modelPricing: [:],
@@ -452,6 +481,88 @@ struct TokMonHeatmapDay: Equatable, Identifiable {
   var id: String { day }
 }
 
+struct TokMonHeatmapValueDescriptor: Equatable {
+  let day: TokMonHeatmapDay
+  let series: TokMonSeriesKey
+  let costRates: TokMonCostRates
+
+  var label: String {
+    switch series {
+    case .total:
+      "Total Tokens"
+    case .requests:
+      "Requests"
+    case .input:
+      "Input"
+    case .output:
+      "Output"
+    case .cache:
+      "Cache Created"
+    case .cacheHit:
+      "Cache Hit"
+    case .cacheHitRate:
+      "Hit Rate"
+    case .cost:
+      "Cost"
+    }
+  }
+
+  var value: Double {
+    switch series {
+    case .total:
+      Double(day.inputTokens + day.outputTokens + day.cacheRead)
+    case .requests:
+      Double(day.requests)
+    case .input:
+      Double(day.inputTokens)
+    case .output:
+      Double(day.outputTokens)
+    case .cache:
+      Double(day.cacheCreation)
+    case .cacheHit:
+      Double(day.cacheRead)
+    case .cacheHitRate:
+      cacheHitRatio(inputTokens: day.inputTokens, cacheRead: day.cacheRead)
+    case .cost:
+      costRates.cost(
+        inputTokens: day.inputTokens,
+        outputTokens: day.outputTokens,
+        cacheCreation: day.cacheCreation,
+        cacheRead: day.cacheRead,
+      )
+    }
+  }
+
+  var formattedValue: String {
+    switch series {
+    case .cacheHitRate:
+      return String(format: "%.1f%%", value * 100)
+    case .cost:
+      return formatCost(value)
+    default:
+      return formatCompact(value)
+    }
+  }
+
+  var helpText: String {
+    "\(day.day): \(formattedValue) \(label)"
+  }
+
+  private func formatCompact(_ value: Double) -> String {
+    if value >= 1_000_000_000 { return String(format: "%.1fB", value / 1_000_000_000) }
+    if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
+    if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
+    return String(Int(value.rounded()))
+  }
+
+  private func formatCost(_ value: Double) -> String {
+    if value >= 1000 { return "$" + String(format: "%.1fK", value / 1000) }
+    if value >= 1 { return "$" + String(format: "%.2f", value) }
+    if value >= 0.01 { return "$" + String(format: "%.3f", value) }
+    return "$" + String(format: "%.4f", value)
+  }
+}
+
 struct TokMonModelOption: Equatable, Identifiable {
   var model: String
   var lastUsed: String
@@ -462,6 +573,7 @@ struct TokMonRecordRow: Equatable, Identifiable {
   var id: String { "\(source):\(sessionId):\(createdAt):\(inputTokens):\(outputTokens)" }
   var source: String
   var sessionId: String
+  var sessionTitle: String?
   var model: String
   var inputTokens: Int
   var outputTokens: Int
@@ -483,6 +595,8 @@ struct TokMonUsageSession: Equatable, Identifiable {
   var sessionId: String
   var source: String
   var title: String?
+  var projectName: String?
+  var firstPrompt: String?
   var model: String
   var requests: Int
   var inputTokens: Int
@@ -572,6 +686,7 @@ struct TokMonDashboardState: Decodable {
   let rangeDays: Int?
   let refreshRate: Int
   let activeSeries: String
+  let menuBarDisplayMode: TokMonMenuBarDisplayMode
   let estimatedCost: Double
   let costRates: TokMonCostRates
   let modelPricing: [String: TokMonCostRates]
@@ -589,6 +704,7 @@ struct TokMonDashboardState: Decodable {
     case rangeDays
     case refreshRate
     case activeSeries
+    case menuBarDisplayMode
     case estimatedCost
     case costRates
     case modelPricing
@@ -607,6 +723,7 @@ struct TokMonDashboardState: Decodable {
     rangeDays: Int?,
     refreshRate: Int,
     activeSeries: String,
+    menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly,
     estimatedCost: Double,
     costRates: TokMonCostRates,
     modelPricing: [String: TokMonCostRates] = [:],
@@ -623,6 +740,7 @@ struct TokMonDashboardState: Decodable {
     self.rangeDays = rangeDays
     self.refreshRate = refreshRate
     self.activeSeries = activeSeries
+    self.menuBarDisplayMode = menuBarDisplayMode
     self.estimatedCost = estimatedCost
     self.costRates = costRates
     self.modelPricing = modelPricing
@@ -642,6 +760,10 @@ struct TokMonDashboardState: Decodable {
     rangeDays = try container.decodeIfPresent(Int.self, forKey: .rangeDays)
     refreshRate = try container.decodeIfPresent(Int.self, forKey: .refreshRate) ?? 3000
     activeSeries = try container.decodeIfPresent(String.self, forKey: .activeSeries) ?? "total"
+    menuBarDisplayMode = try container.decodeIfPresent(
+      TokMonMenuBarDisplayMode.self,
+      forKey: .menuBarDisplayMode,
+    ) ?? .iconOnly
     estimatedCost = try container.decodeIfPresent(Double.self, forKey: .estimatedCost) ?? 0
     costRates = try container.decodeIfPresent(TokMonCostRates.self, forKey: .costRates) ?? .zero
     modelPricing = try container.decodeIfPresent([String: TokMonCostRates].self, forKey: .modelPricing) ?? [:]
@@ -656,6 +778,8 @@ struct TokMonDashboardState: Decodable {
       "Claude Code"
     case "codex":
       "Codex"
+    case "opencode":
+      "OpenCode"
     default:
       source
     }

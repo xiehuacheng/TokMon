@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func nativeTokMonRuntimeTypesAreAvailable() {
   _ = TokMonConfig.self

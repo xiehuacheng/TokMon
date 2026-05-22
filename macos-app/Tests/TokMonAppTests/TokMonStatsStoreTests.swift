@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @MainActor
 @Test func statsStoreRefreshesFromNativeTokMonEngine() async throws {
@@ -35,7 +35,7 @@ import Testing
     createdAt: "2026-05-14T01:10:00.000Z",
   ))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -82,7 +82,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "today-1", model: "gpt-test", inputTokens: 40, outputTokens: 4, cacheCreation: 0, cacheRead: 8, reasoningTokens: 0, createdAt: "2026-05-14T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "today-2", model: "gpt-test", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:20:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -103,8 +103,8 @@ import Testing
     database: try TokMonDatabase(appDataDir: dataDir),
   )
 
-  let nativeStore = AgentMonStatsStore(engine: engine)
-  let httpFallbackStore = AgentMonStatsStore()
+  let nativeStore = TokMonStatsStore(engine: engine)
+  let httpFallbackStore = TokMonStatsStore()
 
   #expect(nativeStore.usesNativeEngine)
   #expect(!httpFallbackStore.usesNativeEngine)
@@ -133,7 +133,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "session-1", model: "gpt-test", inputTokens: 20, outputTokens: 5, cacheCreation: 0, cacheRead: 2, reasoningTokens: 1, createdAt: "2026-05-14T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "session-2", model: "gpt-test", inputTokens: 99, outputTokens: 9, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:15:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -168,7 +168,7 @@ import Testing
   let database = try TokMonDatabase(appDataDir: dataDir)
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "session-1", model: "gpt-test", inputTokens: 20, outputTokens: 5, cacheCreation: 0, cacheRead: 2, reasoningTokens: 1, createdAt: "2026-05-14T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -199,7 +199,7 @@ import Testing
     costRates: .zero,
   ))
   let engine = TokMonEngine(configStore: configStore, database: try TokMonDatabase(appDataDir: dataDir))
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -234,7 +234,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "this-week-1", model: "gpt-test", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 3, reasoningTokens: 0, createdAt: "2026-05-12T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "this-week-2", model: "gpt-test", inputTokens: 14, outputTokens: 1, cacheCreation: 0, cacheRead: 1, reasoningTokens: 0, createdAt: "2026-05-13T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -270,7 +270,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "this-month-1", model: "gpt-test", inputTokens: 40, outputTokens: 4, cacheCreation: 0, cacheRead: 8, reasoningTokens: 0, createdAt: "2026-05-12T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "this-month-2", model: "gpt-test", inputTokens: 16, outputTokens: 2, cacheCreation: 0, cacheRead: 1, reasoningTokens: 0, createdAt: "2026-05-13T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -304,7 +304,7 @@ import Testing
   let database = try TokMonDatabase(appDataDir: dataDir)
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "one", model: "gpt-test", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-04-13T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -334,7 +334,7 @@ import Testing
     costRates: .zero,
   ))
   let engine = TokMonEngine(configStore: configStore, database: try TokMonDatabase(appDataDir: dataDir))
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -381,7 +381,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "today", model: "gpt-test", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "week", model: "gpt-test", inputTokens: 30, outputTokens: 3, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-13T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -433,7 +433,7 @@ import Testing
   ))
   let database = try TokMonDatabase(appDataDir: dataDir)
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -514,7 +514,7 @@ import Testing
     costRates: .zero,
   ))
   let engine = TokMonEngine(configStore: configStore, database: try TokMonDatabase(appDataDir: dataDir))
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -548,7 +548,7 @@ import Testing
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "old", model: "gpt-test", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-04-14T01:10:00.000Z"))
   _ = try database.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "current", model: "gpt-test", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:10:00.000Z"))
   let engine = TokMonEngine(configStore: configStore, database: database)
-  let store = AgentMonStatsStore(
+  let store = TokMonStatsStore(
     engine: engine,
     nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
   )
@@ -566,13 +566,16 @@ import Testing
 private func emptyTokMonConfig(dataDir: URL) throws -> TokMonConfig {
   let claudeDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
   let codexDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
+  let openCodeDir = dataDir.appendingPathComponent("opencode", isDirectory: true)
   try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: openCodeDir, withIntermediateDirectories: true)
   return TokMonConfig(
     port: 3388,
     sources: [
       "claude-code": TokMonSourceConfig(path: claudeDir.path),
       "codex": TokMonSourceConfig(path: codexDir.path),
+      "opencode": TokMonSourceConfig(path: openCodeDir.path),
     ],
   )
 }

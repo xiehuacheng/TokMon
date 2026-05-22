@@ -2,12 +2,14 @@ import SwiftUI
 
 struct TokMonSettingsWindow: View {
   @ObservedObject var store: TokMonSettingsStore
+  let onSaveAndClose: () -> Void
   @State private var selectedPricingModel = ""
 
   private let sources = [
     ("", "All Sources"),
     ("claude-code", "Claude Code"),
     ("codex", "Codex"),
+    ("opencode", "OpenCode"),
   ]
 
   var body: some View {
@@ -40,6 +42,23 @@ struct TokMonSettingsWindow: View {
                 FieldRow("Codex") {
                   TextField("~/.codex/sessions", text: $store.draft.codexPath)
                     .settingsTextField(width: 430)
+                }
+                FieldRow("OpenCode") {
+                  TextField("~/.local/share/opencode", text: $store.draft.openCodePath)
+                    .settingsTextField(width: 430)
+                }
+              }
+
+              SettingsSection("Menu Bar") {
+                FieldRow("Display") {
+                  Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
+                    ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
+                      Text(mode.displayLabel).tag(mode)
+                    }
+                  }
+                  .pickerStyle(.menu)
+                  .labelsHidden()
+                  .frame(width: 220)
                 }
               }
 
@@ -102,7 +121,7 @@ struct TokMonSettingsWindow: View {
         Text("TokMon Settings")
           .font(.system(size: 15, weight: .heavy, design: .rounded))
           .foregroundStyle(TokMonGlass.neutralTint)
-        Text("Native token monitoring")
+        Text("TokenMonitor")
           .font(.system(size: 12, weight: .semibold, design: .rounded))
           .foregroundStyle(TokMonGlass.mutedTint)
       }
@@ -121,8 +140,13 @@ struct TokMonSettingsWindow: View {
         .foregroundStyle(store.errorMessage == nil ? TokMonGlass.mutedTint : TokMonGlass.danger)
         .lineLimit(1)
       Spacer()
-      Button("Save") {
-        Task { try? await store.save() }
+      Button("Save and Close") {
+        Task {
+          do {
+            try await store.save()
+            onSaveAndClose()
+          } catch {}
+        }
       }
       .tokMonGlassButton(prominent: true)
       .keyboardShortcut(.defaultAction)
@@ -410,7 +434,12 @@ final class TokMonSettingsWindowController {
     window.title = "TokMon Settings"
     window.center()
     window.minSize = NSSize(width: 660, height: 580)
-    window.contentView = NSHostingView(rootView: TokMonSettingsWindow(store: settingsStore))
+    window.contentView = NSHostingView(rootView: TokMonSettingsWindow(
+      store: settingsStore,
+      onSaveAndClose: { [weak self] in
+        self?.window?.close()
+      },
+    ))
     window.isReleasedWhenClosed = false
     window.makeKeyAndOrderFront(nil)
     self.window = window

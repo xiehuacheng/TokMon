@@ -6,7 +6,7 @@ final class TokMonDatabase {
 
   convenience init(appDataDir: URL) throws {
     try FileManager.default.createDirectory(at: appDataDir, withIntermediateDirectories: true)
-    try self.init(databaseURL: appDataDir.appendingPathComponent("agentmon.db"))
+    try self.init(databaseURL: appDataDir.appendingPathComponent("tokmon.db"))
   }
 
   init(databaseURL: URL) throws {
@@ -170,6 +170,34 @@ final class TokMonDatabase {
       filePath: stringColumn(statement, index: 8),
       projectPath: stringColumn(statement, index: 9),
     )
+  }
+
+  func hasSessionMetadataContainingEnvironmentContext(source: String, filePath: String) throws -> Bool {
+    let statement = try prepare("""
+      SELECT 1
+      FROM tokmon_session_metadata
+      WHERE source = ?
+        AND file_path = ?
+        AND (
+          first_prompt LIKE '<environment_context>%'
+          OR title LIKE '%<environment_context>%'
+          OR last_prompt LIKE '<environment_context>%'
+        )
+      LIMIT 1
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    try bind(source, at: 1, in: statement)
+    try bind(filePath, at: 2, in: statement)
+
+    let result = sqlite3_step(statement)
+    if result == SQLITE_ROW {
+      return true
+    }
+    guard result == SQLITE_DONE else {
+      throw TokMonDatabaseError.sqlite(lastErrorMessage)
+    }
+    return false
   }
 
   func usageRecordCount() throws -> Int {
@@ -369,6 +397,7 @@ final class TokMonDatabase {
       definition: "project_path TEXT",
     )
     try backfillUsageRollupsIfNeeded()
+    try pruneDuplicateOpenCodeProviderUsageRecords()
     try exec("""
 
       CREATE INDEX IF NOT EXISTS idx_usage_source ON usage_records(source);
@@ -443,6 +472,107 @@ final class TokMonDatabase {
       return
     }
 
+    try insertUsageRollupsFromUsageRecords()
+  }
+
+  func replaceOpenCodeProviderPrefixedUsageRecordIfNeeded(
+    with canonicalRecord: TokMonUsageRecord,
+    provider: String?,
+  ) throws -> Bool {
+    guard canonicalRecord.source == "opencode",
+          let provider,
+          !provider.isEmpty,
+          !canonicalRecord.model.isEmpty,
+          !canonicalRecord.model.contains("/") else {
+      return false
+    }
+
+    let providerModel = "\(provider)/\(canonicalRecord.model)"
+    let deleted = try deleteOpenCodeUsageRecords(
+      sessionId: canonicalRecord.sessionId,
+      model: providerModel,
+      inputTokens: canonicalRecord.inputTokens,
+      outputTokens: canonicalRecord.outputTokens,
+      cacheCreation: canonicalRecord.cacheCreation,
+      cacheRead: canonicalRecord.cacheRead,
+      reasoningTokens: canonicalRecord.reasoningTokens,
+      canonicalCreatedAt: canonicalRecord.createdAt,
+    )
+    guard deleted > 0 else {
+      return false
+    }
+
+    _ = try insertUsage(canonicalRecord)
+    try rebuildUsageRollupsFromUsageRecords()
+    return true
+  }
+
+  private func pruneDuplicateOpenCodeProviderUsageRecords() throws {
+    let deleted = try deleteRows("""
+      DELETE FROM usage_records
+      WHERE source = 'opencode'
+        AND instr(model, '/') > 0
+        AND EXISTS (
+          SELECT 1
+          FROM usage_records canonical
+          WHERE canonical.source = usage_records.source
+            AND canonical.session_id = usage_records.session_id
+            AND canonical.model = substr(usage_records.model, instr(usage_records.model, '/') + 1)
+            AND canonical.input_tokens = usage_records.input_tokens
+            AND canonical.output_tokens = usage_records.output_tokens
+            AND canonical.cache_creation = usage_records.cache_creation
+            AND canonical.cache_read = usage_records.cache_read
+            AND canonical.reasoning_tokens = usage_records.reasoning_tokens
+            AND ABS(strftime('%s', canonical.created_at) - strftime('%s', usage_records.created_at)) <= 120
+        )
+    """)
+    if deleted > 0 {
+      try rebuildUsageRollupsFromUsageRecords()
+    }
+  }
+
+  private func deleteOpenCodeUsageRecords(
+    sessionId: String,
+    model: String,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheCreation: Int,
+    cacheRead: Int,
+    reasoningTokens: Int,
+    canonicalCreatedAt: String,
+  ) throws -> Int {
+    let statement = try prepare("""
+      DELETE FROM usage_records
+      WHERE source = 'opencode'
+        AND session_id = ?
+        AND model = ?
+        AND input_tokens = ?
+        AND output_tokens = ?
+        AND cache_creation = ?
+        AND cache_read = ?
+        AND reasoning_tokens = ?
+        AND ABS(strftime('%s', created_at) - strftime('%s', ?)) <= 120
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    try bind(sessionId, at: 1, in: statement)
+    try bind(model, at: 2, in: statement)
+    try bind(inputTokens, at: 3, in: statement)
+    try bind(outputTokens, at: 4, in: statement)
+    try bind(cacheCreation, at: 5, in: statement)
+    try bind(cacheRead, at: 6, in: statement)
+    try bind(reasoningTokens, at: 7, in: statement)
+    try bind(canonicalCreatedAt, at: 8, in: statement)
+    try stepDone(statement)
+    return Int(sqlite3_changes(requiredConnection))
+  }
+
+  private func rebuildUsageRollupsFromUsageRecords() throws {
+    try exec("DELETE FROM tokmon_usage_rollups;")
+    try insertUsageRollupsFromUsageRecords()
+  }
+
+  private func insertUsageRollupsFromUsageRecords() throws {
     try exec("""
       INSERT INTO tokmon_usage_rollups
         (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
@@ -545,6 +675,11 @@ final class TokMonDatabase {
       sqlite3_free(errorMessage)
       throw TokMonDatabaseError.sqlite(message)
     }
+  }
+
+  private func deleteRows(_ sql: String) throws -> Int {
+    try exec(sql)
+    return Int(sqlite3_changes(requiredConnection))
   }
 
   private func prepare(_ sql: String) throws -> OpaquePointer? {

@@ -1,5 +1,5 @@
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func summaryEstimatedCostUsesLatestModelTotals() {
   let summary = TokMonSummary(

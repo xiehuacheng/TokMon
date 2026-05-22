@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @MainActor
 @Test func settingsStoreLoadsAndSavesTokMonConfiguration() async throws {
@@ -21,11 +21,13 @@ import Testing
   try await store.load()
   store.draft.claudePath = "~/custom-claude"
   store.draft.codexPath = "~/custom-codex"
+  store.draft.openCodePath = "~/custom-opencode"
   store.draft.source = "codex"
   store.draft.rangeLabel = "today"
   store.draft.liveMode = false
   store.draft.interval = "hour"
   store.draft.activeSeries = "cost"
+  store.draft.menuBarDisplayMode = .requests
   store.draft.refreshRate = 5000
   store.draft.inputRate = 3
   store.draft.outputRate = 4
@@ -43,6 +45,7 @@ import Testing
   #expect(config.port == 3399)
   #expect(config.sources["claude-code"]?.path == "~/custom-claude")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
+  #expect(config.sources["opencode"]?.path == "~/custom-opencode")
   #expect(config.sources["future-source"]?.path == "~/future")
   #expect(uiState.source == "codex")
   #expect(uiState.rangeLabel == "today")
@@ -52,6 +55,7 @@ import Testing
   #expect(uiState.rangeMode == "round")
   #expect(uiState.interval == "hour")
   #expect(uiState.activeSeries == "cost")
+  #expect(uiState.menuBarDisplayMode == .requests)
   #expect(uiState.refreshRate == 5000)
   #expect(uiState.costRates == TokMonCostRates(input: 3, output: 4, cacheCreate: 5, cacheRead: 6))
   #expect(uiState.modelPricing["gpt-a"] == TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4))
@@ -98,8 +102,10 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   let claudeRoot = dataDir.appendingPathComponent("claude", isDirectory: true)
   let sourceRoot = dataDir.appendingPathComponent("codex", isDirectory: true)
+  let openCodeRoot = dataDir.appendingPathComponent("opencode", isDirectory: true)
   try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: openCodeRoot, withIntermediateDirectories: true)
   try """
   {"type":"session_meta","payload":{"id":"s1","model":"gpt-test"}}
   {"type":"event_msg","timestamp":"2026-05-14T01:00:00.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
@@ -109,6 +115,7 @@ import Testing
     sources: [
       "claude-code": TokMonSourceConfig(path: claudeRoot.path),
       "codex": TokMonSourceConfig(path: sourceRoot.path),
+      "opencode": TokMonSourceConfig(path: openCodeRoot.path),
     ],
   ))
   let database = try TokMonDatabase(appDataDir: dataDir)

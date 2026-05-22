@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func databaseCreatesUsageAndScanStateTables() throws {
   let dataDir = try makeTokMonTempDir()
@@ -83,7 +83,7 @@ import Testing
 
 @Test func databaseBackfillsUsageRollupsForExistingUsageRecords() throws {
   let dataDir = try makeTokMonTempDir()
-  let databaseURL = dataDir.appendingPathComponent("agentmon.db")
+  let databaseURL = dataDir.appendingPathComponent("tokmon.db")
   try withRawSQLiteDatabase(at: databaseURL) { db in
     try rawSQLiteExec(db, """
       CREATE TABLE usage_records (
@@ -129,6 +129,72 @@ import Testing
   #expect(rows.map(\.grain) == ["day", "month", "week", "year"])
   #expect(rows.allSatisfy { $0.requests == 2 })
   #expect(rows.allSatisfy { $0.input == 30 && $0.output == 10 && $0.cacheCreation == 1 && $0.cacheRead == 7 && $0.reasoning == 4 })
+}
+
+@Test func databasePrunesDuplicateOpenCodeProviderPrefixedUsageRecords() throws {
+  let dataDir = try makeTokMonTempDir()
+  let databaseURL = dataDir.appendingPathComponent("tokmon.db")
+  try withRawSQLiteDatabase(at: databaseURL) { db in
+    try rawSQLiteExec(db, """
+      CREATE TABLE usage_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT 'unknown',
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        UNIQUE(source, session_id, created_at, input_tokens, output_tokens)
+      );
+      INSERT INTO usage_records
+        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at)
+      VALUES
+        ('opencode', 'ses_qwen', 'litellm/qwen3.6-35b', 123, 45, 0, 0, 6, '2026-05-20T01:20:11.000Z'),
+        ('opencode', 'ses_qwen', 'qwen3.6-35b', 123, 45, 0, 0, 6, '2026-05-20T01:20:10.000Z');
+    """)
+  }
+
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let records = try db.allUsageRecords()
+
+  #expect(records.count == 1)
+  #expect(records.first?.model == "qwen3.6-35b")
+  #expect(try db.queryInt("SELECT COALESCE(SUM(requests), 0) FROM tokmon_usage_rollups") == 4)
+}
+
+@Test func databaseKeepsOpenCodeProviderPrefixedRecordsWithDifferentTimestamps() throws {
+  let dataDir = try makeTokMonTempDir()
+  let databaseURL = dataDir.appendingPathComponent("tokmon.db")
+  try withRawSQLiteDatabase(at: databaseURL) { db in
+    try rawSQLiteExec(db, """
+      CREATE TABLE usage_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT 'unknown',
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        UNIQUE(source, session_id, created_at, input_tokens, output_tokens)
+      );
+      INSERT INTO usage_records
+        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at)
+      VALUES
+        ('opencode', 'ses_qwen', 'litellm/qwen3.6-35b', 123, 45, 0, 0, 6, '2026-05-20T01:30:10.000Z'),
+        ('opencode', 'ses_qwen', 'qwen3.6-35b', 123, 45, 0, 0, 6, '2026-05-20T01:20:10.000Z');
+    """)
+  }
+
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let records = try db.allUsageRecords()
+
+  #expect(records.count == 2)
 }
 
 @Test func databasePersistsTokMonScanState() throws {

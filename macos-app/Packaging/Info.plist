@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>AgentMon</string>
+	<string>TokMon</string>
 	<key>CFBundleIconFile</key>
-	<string>AgentMon.icns</string>
+	<string>TokMon.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.agentmon.app</string>
+	<string>local.tokmon.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>AgentMon</string>
+	<string>TokMon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

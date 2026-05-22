@@ -1,6 +1,6 @@
 import Foundation
 
-struct AgentMonAppError: LocalizedError {
+struct TokMonAppError: LocalizedError {
   let message: String
 
   init(_ message: String) {

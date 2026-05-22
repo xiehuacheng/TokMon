@@ -14,11 +14,13 @@ actor TokMonEngineActor {
     return TokMonSettingsDraft(
       claudePath: config.sources["claude-code"]?.path ?? TokMonSettingsDraft().claudePath,
       codexPath: config.sources["codex"]?.path ?? TokMonSettingsDraft().codexPath,
+      openCodePath: config.sources["opencode"]?.path ?? TokMonSettingsDraft().openCodePath,
       source: uiState.source,
       rangeLabel: resolvedRangeLabel(from: uiState),
       liveMode: true,
       interval: TokMonRangePreset(label: uiState.rangeLabel).interval,
       activeSeries: uiState.activeSeries,
+      menuBarDisplayMode: uiState.menuBarDisplayMode,
       refreshRate: uiState.refreshRate,
       inputRate: uiState.costRates.input,
       outputRate: uiState.costRates.output,
@@ -33,6 +35,7 @@ actor TokMonEngineActor {
     var config = try engine.configStore.loadConfig()
     config.sources["claude-code"] = TokMonSourceConfig(path: draft.claudePath)
     config.sources["codex"] = TokMonSourceConfig(path: draft.codexPath)
+    config.sources["opencode"] = TokMonSourceConfig(path: draft.openCodePath)
     try engine.configStore.saveConfig(config)
     let existingState = try engine.configStore.loadUIState()
     try engine.configStore.saveUIState(uiState(from: draft, preserving: existingState))
@@ -52,9 +55,9 @@ actor TokMonEngineActor {
 
   func updateDashboardRangeAndRefreshRangeStats(
     label: String,
-    preserving existingSnapshot: AgentMonStatsSnapshot,
+    preserving existingSnapshot: TokMonStatsSnapshot,
     now: Date,
-  ) throws -> AgentMonStatsSnapshot {
+  ) throws -> TokMonStatsSnapshot {
     try updateDashboardRange(label: label)
     return try refreshRangeStats(preserving: existingSnapshot, now: now)
   }
@@ -76,7 +79,7 @@ actor TokMonEngineActor {
     recordsLimit: Int,
     sessionsLimit: Int,
     selectedSession: TokMonUsageSessionSelection?,
-  ) throws -> AgentMonStatsSnapshot {
+  ) throws -> TokMonStatsSnapshot {
     let config = try engine.configStore.loadConfig()
     let rawUIState = try engine.configStore.loadUIState()
     let inserted = try engine.scanner.scan(config: config)
@@ -95,7 +98,7 @@ actor TokMonEngineActor {
     recordsLimit: Int,
     sessionsLimit: Int,
     selectedSession: TokMonUsageSessionSelection?,
-  ) throws -> AgentMonStatsSnapshot {
+  ) throws -> TokMonStatsSnapshot {
     try statsSnapshot(
       rawUIState: engine.configStore.loadUIState(),
       now: now,
@@ -107,9 +110,9 @@ actor TokMonEngineActor {
   }
 
   func refreshRangeStats(
-    preserving existingSnapshot: AgentMonStatsSnapshot,
+    preserving existingSnapshot: TokMonStatsSnapshot,
     now: Date,
-  ) throws -> AgentMonStatsSnapshot {
+  ) throws -> TokMonStatsSnapshot {
     let rawUIState = try engine.configStore.loadUIState()
     let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
     let filter = TokMonQueryFilter(
@@ -124,8 +127,8 @@ actor TokMonEngineActor {
       .map { try engine.queryStore.summary(filter: $0, now: now) }
     let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval, now: now)
 
-    return AgentMonStatsSnapshot(
-      scanStatus: AgentMonScanStatus(
+    return TokMonStatsSnapshot(
+      scanStatus: TokMonScanStatus(
         running: false,
         phase: "Idle",
         current: 0,
@@ -150,7 +153,7 @@ actor TokMonEngineActor {
   }
 
   func selectedUsageSessionRecords(
-    preserving existingSnapshot: AgentMonStatsSnapshot,
+    preserving existingSnapshot: TokMonStatsSnapshot,
     selectedSession: TokMonUsageSessionSelection,
     now: Date,
   ) throws -> [TokMonRecordRow] {
@@ -184,7 +187,7 @@ actor TokMonEngineActor {
     recordsLimit: Int,
     sessionsLimit: Int,
     selectedSession: TokMonUsageSessionSelection?,
-  ) throws -> AgentMonStatsSnapshot {
+  ) throws -> TokMonStatsSnapshot {
     let dashboardState = TokMonStatsSnapshotBuilder.currentDashboardState(from: rawUIState, now: now)
     let filter = TokMonQueryFilter(
       from: dashboardState.from,
@@ -209,8 +212,8 @@ actor TokMonEngineActor {
       )
     } ?? []
 
-    return AgentMonStatsSnapshot(
-      scanStatus: AgentMonScanStatus(
+    return TokMonStatsSnapshot(
+      scanStatus: TokMonScanStatus(
         running: false,
         phase: inserted > 0 ? "Scanned \(inserted) new records" : "Idle",
         current: 0,
@@ -247,6 +250,7 @@ actor TokMonEngineActor {
       rangeMode: "round",
       interval: preset.interval,
       activeSeries: draft.activeSeries,
+      menuBarDisplayMode: draft.menuBarDisplayMode,
       refreshRate: max(1000, draft.refreshRate),
       costRates: TokMonCostRates(
         input: max(0, draft.inputRate),
@@ -297,7 +301,10 @@ actor TokMonEngineActor {
       }
     }
 
-    let hasJSONL = directories.contains { directory in
+    let hasUsageLogs = directories.contains { directory in
+      if FileManager.default.fileExists(atPath: directory.appendingPathComponent("opencode.db").path) {
+        return true
+      }
       guard let enumerator = FileManager.default.enumerator(
         at: directory,
         includingPropertiesForKeys: [.isRegularFileKey],
@@ -313,7 +320,7 @@ actor TokMonEngineActor {
       return false
     }
 
-    guard hasJSONL else {
+    guard hasUsageLogs else {
       throw TokMonSettingsError.noUsageLogsFound
     }
   }

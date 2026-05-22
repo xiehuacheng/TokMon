@@ -1,10 +1,11 @@
 import SwiftUI
 
 @MainActor
-final class AgentMonRuntime: ObservableObject {
-  static let shared = AgentMonRuntime()
+final class TokMonRuntime: ObservableObject {
+  static let shared = TokMonRuntime()
 
-  let stats: AgentMonStatsStore
+  let stats: TokMonStatsStore
+  @Published var statusPanelSessionBubbleY: CGFloat?
 
   private let settingsWindowController: TokMonSettingsWindowController?
   private var started = false
@@ -13,11 +14,11 @@ final class AgentMonRuntime: ObservableObject {
     do {
       let engine = try Self.makeTokMonEngine()
       let engineActor = TokMonEngineActor(engine: engine)
-      stats = AgentMonStatsStore(engineActor: engineActor)
+      stats = TokMonStatsStore(engineActor: engineActor)
       settingsWindowController = TokMonSettingsWindowController(engineActor: engineActor)
     } catch {
-      agentMonLog("AgentMon native TokMon engine failed to initialize: \(error.localizedDescription)")
-      stats = AgentMonStatsStore(startupError: error.localizedDescription)
+      tokMonLog("TokMon native TokMon engine failed to initialize: \(error.localizedDescription)")
+      stats = TokMonStatsStore(startupError: error.localizedDescription)
       settingsWindowController = nil
     }
   }
@@ -25,7 +26,11 @@ final class AgentMonRuntime: ObservableObject {
   func start() {
     guard !started else { return }
     started = true
-    agentMonLog("AgentMon runtime using native TokMon engine")
+    tokMonLog("TokMon runtime using native TokMon engine")
+    stats.startObserving()
+    Task { [stats] in
+      await stats.refresh()
+    }
   }
 
   func openSettings() {
@@ -42,7 +47,7 @@ final class AgentMonRuntime: ObservableObject {
   }
 
   private static func makeTokMonEngine() throws -> TokMonEngine {
-    let dataDir = try AgentMonProjectLocator.appDataDir()
+    let dataDir = try TokMonProjectLocator.appDataDir()
     let configStore = TokMonConfigStore(dataDir: dataDir)
     let database = try TokMonDatabase(appDataDir: dataDir)
     return TokMonEngine(configStore: configStore, database: database)

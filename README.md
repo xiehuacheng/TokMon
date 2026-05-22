@@ -1,11 +1,11 @@
-# AgentMon
+# TokMon
 
-AgentMon 是一个 macOS 原生状态栏应用，用于查看 Claude Code 与 Codex 的 token usage。当前交付形态是 `.app`，主界面是菜单栏 popover 和原生设置窗口。
+TokMon 是一个 macOS 原生状态栏应用，用于查看 Claude Code 与 Codex 的 token usage。当前交付形态是 `.app`，主界面是菜单栏 popover 和原生设置窗口。
 
 ## 界面预览
 
 <p>
-  <img src="docs/images/agentmon-status-popover.png" alt="AgentMon macOS status bar popover showing live token metrics and a trend chart" width="360">
+  <img src="docs/images/tokmon-status-popover.png" alt="TokMon macOS status bar popover showing live token metrics and a trend chart" width="360">
 </p>
 
 状态栏看板展示 token 用量卡片、趋势图、活动热力图、请求明细和 session 统计；设置窗口提供路径、默认范围、模型价格、扫描和维护操作。
@@ -42,35 +42,37 @@ AgentMon 是一个 macOS 原生状态栏应用，用于查看 Claude Code 与 Co
 
 ```bash
 cd macos-app
-swift run AgentMon
+swift run TokMon
 ```
 
 打包独立版 `.app`：
 
 ```bash
 bash macos-app/scripts/build-app.sh
-open macos-app/release/AgentMon.app
+open macos-app/release/TokMon.app
 ```
 
-App 启动后会在菜单栏显示 AgentMon 图标。点击状态栏图标可以查看实时统计、打开设置窗口或退出应用。打包产物位于 `macos-app/release/`，不会提交到 Git。
+App 启动后会在菜单栏显示 TokMon 图标。点击状态栏图标可以查看实时统计、打开设置窗口或退出应用。打包产物位于 `macos-app/release/`，不会提交到 Git。
 
 ## 配置与数据
 
 项目可以零配置运行，默认读取 `~/.claude/projects` 和 `~/.codex/sessions`。如需自定义路径，请在 App 的原生设置窗口中修改。
 
-通过 macOS App 启动时，AgentMon 会把 SQLite 数据库、扫描状态和本地配置写入：
+通过 macOS App 启动时，TokMon 会把 SQLite 数据库、扫描状态和本地配置写入：
 
 ```text
-~/Library/Application Support/AgentMon
+~/Library/Application Support/TokMon
 ```
+
+首次从旧版 AgentMon 升级时，TokMon 会在 `~/Library/Application Support/TokMon` 不存在且旧 `~/Library/Application Support/AgentMon` 存在时迁移数据目录。若 TokMon 目录已经存在，旧目录不会被覆盖。
 
 ## 项目结构
 
 ```text
 macos-app/
   Package.swift          # SwiftPM manifest
-  Sources/AgentMonApp/   # SwiftUI 状态栏 App 源码
-  Tests/AgentMonAppTests/# Swift 测试
+  Sources/TokMonApp/     # SwiftUI 状态栏 App 源码
+  Tests/TokMonAppTests/  # Swift 测试
   Assets/                # App icon（.icns / .png）
   Packaging/Info.plist   # .app bundle metadata
   scripts/build-app.sh   # 独立版 .app 打包脚本
@@ -83,7 +85,7 @@ docs/
 
 ## 重要说明
 
-- AgentMon 使用本地 SQLite 索引 token usage 元数据。
+- TokMon 使用本地 SQLite 索引 token usage 元数据。
 - 原生 App 当前不会提供 session 删除、skill 卸载或 MCP/settings 改写入口。
 - TokMon 用量数据写入 `usage_records` 表，增量扫描 offset 存在 `tokmon_scan_state`。
 

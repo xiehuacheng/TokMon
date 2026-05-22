@@ -17,6 +17,7 @@ docs/superpowers/
 # Local configuration
 agentmon.config.json
 tokmon.config.json
+tokmon-ui-state.json
 .claude/
 
 # Logs and OS/editor noise

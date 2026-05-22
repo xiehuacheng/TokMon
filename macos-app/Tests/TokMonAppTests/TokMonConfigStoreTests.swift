@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func configStoreLoadsDefaultsWhenNoFileExists() throws {
   let dataDir = try makeTokMonTempDir()
@@ -11,10 +11,12 @@ import Testing
 
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/.codex/sessions")
+  #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
   #expect(state.rangeLabel == "thisWeek")
   #expect(state.rangeDays == nil)
   #expect(state.rangeMode == "round")
   #expect(state.activeSeries == "total")
+  #expect(state.menuBarDisplayMode == .iconOnly)
 }
 
 @Test func configStoreDefaultsMissingNativeConfigAndUIStateFields() throws {
@@ -56,6 +58,7 @@ import Testing
   #expect(config.port == 3390)
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
+  #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
   #expect(state.source == "codex")
   #expect(state.from == "")
   #expect(state.to == "")
@@ -64,8 +67,44 @@ import Testing
   #expect(state.rangeDays == nil)
   #expect(state.costRates.input == 0)
   #expect(state.costRates.output == 9.5)
+  #expect(state.menuBarDisplayMode == .iconOnly)
   #expect(state.modelPricing["gpt-a"] == TokMonCostRates(input: 1.5, output: 2.5, cacheCreate: 3.5, cacheRead: 4.5))
   #expect(state.modelPricing["bad"] == TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0))
+}
+
+@Test func configStoreLoadsAndSavesMenuBarDisplayMode() throws {
+  let dataDir = try makeTokMonTempDir()
+  try """
+  {
+    "source": "codex",
+    "rangeLabel": "today",
+    "menuBarDisplayMode": "estimatedCost"
+  }
+  """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  var state = try store.loadUIState()
+  #expect(state.menuBarDisplayMode == .estimatedCost)
+
+  state.menuBarDisplayMode = .requests
+  try store.saveUIState(state)
+
+  let text = try String(contentsOf: dataDir.appendingPathComponent("tokmon-ui-state.json"), encoding: .utf8)
+  #expect(text.contains("\"menuBarDisplayMode\" : \"requests\""))
+  #expect(try store.loadUIState().menuBarDisplayMode == .requests)
+}
+
+@Test func configStoreDefaultsUnknownMenuBarDisplayModeToIconOnly() throws {
+  let dataDir = try makeTokMonTempDir()
+  try """
+  {
+    "source": "codex",
+    "menuBarDisplayMode": "inputTokens"
+  }
+  """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  #expect(try store.loadUIState().menuBarDisplayMode == .iconOnly)
 }
 
 @Test func configStoreSavesPrettyJSONWithTrailingNewlineAndExpandsHomePath() throws {
@@ -76,6 +115,7 @@ import Testing
     sources: [
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
       "codex": TokMonSourceConfig(path: "~/.codex/sessions"),
+      "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
       "custom": TokMonSourceConfig(path: "~/custom/sessions"),
     ],
   )

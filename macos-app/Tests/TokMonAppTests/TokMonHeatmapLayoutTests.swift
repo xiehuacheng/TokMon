@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentMonApp
+@testable import TokMonApp
 
 @Test func heatmapLayoutCreatesWeekColumnsWithMonthAndWeekdayLabels() {
   let days = [
@@ -47,9 +47,30 @@ import Testing
     .deletingLastPathComponent()
   let layoutURL = packageDir
     .appendingPathComponent("Sources")
-    .appendingPathComponent("AgentMonApp")
+    .appendingPathComponent("TokMonApp")
     .appendingPathComponent("TokMonHeatmapLayout.swift")
   let source = try String(contentsOf: layoutURL, encoding: .utf8)
 
   #expect(!source.contains("DateFormatter"))
+}
+
+@Test func heatmapValueDescriptorFollowsSelectedSeries() {
+  let day = TokMonHeatmapDay(
+    day: "2026-05-14",
+    requests: 3,
+    inputTokens: 1200,
+    outputTokens: 240,
+    cacheCreation: 90,
+    cacheRead: 600,
+  )
+  let costRates = TokMonCostRates(input: 3, output: 15, cacheCreate: 3.75, cacheRead: 0.3)
+
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .requests, costRates: costRates).helpText == "2026-05-14: 3 Requests")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .input, costRates: costRates).helpText == "2026-05-14: 1.2K Input")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .output, costRates: costRates).helpText == "2026-05-14: 240 Output")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .cache, costRates: costRates).helpText == "2026-05-14: 90 Cache Created")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .cacheHit, costRates: costRates).helpText == "2026-05-14: 600 Cache Hit")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .cacheHitRate, costRates: costRates).helpText == "2026-05-14: 33.3% Hit Rate")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .total, costRates: costRates).helpText == "2026-05-14: 2.0K Total Tokens")
+  #expect(TokMonHeatmapValueDescriptor(day: day, series: .cost, costRates: costRates).helpText == "2026-05-14: $0.0077 Cost")
 }

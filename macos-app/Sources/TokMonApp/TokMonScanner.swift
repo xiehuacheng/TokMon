@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 final class TokMonScanner {
   private let database: TokMonDatabase
@@ -14,6 +15,9 @@ final class TokMonScanner {
     }
     if let source = config.sources["codex"] {
       count += try scanCodex(directory: expandedPath(source.path))
+    }
+    if let source = config.sources["opencode"] {
+      count += try scanOpenCode(directory: expandedPath(source.path))
     }
     return count
   }
@@ -31,6 +35,14 @@ final class TokMonScanner {
         fallbackSessionId: codexFallbackSessionId(for: fileURL),
       )
     }
+  }
+
+  private func scanOpenCode(directory: URL) throws -> Int {
+    let databaseURL = directory.appendingPathComponent("opencode.db")
+    guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+      return 0
+    }
+    return try scanOpenCodeDatabase(databaseURL)
   }
 
   private func scanFiles(in directory: URL, scanner: (URL) throws -> Int) throws -> Int {
@@ -205,7 +217,7 @@ final class TokMonScanner {
       guard let usage = codexLastTokenUsage(object), hasCodexTokenUsage(usage) else {
         continue
       }
-      let usageKey = codexUsageKey(usage)
+      let usageKey = codexUsageKey(usage, timestamp: stringValue(object["timestamp"]))
       if usageKey == lastUsageKey {
         continue
       }
@@ -250,6 +262,235 @@ final class TokMonScanner {
       projectPath: projectPath,
     )
     return count
+  }
+
+  private func scanOpenCodeDatabase(_ databaseURL: URL) throws -> Int {
+    let filePath = databaseURL.path
+    guard let databaseSignature = openCodeDatabaseSignature(databaseURL) else {
+      return 0
+    }
+    let state = try database.scanState(filePath: filePath)
+    if state.offset == databaseSignature.size, state.lastMtime == databaseSignature.stamp {
+      if try database.hasSessionMetadataContainingEnvironmentContext(source: "opencode", filePath: filePath) {
+        try backfillOpenCodeSessionMetadataIfNeeded(databaseURL)
+      }
+      return 0
+    }
+
+    let openCodeMessages = try openCodeUsageMessages(databaseURL)
+    var count = 0
+    var lastUsageKey = state.lastUsageKey
+    for message in openCodeMessages where message.usageKey != state.lastUsageKey {
+      let record = TokMonUsageRecord(
+        source: "opencode",
+        sessionId: message.session.id,
+        model: message.model,
+        inputTokens: message.inputTokens,
+        outputTokens: message.outputTokens,
+        cacheCreation: message.cacheWrite,
+        cacheRead: message.cacheRead,
+        reasoningTokens: message.reasoningTokens,
+        createdAt: message.createdAt,
+      )
+      if try database.replaceOpenCodeProviderPrefixedUsageRecordIfNeeded(
+        with: record,
+        provider: message.provider,
+      ) {
+        lastUsageKey = message.usageKey
+        try upsertOpenCodeSessionMetadata(message.session)
+        continue
+      }
+      if try database.insertUsage(record) {
+        count += 1
+      }
+      lastUsageKey = message.usageKey
+      try upsertOpenCodeSessionMetadata(message.session)
+    }
+
+    if lastUsageKey == nil {
+      for message in openCodeMessages {
+        try upsertOpenCodeSessionMetadata(message.session)
+      }
+    }
+    try database.setScanState(
+      filePath: filePath,
+      state: TokMonScanState(
+        offset: databaseSignature.size,
+        sessionId: openCodeMessages.last?.session.id ?? state.sessionId,
+        model: openCodeMessages.last?.model ?? state.model,
+        lastUsageKey: lastUsageKey,
+        lastMtime: databaseSignature.stamp,
+      ),
+    )
+    return count
+  }
+
+  private func backfillOpenCodeSessionMetadataIfNeeded(_ databaseURL: URL) throws {
+    let openCodeMessages = try openCodeUsageMessages(databaseURL)
+    for message in openCodeMessages {
+      try upsertOpenCodeSessionMetadata(message.session)
+    }
+  }
+
+  private func openCodeUsageMessages(_ databaseURL: URL) throws -> [OpenCodeUsageMessage] {
+    var connection: OpaquePointer?
+    guard sqlite3_open_v2(databaseURL.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let connection else {
+      let message = connection.map { String(cString: sqlite3_errmsg($0)) } ?? "Unable to open opencode database"
+      if let connection {
+        sqlite3_close(connection)
+      }
+      throw TokMonScannerError.openCodeDatabase(message)
+    }
+    defer {
+      sqlite3_close(connection)
+    }
+
+    let sql = """
+      SELECT m.id,
+             m.session_id,
+             m.time_created,
+             m.time_updated,
+             m.data,
+             s.title,
+             s.directory,
+             s.model,
+             s.time_created,
+             s.time_updated,
+             (
+               SELECT json_extract(p.data, '$.text')
+               FROM message user_message
+               JOIN part p ON p.message_id = user_message.id
+                 AND p.session_id = user_message.session_id
+               WHERE user_message.session_id = m.session_id
+                 AND json_extract(user_message.data, '$.role') = 'user'
+                 AND json_extract(p.data, '$.type') = 'text'
+                 AND NULLIF(TRIM(json_extract(p.data, '$.text')), '') IS NOT NULL
+                 AND TRIM(json_extract(p.data, '$.text')) NOT LIKE '<environment_context>%'
+                 AND COALESCE(json_extract(p.data, '$.ignored'), 0) = 0
+                 AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0
+               ORDER BY user_message.time_created ASC,
+                        user_message.id ASC,
+                        p.time_created ASC,
+                        p.id ASC
+               LIMIT 1
+             ) as first_prompt
+      FROM message m
+      JOIN session s ON s.id = m.session_id
+      ORDER BY m.time_created ASC, m.id ASC
+    """
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw TokMonScannerError.openCodeDatabase(String(cString: sqlite3_errmsg(connection)))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    var messages: [OpenCodeUsageMessage] = []
+    var result = sqlite3_step(statement)
+    while result == SQLITE_ROW {
+      let messageId = openCodeStringColumn(statement, 0)
+      let sessionId = openCodeStringColumn(statement, 1)
+      let messageTimeCreated = sqlite3_column_int64(statement, 2)
+      let messageTimeUpdated = sqlite3_column_int64(statement, 3)
+      let messageData = openCodeStringColumn(statement, 4)
+      let sessionTitle = openCodeStringColumn(statement, 5)
+      let sessionDirectory = openCodeStringColumn(statement, 6)
+      let sessionModel = openCodeStringColumn(statement, 7)
+      let sessionTimeCreated = sqlite3_column_int64(statement, 8)
+      let sessionTimeUpdated = sqlite3_column_int64(statement, 9)
+      let sessionFirstPrompt = openCodeStringColumn(statement, 10)
+
+      if let parsed = parseOpenCodeUsageMessage(
+        messageId: messageId,
+        sessionId: sessionId,
+        messageTimeCreated: messageTimeCreated,
+        messageTimeUpdated: messageTimeUpdated,
+        messageData: messageData,
+        sessionTitle: sessionTitle,
+        sessionDirectory: sessionDirectory,
+        sessionModel: sessionModel,
+        sessionTimeCreated: sessionTimeCreated,
+        sessionTimeUpdated: sessionTimeUpdated,
+        firstPrompt: sessionFirstPrompt,
+        databasePath: databaseURL.path,
+      ) {
+        messages.append(parsed)
+      }
+      result = sqlite3_step(statement)
+    }
+
+    guard result == SQLITE_DONE else {
+      throw TokMonScannerError.openCodeDatabase(String(cString: sqlite3_errmsg(connection)))
+    }
+    return messages
+  }
+
+  private func parseOpenCodeUsageMessage(
+    messageId: String,
+    sessionId: String,
+    messageTimeCreated: Int64,
+    messageTimeUpdated: Int64,
+    messageData: String,
+    sessionTitle: String,
+    sessionDirectory: String,
+    sessionModel: String,
+    sessionTimeCreated: Int64,
+    sessionTimeUpdated: Int64,
+    firstPrompt: String,
+    databasePath: String,
+  ) -> OpenCodeUsageMessage? {
+    guard let object = parseJSONString(messageData),
+          stringValue(object["role"]) == "assistant",
+          let tokens = object["tokens"] as? [String: Any] else {
+      return nil
+    }
+
+    let inputTokens = intValue(tokens["input"])
+    let outputTokens = intValue(tokens["output"])
+    let reasoningTokens = intValue(tokens["reasoning"])
+    let cache = tokens["cache"] as? [String: Any]
+    let cacheRead = intValue(cache?["read"])
+    let cacheWrite = intValue(cache?["write"])
+    guard inputTokens != 0 || outputTokens != 0 || reasoningTokens != 0 || cacheRead != 0 || cacheWrite != 0 else {
+      return nil
+    }
+
+    let model = normalizedPrompt(stringValue(object["modelID"]))
+      ?? normalizedPrompt(openCodeModelId(from: sessionModel))
+      ?? "unknown"
+    let provider = normalizedPrompt(stringValue(object["providerID"]))
+      ?? normalizedPrompt(openCodeProviderId(from: sessionModel))
+    let createdMilliseconds = openCodeMessageCreatedMilliseconds(
+      object: object,
+      fallback: messageTimeCreated == 0 ? messageTimeUpdated : messageTimeCreated,
+    )
+    let createdAt = isoTimestamp(millisecondsSince1970: createdMilliseconds)
+    let title = normalizedPrompt(sessionTitle)
+    let projectPath = normalizedPrompt(sessionDirectory)
+    let prompt = normalizedOpenCodeUserPrompt(firstPrompt)
+    let session = OpenCodeSessionSnapshot(
+      id: sessionId,
+      title: title,
+      firstPrompt: prompt,
+      model: model,
+      startedAt: isoTimestamp(millisecondsSince1970: sessionTimeCreated),
+      lastActiveAt: isoTimestamp(millisecondsSince1970: max(sessionTimeUpdated, messageTimeUpdated)),
+      filePath: databasePath,
+      projectPath: projectPath,
+    )
+    return OpenCodeUsageMessage(
+      usageKey: "\(messageId):\(createdMilliseconds):\(inputTokens):\(outputTokens):\(cacheRead):\(cacheWrite):\(reasoningTokens)",
+      session: session,
+      model: model,
+      provider: provider,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cacheWrite: cacheWrite,
+      cacheRead: cacheRead,
+      reasoningTokens: reasoningTokens,
+      createdAt: createdAt,
+    )
   }
 
   private func parseClaudeUsageRecord(
@@ -369,6 +610,13 @@ final class TokMonScanner {
     return trimmed
   }
 
+  private func normalizedOpenCodeUserPrompt(_ value: String?) -> String? {
+    guard let prompt = normalizedPrompt(value) else {
+      return nil
+    }
+    return prompt.hasPrefix("<environment_context>") ? nil : prompt
+  }
+
   private func codexFallbackSessionId(for fileURL: URL) -> String {
     let fileName = fileURL.deletingPathExtension().lastPathComponent
     if let range = fileName.range(
@@ -476,6 +724,21 @@ final class TokMonScanner {
     ))
   }
 
+  private func upsertOpenCodeSessionMetadata(_ session: OpenCodeSessionSnapshot) throws {
+    try database.upsertSessionMetadata(TokMonSessionMetadata(
+      id: session.id,
+      source: "opencode",
+      title: sessionTitle(projectPath: session.projectPath, filePath: session.filePath, firstPrompt: session.firstPrompt),
+      firstPrompt: session.firstPrompt,
+      lastPrompt: session.firstPrompt,
+      model: session.model == "unknown" ? nil : session.model,
+      startedAt: session.startedAt,
+      lastActiveAt: session.lastActiveAt,
+      filePath: session.filePath,
+      projectPath: session.projectPath,
+    ))
+  }
+
   private func claudeSessionMetadataSnapshot(
     _ fileURL: URL,
     fallbackSessionId: String,
@@ -550,6 +813,15 @@ final class TokMonScanner {
     return relaxedParser.parse()
   }
 
+  private func parseJSONString(_ string: String) -> [String: Any]? {
+    let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          let data = trimmed.data(using: .utf8) else {
+      return nil
+    }
+    return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+  }
+
   private func parseJSONObject(_ line: String) -> [String: Any]? {
     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty,
@@ -558,6 +830,36 @@ final class TokMonScanner {
       return nil
     }
     return object
+  }
+
+  private func openCodeModelId(from rawModel: String) -> String? {
+    parseJSONString(rawModel).flatMap { object in
+      stringValue(object["id"]) ?? stringValue(object["modelID"])
+    }
+  }
+
+  private func openCodeProviderId(from rawModel: String) -> String? {
+    parseJSONString(rawModel).flatMap { object in
+      stringValue(object["providerID"]) ?? stringValue(object["provider"])
+    }
+  }
+
+  private func openCodeMessageCreatedMilliseconds(object: [String: Any], fallback: Int64) -> Int64 {
+    guard let time = object["time"] as? [String: Any] else {
+      return fallback
+    }
+    let created = int64Value(time["created"])
+    return created == 0 ? fallback : created
+  }
+
+  private func isoTimestamp(millisecondsSince1970: Int64) -> String {
+    guard millisecondsSince1970 > 0 else {
+      return ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 0))
+    }
+    let date = Date(timeIntervalSince1970: TimeInterval(millisecondsSince1970) / 1000)
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
   }
 
   private func readLines(_ fileURL: URL, range: AppendRange) throws -> [String] {
@@ -586,6 +888,29 @@ final class TokMonScanner {
       return nil
     }
     return String(modifiedAt.timeIntervalSince1970)
+  }
+
+  private func openCodeDatabaseSignature(_ databaseURL: URL) -> (size: Int64, stamp: String)? {
+    let candidates = [
+      databaseURL,
+      URL(fileURLWithPath: databaseURL.path + "-wal"),
+      URL(fileURLWithPath: databaseURL.path + "-shm"),
+    ]
+
+    var totalSize: Int64 = 0
+    let parts = candidates.compactMap { url -> String? in
+      guard FileManager.default.fileExists(atPath: url.path) else {
+        return nil
+      }
+      let size = (try? byteSize(url)) ?? 0
+      totalSize += size
+      let mtime = fileModificationStamp(url) ?? "missing"
+      return "\(url.lastPathComponent):\(size):\(mtime)"
+    }
+    guard !parts.isEmpty else {
+      return nil
+    }
+    return (totalSize, parts.joined(separator: "|"))
   }
 
   private func appendRange(fileSize: Int64, offset: Int64) -> AppendRange? {
@@ -620,16 +945,20 @@ final class TokMonScanner {
   }
 
   private func hasCodexTokenUsage(_ usage: [String: Any]) -> Bool {
-    intValue(usage["input_tokens"]) != 0 || intValue(usage["output_tokens"]) != 0
+    intValue(usage["input_tokens"]) != 0
+      || intValue(usage["output_tokens"]) != 0
+      || intValue(usage["cached_input_tokens"]) != 0
+      || intValue(usage["reasoning_output_tokens"]) != 0
   }
 
-  private func codexUsageKey(_ usage: [String: Any]) -> String {
+  private func codexUsageKey(_ usage: [String: Any], timestamp: String?) -> String {
     [
-      intValue(usage["input_tokens"]),
-      intValue(usage["output_tokens"]),
-      intValue(usage["cached_input_tokens"]),
-      intValue(usage["reasoning_output_tokens"]),
-    ].map(String.init).joined(separator: ":")
+      timestamp ?? "",
+      String(intValue(usage["input_tokens"])),
+      String(intValue(usage["output_tokens"])),
+      String(intValue(usage["cached_input_tokens"])),
+      String(intValue(usage["reasoning_output_tokens"])),
+    ].joined(separator: ":")
   }
 
   private func claudeUsageKey(_ usage: TokMonUsageRecord) -> String {
@@ -661,6 +990,23 @@ final class TokMonScanner {
     }
   }
 
+  private func int64Value(_ value: Any?, fallback: Int64 = 0) -> Int64 {
+    switch value {
+    case let value as Int:
+      Int64(value)
+    case let value as Int64:
+      value
+    case let value as Double:
+      Int64(value)
+    case let value as NSNumber:
+      value.int64Value
+    case let value as String:
+      Int64(value) ?? fallback
+    default:
+      fallback
+    }
+  }
+
   private func stringValue(_ value: Any?) -> String? {
     switch value {
     case let value as String:
@@ -669,6 +1015,49 @@ final class TokMonScanner {
       value.stringValue
     default:
       nil
+    }
+  }
+}
+
+private func openCodeStringColumn(_ statement: OpaquePointer?, _ index: Int32) -> String {
+  guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+        let rawValue = sqlite3_column_text(statement, index) else {
+    return ""
+  }
+  return String(cString: rawValue)
+}
+
+private struct OpenCodeSessionSnapshot {
+  let id: String
+  let title: String?
+  let firstPrompt: String?
+  let model: String
+  let startedAt: String?
+  let lastActiveAt: String?
+  let filePath: String
+  let projectPath: String?
+}
+
+private struct OpenCodeUsageMessage {
+  let usageKey: String
+  let session: OpenCodeSessionSnapshot
+  let model: String
+  let provider: String?
+  let inputTokens: Int
+  let outputTokens: Int
+  let cacheWrite: Int
+  let cacheRead: Int
+  let reasoningTokens: Int
+  let createdAt: String
+}
+
+private enum TokMonScannerError: LocalizedError {
+  case openCodeDatabase(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .openCodeDatabase(let message):
+      "Unable to scan opencode database: \(message)"
     }
   }
 }

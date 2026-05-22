@@ -1,7 +1,7 @@
 import Foundation
 
-struct AgentMonStatsSnapshot: Sendable {
-  var scanStatus: AgentMonScanStatus?
+struct TokMonStatsSnapshot: Sendable {
+  var scanStatus: TokMonScanStatus?
   var summary: TokMonSummary?
   var previousSummary: TokMonSummary?
   var trendBuckets: [TokMonTrendBucket] = []
@@ -14,7 +14,7 @@ struct AgentMonStatsSnapshot: Sendable {
   var dashboardState: TokMonDashboardState?
   var updatedAt: Date?
 
-  static let empty = AgentMonStatsSnapshot()
+  static let empty = TokMonStatsSnapshot()
 }
 
 struct TokMonUsageSessionSelection: Equatable, Sendable {
@@ -24,7 +24,7 @@ struct TokMonUsageSessionSelection: Equatable, Sendable {
   var id: String { "\(source):\(sessionId)" }
 }
 
-struct AgentMonScanStatus: Decodable, Equatable, Sendable {
+struct TokMonScanStatus: Decodable, Equatable, Sendable {
   let running: Bool
   let phase: String
   let current: Int
@@ -36,8 +36,8 @@ struct AgentMonScanStatus: Decodable, Equatable, Sendable {
 }
 
 @MainActor
-final class AgentMonStatsStore: ObservableObject {
-  @Published private(set) var snapshot = AgentMonStatsSnapshot.empty
+final class TokMonStatsStore: ObservableObject {
+  @Published private(set) var snapshot = TokMonStatsSnapshot.empty
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
   private var isUpdatingDashboardRange = false
@@ -115,7 +115,7 @@ final class AgentMonStatsStore: ObservableObject {
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
-      snapshot = AgentMonStatsSnapshot(
+      snapshot = TokMonStatsSnapshot(
         scanStatus: snapshot.scanStatus,
         summary: snapshot.summary,
         previousSummary: snapshot.previousSummary,
@@ -304,6 +304,7 @@ enum TokMonStatsSnapshotBuilder {
       rangeDays: preset.days,
       refreshRate: uiState.refreshRate,
       activeSeries: uiState.activeSeries,
+      menuBarDisplayMode: uiState.menuBarDisplayMode,
       estimatedCost: 0,
       costRates: uiState.costRates,
       modelPricing: uiState.modelPricing,
