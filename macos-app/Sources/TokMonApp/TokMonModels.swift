@@ -14,6 +14,7 @@ struct TokMonConfig: Codable, Equatable {
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
       "codex": TokMonSourceConfig(path: "~/.codex/sessions"),
       "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
+      "qwen-code": TokMonSourceConfig(path: "~/.qwen/projects"),
     ],
   )
 }
@@ -188,6 +189,7 @@ struct TokMonUsageRecord: Equatable {
   var cacheRead: Int
   var reasoningTokens: Int
   var createdAt: String
+  var cacheHitSupported: Bool = true
 }
 
 struct TokMonSessionMetadata: Equatable {
@@ -252,6 +254,8 @@ struct TokMonTotals: Decodable {
   let totalCacheCreation: Int
   let totalCacheRead: Int
   let totalReasoning: Int
+  let totalCacheHitInput: Int
+  let totalCacheHitCacheRead: Int
 
   enum CodingKeys: String, CodingKey {
     case totalRequests = "total_requests"
@@ -260,6 +264,48 @@ struct TokMonTotals: Decodable {
     case totalCacheCreation = "total_cache_creation"
     case totalCacheRead = "total_cache_read"
     case totalReasoning = "total_reasoning"
+    case totalCacheHitInput = "total_cache_hit_input"
+    case totalCacheHitCacheRead = "total_cache_hit_cache_read"
+  }
+
+  init(
+    totalRequests: Int,
+    totalInput: Int,
+    totalOutput: Int,
+    totalCacheCreation: Int,
+    totalCacheRead: Int,
+    totalReasoning: Int,
+    totalCacheHitInput: Int? = nil,
+    totalCacheHitCacheRead: Int? = nil,
+  ) {
+    self.totalRequests = totalRequests
+    self.totalInput = totalInput
+    self.totalOutput = totalOutput
+    self.totalCacheCreation = totalCacheCreation
+    self.totalCacheRead = totalCacheRead
+    self.totalReasoning = totalReasoning
+    self.totalCacheHitInput = totalCacheHitInput ?? totalInput
+    self.totalCacheHitCacheRead = totalCacheHitCacheRead ?? totalCacheRead
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let totalRequests = try container.decode(Int.self, forKey: .totalRequests)
+    let totalInput = try container.decode(Int.self, forKey: .totalInput)
+    let totalOutput = try container.decode(Int.self, forKey: .totalOutput)
+    let totalCacheCreation = try container.decode(Int.self, forKey: .totalCacheCreation)
+    let totalCacheRead = try container.decode(Int.self, forKey: .totalCacheRead)
+    let totalReasoning = try container.decode(Int.self, forKey: .totalReasoning)
+    self.init(
+      totalRequests: totalRequests,
+      totalInput: totalInput,
+      totalOutput: totalOutput,
+      totalCacheCreation: totalCacheCreation,
+      totalCacheRead: totalCacheRead,
+      totalReasoning: totalReasoning,
+      totalCacheHitInput: try container.decodeIfPresent(Int.self, forKey: .totalCacheHitInput),
+      totalCacheHitCacheRead: try container.decodeIfPresent(Int.self, forKey: .totalCacheHitCacheRead),
+    )
   }
 
   var totalTokens: Int {
@@ -267,7 +313,7 @@ struct TokMonTotals: Decodable {
   }
 
   var cacheHitRate: Double {
-    cacheHitRatio(inputTokens: totalInput, cacheRead: totalCacheRead)
+    cacheHitRatio(inputTokens: totalCacheHitInput, cacheRead: totalCacheHitCacheRead)
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -304,6 +350,8 @@ struct TokMonSourceTotals: Decodable, Identifiable {
   let outputTokens: Int
   let cacheCreation: Int
   let cacheRead: Int
+  let cacheHitInputTokens: Int
+  let cacheHitCacheRead: Int
 
   var id: String { source }
 
@@ -314,6 +362,48 @@ struct TokMonSourceTotals: Decodable, Identifiable {
     case outputTokens = "output_tokens"
     case cacheCreation = "cache_creation"
     case cacheRead = "cache_read"
+    case cacheHitInputTokens = "cache_hit_input_tokens"
+    case cacheHitCacheRead = "cache_hit_cache_read"
+  }
+
+  init(
+    source: String,
+    requests: Int,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheCreation: Int,
+    cacheRead: Int,
+    cacheHitInputTokens: Int? = nil,
+    cacheHitCacheRead: Int? = nil,
+  ) {
+    self.source = source
+    self.requests = requests
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.cacheCreation = cacheCreation
+    self.cacheRead = cacheRead
+    self.cacheHitInputTokens = cacheHitInputTokens ?? inputTokens
+    self.cacheHitCacheRead = cacheHitCacheRead ?? cacheRead
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let source = try container.decode(String.self, forKey: .source)
+    let requests = try container.decode(Int.self, forKey: .requests)
+    let inputTokens = try container.decode(Int.self, forKey: .inputTokens)
+    let outputTokens = try container.decode(Int.self, forKey: .outputTokens)
+    let cacheCreation = try container.decode(Int.self, forKey: .cacheCreation)
+    let cacheRead = try container.decode(Int.self, forKey: .cacheRead)
+    self.init(
+      source: source,
+      requests: requests,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cacheCreation: cacheCreation,
+      cacheRead: cacheRead,
+      cacheHitInputTokens: try container.decodeIfPresent(Int.self, forKey: .cacheHitInputTokens),
+      cacheHitCacheRead: try container.decodeIfPresent(Int.self, forKey: .cacheHitCacheRead),
+    )
   }
 
   var totalTokens: Int {
@@ -321,7 +411,7 @@ struct TokMonSourceTotals: Decodable, Identifiable {
   }
 
   var cacheHitRate: Double {
-    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
+    cacheHitRatio(inputTokens: cacheHitInputTokens, cacheRead: cacheHitCacheRead)
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -359,6 +449,8 @@ struct TokMonModelTotals: Decodable, Identifiable {
   let outputTokens: Int
   let cacheCreation: Int
   let cacheRead: Int
+  let cacheHitInputTokens: Int
+  let cacheHitCacheRead: Int
 
   var id: String { "\(source):\(model)" }
 
@@ -370,6 +462,52 @@ struct TokMonModelTotals: Decodable, Identifiable {
     case outputTokens = "output_tokens"
     case cacheCreation = "cache_creation"
     case cacheRead = "cache_read"
+    case cacheHitInputTokens = "cache_hit_input_tokens"
+    case cacheHitCacheRead = "cache_hit_cache_read"
+  }
+
+  init(
+    model: String,
+    source: String,
+    requests: Int,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheCreation: Int,
+    cacheRead: Int,
+    cacheHitInputTokens: Int? = nil,
+    cacheHitCacheRead: Int? = nil,
+  ) {
+    self.model = model
+    self.source = source
+    self.requests = requests
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.cacheCreation = cacheCreation
+    self.cacheRead = cacheRead
+    self.cacheHitInputTokens = cacheHitInputTokens ?? inputTokens
+    self.cacheHitCacheRead = cacheHitCacheRead ?? cacheRead
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let model = try container.decode(String.self, forKey: .model)
+    let source = try container.decode(String.self, forKey: .source)
+    let requests = try container.decode(Int.self, forKey: .requests)
+    let inputTokens = try container.decode(Int.self, forKey: .inputTokens)
+    let outputTokens = try container.decode(Int.self, forKey: .outputTokens)
+    let cacheCreation = try container.decode(Int.self, forKey: .cacheCreation)
+    let cacheRead = try container.decode(Int.self, forKey: .cacheRead)
+    self.init(
+      model: model,
+      source: source,
+      requests: requests,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cacheCreation: cacheCreation,
+      cacheRead: cacheRead,
+      cacheHitInputTokens: try container.decodeIfPresent(Int.self, forKey: .cacheHitInputTokens),
+      cacheHitCacheRead: try container.decodeIfPresent(Int.self, forKey: .cacheHitCacheRead),
+    )
   }
 
   var totalTokens: Int {
@@ -377,7 +515,7 @@ struct TokMonModelTotals: Decodable, Identifiable {
   }
 
   var cacheHitRate: Double {
-    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
+    cacheHitRatio(inputTokens: cacheHitInputTokens, cacheRead: cacheHitCacheRead)
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -414,9 +552,11 @@ struct TokMonTrendBucket: Decodable {
   let cacheCreation: Int
   let cacheRead: Int
   let requests: Int
+  let cacheHitInputTokens: Int
+  let cacheHitCacheRead: Int
 
   var cacheHitRate: Double {
-    cacheHitRatio(inputTokens: inputTokens, cacheRead: cacheRead)
+    cacheHitRatio(inputTokens: cacheHitInputTokens, cacheRead: cacheHitCacheRead)
   }
 
   init(
@@ -426,6 +566,8 @@ struct TokMonTrendBucket: Decodable {
     cacheCreation: Int = 0,
     cacheRead: Int = 0,
     requests: Int = 0,
+    cacheHitInputTokens: Int? = nil,
+    cacheHitCacheRead: Int? = nil,
   ) {
     self.bucket = bucket
     self.inputTokens = inputTokens
@@ -433,6 +575,8 @@ struct TokMonTrendBucket: Decodable {
     self.cacheCreation = cacheCreation
     self.cacheRead = cacheRead
     self.requests = requests
+    self.cacheHitInputTokens = cacheHitInputTokens ?? inputTokens
+    self.cacheHitCacheRead = cacheHitCacheRead ?? cacheRead
   }
 
   enum CodingKeys: String, CodingKey {
@@ -442,6 +586,24 @@ struct TokMonTrendBucket: Decodable {
     case cacheCreation = "cache_creation"
     case cacheRead = "cache_read"
     case requests
+    case cacheHitInputTokens = "cache_hit_input_tokens"
+    case cacheHitCacheRead = "cache_hit_cache_read"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let inputTokens = try container.decode(Int.self, forKey: .inputTokens)
+    let cacheRead = try container.decode(Int.self, forKey: .cacheRead)
+    self.init(
+      bucket: try container.decode(String.self, forKey: .bucket),
+      inputTokens: inputTokens,
+      outputTokens: try container.decode(Int.self, forKey: .outputTokens),
+      cacheCreation: try container.decode(Int.self, forKey: .cacheCreation),
+      cacheRead: cacheRead,
+      requests: try container.decode(Int.self, forKey: .requests),
+      cacheHitInputTokens: try container.decodeIfPresent(Int.self, forKey: .cacheHitInputTokens),
+      cacheHitCacheRead: try container.decodeIfPresent(Int.self, forKey: .cacheHitCacheRead),
+    )
   }
 
   func value(for series: TokMonSeriesKey, costRates: TokMonCostRates) -> Double {
@@ -478,7 +640,29 @@ struct TokMonHeatmapDay: Equatable, Identifiable {
   var outputTokens: Int
   var cacheCreation: Int
   var cacheRead: Int
+  var cacheHitInputTokens: Int
+  var cacheHitCacheRead: Int
   var id: String { day }
+
+  init(
+    day: String,
+    requests: Int,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheCreation: Int,
+    cacheRead: Int,
+    cacheHitInputTokens: Int? = nil,
+    cacheHitCacheRead: Int? = nil,
+  ) {
+    self.day = day
+    self.requests = requests
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.cacheCreation = cacheCreation
+    self.cacheRead = cacheRead
+    self.cacheHitInputTokens = cacheHitInputTokens ?? inputTokens
+    self.cacheHitCacheRead = cacheHitCacheRead ?? cacheRead
+  }
 }
 
 struct TokMonHeatmapValueDescriptor: Equatable {
@@ -522,7 +706,7 @@ struct TokMonHeatmapValueDescriptor: Equatable {
     case .cacheHit:
       Double(day.cacheRead)
     case .cacheHitRate:
-      cacheHitRatio(inputTokens: day.inputTokens, cacheRead: day.cacheRead)
+      cacheHitRatio(inputTokens: day.cacheHitInputTokens, cacheRead: day.cacheHitCacheRead)
     case .cost:
       costRates.cost(
         inputTokens: day.inputTokens,
@@ -780,6 +964,8 @@ struct TokMonDashboardState: Decodable {
       "Codex"
     case "opencode":
       "OpenCode"
+    case "qwen-code":
+      "Qwen Code"
     default:
       source
     }

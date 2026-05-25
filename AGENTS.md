@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code 与 Codex 的 token usage。面向用户的交付形态是 `.app`。
+TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Qwen Code 与 OpenCode 的 token usage。面向用户的交付形态是 `.app`。
 
 - macOS App 在 `macos-app/`：`Package.swift` + `Sources/TokMonApp/` 是 SwiftUI 状态栏 App，`Assets/` 存 App icon，`Packaging/Info.plist` 是 bundle metadata，`scripts/build-app.sh` 负责打包 `.app`。
 - 测试在 `macos-app/Tests/TokMonAppTests/`。

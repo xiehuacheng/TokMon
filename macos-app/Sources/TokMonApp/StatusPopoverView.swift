@@ -129,7 +129,7 @@ struct StatusPopoverView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
               .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
           }
-        Text("A")
+        Text("T")
           .font(.system(size: 17, weight: .black, design: .rounded))
           .foregroundStyle(TokMonGlass.neutralTint)
       }
@@ -695,6 +695,8 @@ struct StatusPopoverView: View {
       "Codex"
     case "opencode":
       "OpenCode"
+    case "qwen-code":
+      "Qwen Code"
     default:
       source
     }
@@ -708,6 +710,8 @@ struct StatusPopoverView: View {
       TokMonGlass.accent
     case "opencode":
       TokMonGlass.success
+    case "qwen-code":
+      TokMonGlass.danger
     default:
       TokMonGlass.mutedTint
     }
@@ -1105,65 +1109,100 @@ private struct TotalTokensMetricTile: View {
   let onSelect: (TokMonSeriesPresentation) -> Void
 
   var body: some View {
-    HStack(alignment: .top, spacing: 10) {
-      Button {
-        onSelect(metric.series)
-      } label: {
-        VStack(alignment: .leading, spacing: 7) {
-          HStack(spacing: 6) {
-            Text(metric.series.label.uppercased())
-              .font(.system(size: 11, weight: .heavy, design: .rounded))
-              .foregroundStyle(TokMonGlass.mutedTint)
-              .lineLimit(1)
-            Text(metric.series.icon)
-              .font(.system(size: 12, weight: .black, design: .rounded))
-              .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
-          }
-          MetricValueText(value: metric.value, isSelected: metric.isSelected)
-          MetricDelta(metric.delta)
-        }
-        .frame(minWidth: 76, maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .focusable(false)
-
+    Group {
       if isExpanded {
-        LazyVGrid(
-          columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2),
-          alignment: .leading,
-          spacing: 6,
-        ) {
-          ForEach(tokenDetails) { detail in
-            TokenDetailMiniMetric(metric: detail)
-          }
-        }
-        .frame(width: 152)
-        .transition(.tokMonTokenDetailGrid)
+        expandedBody
+      } else {
+        collapsedBody
       }
-
-      Button {
-        onToggleExpanded()
-      } label: {
-        Image(systemName: isExpanded ? "chevron.left" : "chevron.right")
-          .font(.system(size: 11, weight: .black))
-          .foregroundStyle(TokMonGlass.neutralTint)
-          .frame(width: 24, height: 24)
-          .background {
-            Circle()
-              .fill(Color.white.opacity(0.075))
-              .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
-          }
-          .contentShape(Circle())
-      }
-      .buttonStyle(.plain)
-      .focusable(false)
-      .help(isExpanded ? "Hide token details" : "Show token details")
     }
     .padding(9)
     .frame(maxWidth: .infinity, minHeight: isExpanded ? 80 : 66, alignment: .topLeading)
     .hudCard(isSelected: metric.isSelected)
     .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+  }
+
+  private var collapsedBody: some View {
+    ZStack(alignment: .topTrailing) {
+      Button {
+        onSelect(metric.series)
+      } label: {
+        metricSummary
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .focusable(false)
+
+      expandButton
+    }
+  }
+
+  private var expandedBody: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Button {
+        onSelect(metric.series)
+      } label: {
+        metricSummary
+          .frame(minWidth: 76, maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .focusable(false)
+
+      LazyVGrid(
+        columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2),
+        alignment: .leading,
+        spacing: 6,
+      ) {
+        ForEach(tokenDetails) { detail in
+          TokenDetailMiniMetric(metric: detail)
+        }
+      }
+      .frame(width: 152)
+      .transition(.tokMonTokenDetailGrid)
+
+      expandButton
+    }
+  }
+
+  private var metricSummary: some View {
+    VStack(alignment: .leading, spacing: 7) {
+      HStack(spacing: 6) {
+        Text(metric.series.label.uppercased())
+          .font(.system(size: 11, weight: .heavy, design: .rounded))
+          .foregroundStyle(TokMonGlass.mutedTint)
+          .lineLimit(1)
+        Text(metric.series.icon)
+          .font(.system(size: 12, weight: .black, design: .rounded))
+          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+        if !isExpanded {
+          Spacer(minLength: 30)
+        }
+      }
+      MetricValueText(value: metric.value, isSelected: metric.isSelected)
+      MetricDelta(metric.delta)
+    }
+  }
+
+  private var expandButton: some View {
+    Button {
+      onToggleExpanded()
+    } label: {
+      Image(systemName: isExpanded ? "chevron.left" : "chevron.right")
+        .font(.system(size: 11, weight: .black))
+        .foregroundStyle(TokMonGlass.neutralTint)
+        .frame(width: 24, height: 24)
+        .background {
+          Circle()
+            .fill(Color.white.opacity(0.075))
+            .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
+        }
+        .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .focusable(false)
+    .help(isExpanded ? "Hide token details" : "Show token details")
   }
 }
 
@@ -1247,7 +1286,6 @@ private struct MetricDelta: View {
       .font(.system(size: 13, weight: .bold, design: .rounded))
       .foregroundStyle(TokMonGlass.mutedTint)
       .lineLimit(1)
-      .minimumScaleFactor(0.72)
   }
 }
 
@@ -1435,7 +1473,7 @@ private struct RecentActivityGrid: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(height: 118)
+    .frame(height: 124)
   }
 }
 
@@ -1463,15 +1501,19 @@ private struct HeatmapWeekdayAxis: View {
   let gap: CGFloat
 
   var body: some View {
-    ZStack(alignment: .topLeading) {
-      Color.clear.frame(width: 18, height: cellSize * 7 + gap * 6)
-      ForEach(labels) { label in
-        Text(label.label)
-          .font(.system(size: 8, weight: .bold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
-          .lineLimit(1)
-          .minimumScaleFactor(0.75)
-          .offset(y: CGFloat(label.weekdayIndex) * (cellSize + gap) - 1)
+    VStack(alignment: .leading, spacing: gap) {
+      ForEach(0..<7, id: \.self) { weekdayIndex in
+        if let label = labels.first(where: { $0.weekdayIndex == weekdayIndex }) {
+          Text(label.label)
+            .font(.system(size: 8, weight: .bold, design: .rounded))
+            .foregroundStyle(TokMonGlass.mutedTint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(width: 26, height: cellSize, alignment: .leading)
+        } else {
+          Color.clear
+            .frame(width: 26, height: cellSize)
+        }
       }
     }
     .frame(width: 26, height: cellSize * 7 + gap * 6, alignment: .topLeading)
@@ -1748,6 +1790,9 @@ private struct RequestRowView: View {
         Text(sourceLabel)
           .font(.system(size: 12, weight: .bold, design: .rounded))
           .foregroundStyle(sourceColor)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(width: 78, alignment: .leading)
         Text(sessionDisplayLabel)
           .font(.system(size: 12, weight: .semibold, design: .rounded))
           .foregroundStyle(TokMonGlass.mutedTint)

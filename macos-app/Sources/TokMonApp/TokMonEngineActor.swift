@@ -15,6 +15,7 @@ actor TokMonEngineActor {
       claudePath: config.sources["claude-code"]?.path ?? TokMonSettingsDraft().claudePath,
       codexPath: config.sources["codex"]?.path ?? TokMonSettingsDraft().codexPath,
       openCodePath: config.sources["opencode"]?.path ?? TokMonSettingsDraft().openCodePath,
+      qwenCodePath: config.sources["qwen-code"]?.path ?? TokMonSettingsDraft().qwenCodePath,
       source: uiState.source,
       rangeLabel: resolvedRangeLabel(from: uiState),
       liveMode: true,
@@ -36,6 +37,7 @@ actor TokMonEngineActor {
     config.sources["claude-code"] = TokMonSourceConfig(path: draft.claudePath)
     config.sources["codex"] = TokMonSourceConfig(path: draft.codexPath)
     config.sources["opencode"] = TokMonSourceConfig(path: draft.openCodePath)
+    config.sources["qwen-code"] = TokMonSourceConfig(path: draft.qwenCodePath)
     try engine.configStore.saveConfig(config)
     let existingState = try engine.configStore.loadUIState()
     try engine.configStore.saveUIState(uiState(from: draft, preserving: existingState))

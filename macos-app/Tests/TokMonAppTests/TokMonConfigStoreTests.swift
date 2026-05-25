@@ -12,6 +12,7 @@ import Testing
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/.codex/sessions")
   #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
+  #expect(config.sources["qwen-code"]?.path == "~/.qwen/projects")
   #expect(state.rangeLabel == "thisWeek")
   #expect(state.rangeDays == nil)
   #expect(state.rangeMode == "round")
@@ -59,6 +60,7 @@ import Testing
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
   #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
+  #expect(config.sources["qwen-code"]?.path == "~/.qwen/projects")
   #expect(state.source == "codex")
   #expect(state.from == "")
   #expect(state.to == "")
@@ -116,6 +118,7 @@ import Testing
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
       "codex": TokMonSourceConfig(path: "~/.codex/sessions"),
       "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
+      "qwen-code": TokMonSourceConfig(path: "~/.qwen/projects"),
       "custom": TokMonSourceConfig(path: "~/custom/sessions"),
     ],
   )

@@ -65,6 +65,7 @@ struct TokMonSettingsDraft: Equatable {
   var claudePath = TokMonConfig.default.sources["claude-code"]?.path ?? "~/.claude/projects"
   var codexPath = TokMonConfig.default.sources["codex"]?.path ?? "~/.codex/sessions"
   var openCodePath = TokMonConfig.default.sources["opencode"]?.path ?? "~/.local/share/opencode"
+  var qwenCodePath = TokMonConfig.default.sources["qwen-code"]?.path ?? "~/.qwen/projects"
   var source = TokMonUIState.default.source
   var rangeLabel = TokMonUIState.default.rangeLabel ?? "7D"
   var liveMode = TokMonUIState.default.liveMode

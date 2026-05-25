@@ -10,6 +10,7 @@ struct TokMonSettingsWindow: View {
     ("claude-code", "Claude Code"),
     ("codex", "Codex"),
     ("opencode", "OpenCode"),
+    ("qwen-code", "Qwen Code"),
   ]
 
   var body: some View {
@@ -45,6 +46,10 @@ struct TokMonSettingsWindow: View {
                 }
                 FieldRow("OpenCode") {
                   TextField("~/.local/share/opencode", text: $store.draft.openCodePath)
+                    .settingsTextField(width: 430)
+                }
+                FieldRow("Qwen Code") {
+                  TextField("~/.qwen/projects", text: $store.draft.qwenCodePath)
                     .settingsTextField(width: 430)
                 }
               }

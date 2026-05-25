@@ -2,6 +2,8 @@ import Foundation
 import SQLite3
 
 final class TokMonScanner {
+  private static let qwenCodeScanStateVersion = "qwen-code-telemetry-v1"
+
   private let database: TokMonDatabase
 
   init(database: TokMonDatabase) {
@@ -18,6 +20,9 @@ final class TokMonScanner {
     }
     if let source = config.sources["opencode"] {
       count += try scanOpenCode(directory: expandedPath(source.path))
+    }
+    if let source = config.sources["qwen-code"] {
+      count += try scanQwenCode(directory: expandedPath(source.path))
     }
     return count
   }
@@ -43,6 +48,12 @@ final class TokMonScanner {
       return 0
     }
     return try scanOpenCodeDatabase(databaseURL)
+  }
+
+  private func scanQwenCode(directory: URL) throws -> Int {
+    try scanFiles(in: directory) { fileURL in
+      try scanQwenCodeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
+    }
   }
 
   private func scanFiles(in directory: URL, scanner: (URL) throws -> Int) throws -> Int {
@@ -74,14 +85,18 @@ final class TokMonScanner {
     }
     let fileMtime = fileModificationStamp(fileURL)
     let state = try database.scanState(filePath: filePath)
-    if let fileMtime, state.offset == fileSize, state.lastMtime == fileMtime {
+    if let fileMtime,
+       state.offset == fileSize,
+       state.lastMtime == fileMtime,
+       state.lastUsageKey != nil {
       return 0
     }
     let shouldRescanFromStart = fileSize < state.offset
       || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
+      || (fileSize == state.offset && state.lastUsageKey == nil)
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
-      : appendRange(fileSize: fileSize, offset: state.offset)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
     guard let range else {
       return 0
     }
@@ -97,8 +112,17 @@ final class TokMonScanner {
     var startedAt: String?
     var lastActiveAt: String?
     var projectPath: String?
+    var nextOffset = range.offset
     for line in lines {
-      guard let object = parseJSONObject(line) else {
+      guard let object = parseJSONObject(line.text) else {
+        if line.isTerminated {
+          nextOffset = line.nextOffset
+          continue
+        }
+        break
+      }
+      nextOffset = line.nextOffset
+      if line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         continue
       }
       if let timestamp = stringValue(object["timestamp"]) {
@@ -127,7 +151,7 @@ final class TokMonScanner {
     try database.setScanState(
       filePath: filePath,
       state: TokMonScanState(
-        offset: range.nextOffset,
+        offset: nextOffset,
         sessionId: fallbackSessionId,
         model: model,
         lastUsageKey: lastUsageKey,
@@ -164,7 +188,7 @@ final class TokMonScanner {
       || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
-      : appendRange(fileSize: fileSize, offset: state.offset)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
     guard let range else {
       return 0
     }
@@ -182,8 +206,17 @@ final class TokMonScanner {
     var lastActiveAt: String?
     var projectPath: String?
 
+    var nextOffset = range.offset
     for line in lines {
-      guard let object = parseJSONObject(line) else {
+      guard let object = parseJSONObject(line.text) else {
+        if line.isTerminated {
+          nextOffset = line.nextOffset
+          continue
+        }
+        break
+      }
+      nextOffset = line.nextOffset
+      if line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         continue
       }
       if let timestamp = stringValue(object["timestamp"]) {
@@ -244,7 +277,7 @@ final class TokMonScanner {
     try database.setScanState(
       filePath: filePath,
       state: TokMonScanState(
-        offset: range.nextOffset,
+        offset: nextOffset,
         sessionId: resolvedSessionId,
         model: lastModel,
         lastUsageKey: lastUsageKey,
@@ -252,6 +285,137 @@ final class TokMonScanner {
       ),
     )
     try upsertCodexSessionMetadata(
+      sessionId: resolvedSessionId,
+      sessionName: codexSessionName(for: resolvedSessionId, filePath: filePath),
+      model: lastModel,
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
+    )
+    return count
+  }
+
+  private func scanQwenCodeFile(_ fileURL: URL, fallbackSessionId: String) throws -> Int {
+    let filePath = fileURL.path
+    guard let fileSize = try? byteSize(fileURL) else {
+      return 0
+    }
+    let fileMtime = fileModificationStamp(fileURL)
+    let state = try database.scanState(filePath: filePath)
+    let hasCurrentQwenCodeState = hasCurrentQwenCodeScanState(state)
+    if let fileMtime,
+       hasCurrentQwenCodeState,
+       state.offset == fileSize,
+       state.lastMtime == fileMtime {
+      return 0
+    }
+    let shouldRescanFromStart = !hasCurrentQwenCodeState
+      || fileSize < state.offset
+      || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
+    let range = shouldRescanFromStart
+      ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
+    guard let range else {
+      return 0
+    }
+    guard let lines = try? readLines(fileURL, range: range) else {
+      return 0
+    }
+
+    var count = 0
+    var resolvedSessionId = range.offset == 0 ? fallbackSessionId : (state.sessionId ?? fallbackSessionId)
+    var lastModel = range.offset == 0 ? "unknown" : (state.model ?? "unknown")
+    var lastUsageKey = range.offset == 0 ? nil : qwenCodeStoredUsageKey(state.lastUsageKey)
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var projectPath: String?
+    var nextOffset = range.offset
+
+    for line in lines {
+      guard let object = parseJSONObject(line.text) else {
+        if line.isTerminated {
+          nextOffset = line.nextOffset
+          continue
+        }
+        break
+      }
+      nextOffset = line.nextOffset
+      if line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        continue
+      }
+      if let sessionId = normalizedPrompt(stringValue(object["sessionId"])) {
+        resolvedSessionId = sessionId
+      }
+      if let timestamp = stringValue(object["timestamp"]) {
+        startedAt = startedAt ?? timestamp
+        lastActiveAt = timestamp
+      }
+      projectPath = projectPath ?? normalizedPrompt(stringValue(object["cwd"]))
+      if let prompt = qwenUserMessage(object) {
+        firstPrompt = firstPrompt ?? prompt
+        lastPrompt = prompt
+      }
+      if let telemetry = parseQwenSubagentTelemetryRecord(
+        object,
+        sessionId: resolvedSessionId,
+        fallbackModel: lastModel,
+      ) {
+        lastModel = telemetry.usage.model
+        if telemetry.usageKey == lastUsageKey {
+          continue
+        }
+        lastUsageKey = telemetry.usageKey
+        if try database.insertUsage(telemetry.usage) {
+          count += 1
+        }
+        continue
+      }
+      guard let usage = object["usageMetadata"] as? [String: Any],
+            object["type"] as? String == "assistant" else {
+        continue
+      }
+      let model = normalizedPrompt(stringValue(object["model"])) ?? lastModel
+      lastModel = model
+      let usageKey = normalizedPrompt(stringValue(object["uuid"]))
+        ?? qwenUsageKey(usage, timestamp: stringValue(object["timestamp"]))
+      if usageKey == lastUsageKey {
+        continue
+      }
+      lastUsageKey = usageKey
+      let cacheRead = intValue(usage["cachedContentTokenCount"])
+      let inputTokens = max(intValue(usage["promptTokenCount"]) - cacheRead, 0)
+      let record = TokMonUsageRecord(
+        source: "qwen-code",
+        sessionId: resolvedSessionId,
+        model: model,
+        inputTokens: inputTokens,
+        outputTokens: intValue(usage["candidatesTokenCount"]),
+        cacheCreation: 0,
+        cacheRead: cacheRead,
+        reasoningTokens: intValue(usage["thoughtsTokenCount"]),
+        createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
+      )
+      if try database.insertUsage(record) {
+        count += 1
+      }
+    }
+
+    try database.setScanState(
+      filePath: filePath,
+      state: TokMonScanState(
+        offset: nextOffset,
+        sessionId: resolvedSessionId,
+        model: lastModel,
+        lastUsageKey: qwenCodeScanStateUsageKey(lastUsageKey),
+        lastMtime: fileMtime,
+      ),
+    )
+    try upsertQwenCodeSessionMetadata(
       sessionId: resolvedSessionId,
       model: lastModel,
       firstPrompt: firstPrompt,
@@ -524,9 +688,6 @@ final class TokMonScanner {
       reasoningTokens: 0,
       createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
     )
-    guard hasClaudeTokenUsage(record) else {
-      return nil
-    }
     return (stringValue(messageObject["id"]) ?? "", record)
   }
 
@@ -587,6 +748,59 @@ final class TokMonScanner {
     return extractCodexText(from: payload["content"]).flatMap(normalizedPrompt)
   }
 
+  private func qwenUserMessage(_ object: [String: Any]) -> String? {
+    guard object["type"] as? String == "user",
+          let message = object["message"] as? [String: Any] else {
+      return nil
+    }
+    return extractQwenText(from: message["parts"]).flatMap(normalizedPrompt)
+  }
+
+  private func parseQwenSubagentTelemetryRecord(
+    _ object: [String: Any],
+    sessionId: String,
+    fallbackModel: String,
+  ) -> (usageKey: String, usage: TokMonUsageRecord)? {
+    guard object["type"] as? String == "system",
+          normalizedPrompt(stringValue(object["subtype"])) == "ui_telemetry",
+          let systemPayload = parsePayload(object["systemPayload"]),
+          let uiEvent = parsePayload(systemPayload["uiEvent"]),
+          normalizedPrompt(stringValue(uiEvent["event.name"])) == "qwen-code.api_response",
+          normalizedPrompt(stringValue(uiEvent["subagent_name"])) != nil else {
+      return nil
+    }
+
+    let cacheRead = intValue(uiEvent["cached_content_token_count"])
+    let inputTokens = max(intValue(uiEvent["input_token_count"]) - cacheRead, 0)
+    let outputTokens = intValue(uiEvent["output_token_count"])
+    let reasoningTokens = intValue(uiEvent["thoughts_token_count"])
+    guard inputTokens != 0 || outputTokens != 0 || cacheRead != 0 || reasoningTokens != 0 else {
+      return nil
+    }
+
+    let model = normalizedPrompt(stringValue(uiEvent["model"])) ?? fallbackModel
+    let createdAt = normalizedPrompt(stringValue(uiEvent["event.timestamp"]))
+      ?? stringValue(object["timestamp"])
+      ?? ISO8601DateFormatter().string(from: Date())
+    let usage = TokMonUsageRecord(
+      source: "qwen-code",
+      sessionId: sessionId,
+      model: model,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cacheCreation: 0,
+      cacheRead: cacheRead,
+      reasoningTokens: reasoningTokens,
+      createdAt: createdAt,
+    )
+    return (
+      normalizedPrompt(stringValue(uiEvent["response_id"]))
+        ?? normalizedPrompt(stringValue(uiEvent["prompt_id"]))
+        ?? qwenTelemetryUsageKey(uiEvent, timestamp: createdAt),
+      usage
+    )
+  }
+
   private func extractCodexText(from content: Any?) -> String? {
     if let text = content as? String {
       return text
@@ -598,6 +812,16 @@ final class TokMonScanner {
       stringValue(part["text"])
         ?? stringValue(part["input_text"])
         ?? stringValue(part["output_text"])
+    }.joined(separator: "\n")
+    return text.isEmpty ? nil : text
+  }
+
+  private func extractQwenText(from parts: Any?) -> String? {
+    guard let parts = parts as? [[String: Any]] else {
+      return nil
+    }
+    let text = parts.compactMap { part in
+      stringValue(part["text"])
     }.joined(separator: "\n")
     return text.isEmpty ? nil : text
   }
@@ -615,6 +839,26 @@ final class TokMonScanner {
       return nil
     }
     return prompt.hasPrefix("<environment_context>") ? nil : prompt
+  }
+
+  private func hasCurrentQwenCodeScanState(_ state: TokMonScanState) -> Bool {
+    state.lastUsageKey?.hasPrefix(Self.qwenCodeScanStateVersion + ":") == true
+  }
+
+  private func qwenCodeStoredUsageKey(_ value: String?) -> String? {
+    guard let value else {
+      return nil
+    }
+    let prefix = Self.qwenCodeScanStateVersion + ":"
+    guard value.hasPrefix(prefix) else {
+      return value
+    }
+    let key = String(value.dropFirst(prefix.count))
+    return key.isEmpty ? nil : key
+  }
+
+  private func qwenCodeScanStateUsageKey(_ value: String?) -> String {
+    Self.qwenCodeScanStateVersion + ":" + (value ?? "")
   }
 
   private func codexFallbackSessionId(for fileURL: URL) -> String {
@@ -678,6 +922,7 @@ final class TokMonScanner {
 
   private func upsertCodexSessionMetadata(
     sessionId: String,
+    sessionName: String?,
     model: String?,
     firstPrompt: String?,
     lastPrompt: String?,
@@ -689,7 +934,7 @@ final class TokMonScanner {
     try database.upsertSessionMetadata(TokMonSessionMetadata(
       id: sessionId,
       source: "codex",
-      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
+      title: sessionTitle(sessionName: sessionName, projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
       firstPrompt: firstPrompt,
       lastPrompt: lastPrompt ?? firstPrompt,
       model: model == "unknown" ? nil : model,
@@ -713,6 +958,30 @@ final class TokMonScanner {
     try database.upsertSessionMetadata(TokMonSessionMetadata(
       id: sessionId,
       source: "claude-code",
+      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: model == "unknown" ? nil : model,
+      startedAt: startedAt,
+      lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
+    ))
+  }
+
+  private func upsertQwenCodeSessionMetadata(
+    sessionId: String,
+    model: String?,
+    firstPrompt: String?,
+    lastPrompt: String?,
+    startedAt: String?,
+    lastActiveAt: String?,
+    filePath: String,
+    projectPath: String?,
+  ) throws {
+    try database.upsertSessionMetadata(TokMonSessionMetadata(
+      id: sessionId,
+      source: "qwen-code",
       title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
       firstPrompt: firstPrompt,
       lastPrompt: lastPrompt ?? firstPrompt,
@@ -777,13 +1046,41 @@ final class TokMonScanner {
     return (fallbackSessionId, model, firstPrompt, lastPrompt ?? firstPrompt, startedAt, lastActiveAt, projectPath)
   }
 
-  private func sessionTitle(projectPath: String?, filePath: String, firstPrompt: String?) -> String? {
+  private func sessionTitle(
+    sessionName: String? = nil,
+    projectPath: String?,
+    filePath: String,
+    firstPrompt: String?,
+  ) -> String? {
     guard let prompt = firstPrompt else {
       return nil
     }
-    let projectName = normalizedPrompt(projectPath).map { URL(fileURLWithPath: $0).lastPathComponent }
+    let titlePrefix = normalizedPrompt(sessionName)
+      ?? normalizedPrompt(projectPath).map { URL(fileURLWithPath: $0).lastPathComponent }
       ?? projectNameFromFilePath(filePath)
-    return "\(projectName) - \(prompt)"
+    return "\(titlePrefix) - \(prompt)"
+  }
+
+  private func codexSessionName(for sessionId: String, filePath: String) -> String? {
+    let fileURL = URL(fileURLWithPath: filePath)
+    let components = fileURL.pathComponents
+    guard let sessionIndex = components.lastIndex(of: "sessions"), sessionIndex > 0 else {
+      return nil
+    }
+    let indexURL = URL(fileURLWithPath: components[..<sessionIndex].joined(separator: "/"))
+      .appendingPathComponent("session_index.jsonl")
+    guard let text = try? String(contentsOf: indexURL, encoding: .utf8) else {
+      return nil
+    }
+    for line in text.components(separatedBy: "\n") {
+      guard let object = parseJSONObject(line),
+            normalizedPrompt(stringValue(object["id"])) == sessionId,
+            let name = normalizedPrompt(stringValue(object["thread_name"])) else {
+        continue
+      }
+      return name
+    }
+    return nil
   }
 
   private func projectNameFromFilePath(_ filePath: String) -> String {
@@ -862,14 +1159,38 @@ final class TokMonScanner {
     return formatter.string(from: date)
   }
 
-  private func readLines(_ fileURL: URL, range: AppendRange) throws -> [String] {
+  private func readLines(_ fileURL: URL, range: AppendRange) throws -> [ScannedLine] {
     let handle = try FileHandle(forReadingFrom: fileURL)
     defer {
       try? handle.close()
     }
     try handle.seek(toOffset: UInt64(range.offset))
     let data = try handle.read(upToCount: Int(range.length)) ?? Data()
-    return String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+    var lines: [ScannedLine] = []
+    var lineStart = data.startIndex
+    var index = data.startIndex
+    while index < data.endIndex {
+      if data[index] == 10 {
+        let lineData = data[lineStart..<index]
+        let nextOffset = range.offset + Int64(data.distance(from: data.startIndex, to: index)) + 1
+        lines.append(ScannedLine(
+          text: String(decoding: lineData, as: UTF8.self),
+          nextOffset: nextOffset,
+          isTerminated: true,
+        ))
+        lineStart = data.index(after: index)
+      }
+      index = data.index(after: index)
+    }
+    if lineStart < data.endIndex {
+      let lineData = data[lineStart..<data.endIndex]
+      lines.append(ScannedLine(
+        text: String(decoding: lineData, as: UTF8.self),
+        nextOffset: range.nextOffset,
+        isTerminated: false,
+      ))
+    }
+    return lines
   }
 
   private func byteSize(_ fileURL: URL) throws -> Int64 {
@@ -913,13 +1234,50 @@ final class TokMonScanner {
     return (totalSize, parts.joined(separator: "|"))
   }
 
-  private func appendRange(fileSize: Int64, offset: Int64) -> AppendRange? {
-    let start = fileSize < offset ? 0 : offset
+  private func appendRange(fileURL: URL, fileSize: Int64, offset: Int64) -> AppendRange? {
+    let start = fileSize < offset ? 0 : (lineStartOffset(fileURL, offset: offset) ?? offset)
     let length = fileSize - start
     guard length >= 0 else {
       return nil
     }
     return AppendRange(offset: start, length: length, nextOffset: fileSize)
+  }
+
+  private func lineStartOffset(_ fileURL: URL, offset: Int64) -> Int64? {
+    guard offset > 0 else {
+      return 0
+    }
+    guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+      return nil
+    }
+    defer {
+      try? handle.close()
+    }
+
+    var cursor = UInt64(offset)
+    do {
+      try handle.seek(toOffset: cursor - 1)
+      if try handle.read(upToCount: 1)?.first == 10 {
+        cursor -= 1
+      }
+    } catch {
+      return nil
+    }
+
+    while cursor > 0 {
+      let chunkSize = min(cursor, 4096)
+      cursor -= chunkSize
+      do {
+        try handle.seek(toOffset: cursor)
+        let data = try handle.read(upToCount: Int(chunkSize)) ?? Data()
+        if let newlineIndex = data.lastIndex(of: 10) {
+          return Int64(cursor) + Int64(data.distance(from: data.startIndex, to: newlineIndex)) + 1
+        }
+      } catch {
+        return nil
+      }
+    }
+    return 0
   }
 
   private func expandedPath(_ path: String) -> URL {
@@ -958,6 +1316,26 @@ final class TokMonScanner {
       String(intValue(usage["output_tokens"])),
       String(intValue(usage["cached_input_tokens"])),
       String(intValue(usage["reasoning_output_tokens"])),
+    ].joined(separator: ":")
+  }
+
+  private func qwenUsageKey(_ usage: [String: Any], timestamp: String?) -> String {
+    [
+      timestamp ?? "",
+      String(intValue(usage["promptTokenCount"])),
+      String(intValue(usage["candidatesTokenCount"])),
+      String(intValue(usage["cachedContentTokenCount"])),
+      String(intValue(usage["thoughtsTokenCount"])),
+    ].joined(separator: ":")
+  }
+
+  private func qwenTelemetryUsageKey(_ usage: [String: Any], timestamp: String?) -> String {
+    [
+      timestamp ?? "",
+      String(intValue(usage["input_token_count"])),
+      String(intValue(usage["output_token_count"])),
+      String(intValue(usage["cached_content_token_count"])),
+      String(intValue(usage["thoughts_token_count"])),
     ].joined(separator: ":")
   }
 
@@ -1066,6 +1444,12 @@ private struct AppendRange {
   let offset: Int64
   let length: Int64
   let nextOffset: Int64
+}
+
+private struct ScannedLine {
+  let text: String
+  let nextOffset: Int64
+  let isTerminated: Bool
 }
 
 private struct RelaxedObjectLiteralParser {

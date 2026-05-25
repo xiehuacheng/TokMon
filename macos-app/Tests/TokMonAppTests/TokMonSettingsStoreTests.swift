@@ -11,6 +11,7 @@ import Testing
     sources: [
       "claude-code": TokMonSourceConfig(path: "~/old-claude"),
       "codex": TokMonSourceConfig(path: "~/old-codex"),
+      "qwen-code": TokMonSourceConfig(path: "~/old-qwen"),
       "future-source": TokMonSourceConfig(path: "~/future"),
     ],
   ))
@@ -22,6 +23,7 @@ import Testing
   store.draft.claudePath = "~/custom-claude"
   store.draft.codexPath = "~/custom-codex"
   store.draft.openCodePath = "~/custom-opencode"
+  store.draft.qwenCodePath = "~/custom-qwen"
   store.draft.source = "codex"
   store.draft.rangeLabel = "today"
   store.draft.liveMode = false
@@ -46,6 +48,7 @@ import Testing
   #expect(config.sources["claude-code"]?.path == "~/custom-claude")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
   #expect(config.sources["opencode"]?.path == "~/custom-opencode")
+  #expect(config.sources["qwen-code"]?.path == "~/custom-qwen")
   #expect(config.sources["future-source"]?.path == "~/future")
   #expect(uiState.source == "codex")
   #expect(uiState.rangeLabel == "today")
@@ -103,9 +106,11 @@ import Testing
   let claudeRoot = dataDir.appendingPathComponent("claude", isDirectory: true)
   let sourceRoot = dataDir.appendingPathComponent("codex", isDirectory: true)
   let openCodeRoot = dataDir.appendingPathComponent("opencode", isDirectory: true)
+  let qwenCodeRoot = dataDir.appendingPathComponent("qwen", isDirectory: true)
   try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: openCodeRoot, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: qwenCodeRoot, withIntermediateDirectories: true)
   try """
   {"type":"session_meta","payload":{"id":"s1","model":"gpt-test"}}
   {"type":"event_msg","timestamp":"2026-05-14T01:00:00.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
@@ -116,6 +121,7 @@ import Testing
       "claude-code": TokMonSourceConfig(path: claudeRoot.path),
       "codex": TokMonSourceConfig(path: sourceRoot.path),
       "opencode": TokMonSourceConfig(path: openCodeRoot.path),
+      "qwen-code": TokMonSourceConfig(path: qwenCodeRoot.path),
     ],
   ))
   let database = try TokMonDatabase(appDataDir: dataDir)

@@ -4,7 +4,7 @@
 
 ## 项目速览
 
-TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code 与 Codex 的 token usage。技术栈：
+TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Qwen Code 与 OpenCode 的 token usage。技术栈：
 
 - App：SwiftUI / AppKit
 - 存储：SQLite3（`tokmon.db`）

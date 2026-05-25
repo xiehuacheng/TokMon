@@ -22,6 +22,23 @@ import Testing
   #expect(!script.contains("APP_NAME=\"AgentMon\""))
 }
 
+@Test func readmeUsesCurrentTokMonScreenshots() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let repoRoot = packageDir.deletingLastPathComponent()
+  let readme = try String(contentsOf: repoRoot.appendingPathComponent("README.md"), encoding: .utf8)
+
+  #expect(readme.contains("docs/images/tokmon-sessions-list.png"))
+  #expect(readme.contains("docs/images/tokmon-session-drilldown.png"))
+  #expect(!readme.contains("docs/images/tokmon-status-tokens.png"))
+  #expect(!readme.contains("docs/images/tokmon-status-sessions.png"))
+  #expect(!readme.contains("docs/images/tokmon-status-popover.png"))
+  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-sessions-list.png").path))
+  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-session-drilldown.png").path))
+}
+
 @Test func infoPlistUsesTokMonBundleMetadata() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -32,6 +49,8 @@ import Testing
   #expect(plist.contains("<string>TokMon</string>"))
   #expect(plist.contains("<string>TokMon.icns</string>"))
   #expect(plist.contains("<string>local.tokmon.app</string>"))
+  #expect(plist.contains("<string>0.2.0</string>"))
+  #expect(plist.contains("<string>3</string>"))
   #expect(!plist.contains("<string>AgentMon</string>"))
   #expect(!plist.contains("<string>AgentMon.icns</string>"))
 }
@@ -77,9 +96,12 @@ import Testing
 
   #expect(main.contains("TokMonMenuBarIcon.makeImage()"))
   #expect(main.contains("NSStatusItem.variableLength"))
+  #expect(main.contains("monospacedDigitSystemFont(ofSize: 12, weight: .semibold)"))
   #expect(!main.contains("chart.line.uptrend.xyaxis"))
-  #expect(icon.contains("rotate(byDegrees: -90)"))
+  #expect(icon.contains("rotate(byDegrees: 90)"))
   #expect(icon.contains("image.isTemplate = true"))
+  #expect(!icon.contains("strokeCurve("))
+  #expect(!icon.contains("curve(to:"))
 }
 
 @Test func statusItemUpdatesTitleFromMenuBarPresentation() throws {
@@ -125,10 +147,12 @@ import Testing
   let runtime = try String(contentsOf: sourcesDir.appendingPathComponent("TokMonRuntime.swift"), encoding: .utf8)
 
   #expect(popover.contains("Text(\"TokMon\")"))
+  #expect(popover.contains("Text(\"T\")"))
   #expect(popover.contains("help: \"Quit TokMon\""))
   #expect(settings.contains("Text(\"TokMon Settings\")"))
   #expect(settings.contains("Text(\"TokenMonitor\")"))
   #expect(runtime.contains("TokMon native TokMon engine failed to initialize"))
+  #expect(!popover.contains("Text(\"A\")"))
   #expect(!popover.contains("Text(\"AgentMon\")"))
   #expect(!settings.contains("Text(\"Native token monitoring\")"))
 }
@@ -285,6 +309,30 @@ import Testing
   #expect(!view.contains(".popover(isPresented:"))
 }
 
+@Test func statusPopoverUsesDistinctSourceColors() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let viewURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("StatusPopoverView.swift")
+  let view = try String(contentsOf: viewURL, encoding: .utf8)
+  let colorFunction = view
+    .components(separatedBy: "private func colorForSource(_ source: String) -> Color")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private func heatmapColor")
+    .first ?? ""
+
+  #expect(colorFunction.contains("case \"claude-code\":\n      TokMonGlass.warning"))
+  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.accent"))
+  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.success"))
+  #expect(colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.danger"))
+  #expect(!colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.warning"))
+}
+
 @Test func statusPopoverExpandsTotalTokensCardForTokenDetails() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -364,6 +412,74 @@ import Testing
   #expect(!valueText.contains("minimumScaleFactor"))
 }
 
+@Test func totalTokensCollapsedComparisonKeepsFullMetricWidth() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let viewURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("StatusPopoverView.swift")
+  let view = try String(contentsOf: viewURL, encoding: .utf8)
+  let totalTile = view
+    .components(separatedBy: "private struct TotalTokensMetricTile: View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private struct TokenDetailMiniMetric: View")
+    .first ?? ""
+  let collapsedBody = totalTile
+    .components(separatedBy: "private var collapsedBody: some View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private var expandedBody: some View")
+    .first ?? ""
+
+  #expect(totalTile.contains("if isExpanded {\n        expandedBody\n      } else {\n        collapsedBody\n      }"))
+  #expect(collapsedBody.contains("ZStack(alignment: .topTrailing)"))
+  #expect(collapsedBody.contains("metricSummary\n          .frame(maxWidth: .infinity, alignment: .leading)"))
+  #expect(totalTile.contains("MetricDelta(metric.delta)"))
+  #expect(!collapsedBody.contains("HStack(alignment: .top, spacing: 10)"))
+}
+
+@Test func totalTokensComparisonTextMatchesOtherMetricCards() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let viewURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("StatusPopoverView.swift")
+  let view = try String(contentsOf: viewURL, encoding: .utf8)
+  let totalTile = view
+    .components(separatedBy: "private struct TotalTokensMetricTile: View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private struct TokenDetailMiniMetric: View")
+    .first ?? ""
+  let primaryTile = view
+    .components(separatedBy: "private struct PrimaryMetricTile: View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private struct TotalTokensMetricTile: View")
+    .first ?? ""
+  let metricDelta = view
+    .components(separatedBy: "private struct MetricDelta: View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private struct MetricValueText: View")
+    .first ?? ""
+
+  #expect(totalTile.contains("MetricDelta(metric.delta)"))
+  #expect(primaryTile.contains("MetricDelta(metric.delta)"))
+  #expect(metricDelta.contains(".font(.system(size: 13, weight: .bold, design: .rounded))"))
+  #expect(!totalTile.contains("MetricDelta(metric.delta, size:"))
+  #expect(!metricDelta.contains("init(_ text: String, size:"))
+  #expect(!metricDelta.contains("var size: CGFloat"))
+  #expect(!metricDelta.contains("minimumScaleFactor"))
+}
+
 @Test func statusPopoverKeepsTotalTokensSingleWidthUntilExpanded() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -427,6 +543,8 @@ import Testing
   #expect(view.contains("TokenChipData(label: \"Cost\""))
   #expect(view.contains("Text(isExpanded ? \"Hide\" : \"Details\")"))
   #expect(view.contains("Text(\"Jump\")"))
+  #expect(view.contains(".frame(width: 78, alignment: .leading)"))
+  #expect(view.contains(".truncationMode(.middle)"))
   #expect(view.contains(".contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))"))
   #expect(view.contains(".frame(minWidth: 76, minHeight: 26)"))
   #expect(!view.contains("Button(isExpanded ? \"Hide\" : \"Details\")"))
@@ -506,8 +624,12 @@ import Testing
 
   #expect(view.contains("let heatmapLabelWidth: CGFloat = 31"))
   #expect(!view.contains(".frame(width: cellSize + metrics.gap"))
-  #expect(layout.contains("let sessionBubbleWidth: CGFloat = 292"))
+  #expect(layout.contains("let statusPanelMainWidth: CGFloat = 342"))
+  #expect(layout.contains("let statusPanelHeight: CGFloat = 690"))
+  #expect(layout.contains("let sessionBubbleWidth: CGFloat = 276"))
   #expect(layout.contains("let sessionBubbleGutter: CGFloat = 14"))
+  #expect(layout.contains("let sessionBubbleScrollHeight: CGFloat = 332"))
+  #expect(layout.contains("let sessionBubbleMaxHeight: CGFloat = 430"))
   #expect(layout.contains("let statusPanelContentWidth = statusPanelMainWidth + sessionBubbleWidth + sessionBubbleGutter"))
   #expect(view.contains(".frame(width: statusPanelMainWidth, height: statusPanelHeight)"))
   #expect(view.contains(".frame(width: statusPanelContentWidth, height: statusPanelHeight, alignment: .topLeading)"))
@@ -676,15 +798,20 @@ import Testing
     .appendingPathComponent("TokMonQueryStore.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
   let query = try String(contentsOf: queryURL, encoding: .utf8)
+  let weekdayAxisStart = try #require(view.range(of: "private struct HeatmapWeekdayAxis: View")?.lowerBound)
+  let weekdayAxisEnd = try #require(view.range(of: "private struct TrendLineChart: View")?.lowerBound)
+  let weekdayAxis = String(view[weekdayAxisStart..<weekdayAxisEnd])
 
-  #expect(query.contains("days: Int = 140"))
+  #expect(query.contains("days: Int = 112"))
   #expect(view.contains("selectedSeries.key"))
   #expect(view.contains("maximumCellSize: 14"))
   #expect(view.contains("let heatmapLabelWidth: CGFloat = 31"))
-  #expect(view.contains(".frame(width: 26"))
-  #expect(view.contains(".lineLimit(1)"))
-  #expect(view.contains(".minimumScaleFactor(0.75)"))
-  #expect(view.contains(".frame(height: 118)"))
+  #expect(weekdayAxis.contains("ForEach(0..<7, id: \\.self)"))
+  #expect(weekdayAxis.contains(".frame(width: 26, height: cellSize, alignment: .leading)"))
+  #expect(!weekdayAxis.contains(".offset(y: CGFloat(label.weekdayIndex) * (cellSize + gap) - 1)"))
+  #expect(weekdayAxis.contains(".lineLimit(1)"))
+  #expect(weekdayAxis.contains(".minimumScaleFactor(0.75)"))
+  #expect(view.contains(".frame(height: 124)"))
 }
 
 @Test func statusPopoverTrendAxisUsesDenseLabelsAndTodayTimeOnly() throws {
@@ -854,7 +981,9 @@ import Testing
   #expect(view.contains("\"OpenCode\""))
   #expect(models.contains("\"OpenCode\""))
   #expect(settings.contains("(\"opencode\", \"OpenCode\")"))
+  #expect(settings.contains("(\"qwen-code\", \"Qwen Code\")"))
   #expect(settings.contains("FieldRow(\"OpenCode\")"))
+  #expect(settings.contains("FieldRow(\"Qwen Code\")"))
 }
 
 @Test func statusPopoverScrollViewCatchesWheelEventsAcrossTransparentGaps() throws {

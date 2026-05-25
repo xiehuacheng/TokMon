@@ -47,6 +47,65 @@ import Testing
   #expect(sessions.first { $0.sessionId == "s1" }?.firstPrompt == "Build native TokMon")
 }
 
+@Test func queryStoreCacheHitRateExcludesRecordsWithoutCacheHitSupport() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "supported-hit",
+    model: "gpt-cache",
+    inputTokens: 30,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 70,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    cacheHitSupported: true,
+  ))
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "supported-miss",
+    model: "gpt-cache",
+    inputTokens: 100,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:05:00.000Z",
+    cacheHitSupported: true,
+  ))
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "unsupported",
+    sessionId: "unsupported-cache",
+    model: "no-cache",
+    inputTokens: 900,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:10:00.000Z",
+    cacheHitSupported: false,
+  ))
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", source: nil, model: nil)
+
+  let summary = try store.summary(filter: filter)
+  let trend = try store.trend(filter: filter, interval: "day")
+  let heatmapDay = try #require(try store.heatmap(
+    source: nil,
+    model: nil,
+    endingAt: makeLocalDate("2026-05-14 10:05:30"),
+    days: 1,
+  ).first)
+
+  #expect(summary.total.totalInput == 1030)
+  #expect(summary.total.cacheHitRate == 0.35)
+  #expect(summary.byModel.first { $0.model == "gpt-cache" }?.cacheHitRate == 0.35)
+  #expect(summary.bySource.first { $0.source == "unsupported" }?.cacheHitRate == 0)
+  #expect(trend.first?.cacheHitRate == 0.35)
+  #expect(TokMonHeatmapValueDescriptor(day: heatmapDay, series: .cacheHitRate, costRates: .zero).helpText == "2026-05-14: 35.0% Hit Rate")
+}
+
 @Test func queryStoreDoesNotSurfaceEnvironmentContextSessionMetadata() throws {
   let dataDir = try makeTokMonTempDir()
   let db = try TokMonDatabase(appDataDir: dataDir)
@@ -86,6 +145,80 @@ import Testing
   #expect(records.rows.first?.sessionTitle == nil)
   #expect(sessions.first?.title == nil)
   #expect(sessions.first?.firstPrompt == nil)
+}
+
+@Test func queryStoreRecordsUseSameComputedSessionTitleAsSessions() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "codex-session",
+    model: "gpt-test",
+    inputTokens: 12,
+    outputTokens: 6,
+    cacheCreation: 0,
+    cacheRead: 2,
+    reasoningTokens: 0,
+    createdAt: "2026-05-20T02:20:10.000Z",
+  ))
+  try db.upsertSessionMetadata(TokMonSessionMetadata(
+    id: "codex-session",
+    source: "codex",
+    title: ".codex - Inspect request subtitles",
+    firstPrompt: "Inspect request subtitles",
+    lastPrompt: "Inspect request subtitles",
+    model: "gpt-test",
+    startedAt: "2026-05-20T02:20:00.000Z",
+    lastActiveAt: "2026-05-20T02:20:11.000Z",
+    filePath: "/Users/tester/.codex/sessions/2026/05/codex-session.jsonl",
+    projectPath: "/Users/tester/Code/TokMon",
+  ))
+
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil)
+  let records = try store.records(filter: filter, page: 0, limit: 10)
+  let sessionRecords = try store.recordsForSession(filter: filter, source: "codex", sessionId: "codex-session", limit: 10)
+  let sessions = try store.sessions(limit: 10)
+
+  #expect(sessions.first?.title == "TokMon - Inspect request subtitles")
+  #expect(records.rows.first?.sessionTitle == "TokMon - Inspect request subtitles")
+  #expect(sessionRecords.first?.sessionTitle == "TokMon - Inspect request subtitles")
+}
+
+@Test func queryStoreRecordsPreserveRealSessionNameTitlePrefix() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "named-codex-session",
+    model: "gpt-test",
+    inputTokens: 12,
+    outputTokens: 6,
+    cacheCreation: 0,
+    cacheRead: 2,
+    reasoningTokens: 0,
+    createdAt: "2026-05-20T03:20:10.000Z",
+  ))
+  try db.upsertSessionMetadata(TokMonSessionMetadata(
+    id: "named-codex-session",
+    source: "codex",
+    title: "Real Session Name - Inspect request subtitles",
+    firstPrompt: "Inspect request subtitles",
+    lastPrompt: "Inspect request subtitles",
+    model: "gpt-test",
+    startedAt: "2026-05-20T03:20:00.000Z",
+    lastActiveAt: "2026-05-20T03:20:11.000Z",
+    filePath: "/Users/tester/.codex/sessions/2026/05/named-codex-session.jsonl",
+    projectPath: "/Users/tester/Code/TokMon",
+  ))
+
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil)
+  let records = try store.records(filter: filter, page: 0, limit: 10)
+  let sessions = try store.sessions(limit: 10)
+
+  #expect(sessions.first?.title == "Real Session Name - Inspect request subtitles")
+  #expect(records.rows.first?.sessionTitle == "Real Session Name - Inspect request subtitles")
 }
 
 @Test func queryStoreSummaryCanUsePrecomputedRollupsForClosedDays() throws {
@@ -262,9 +395,9 @@ import Testing
 
   let days = try store.heatmap(source: nil, model: nil, endingAt: makeLocalDate("2026-05-14 10:05:30"))
 
-  #expect(days.count == 140)
-  #expect(days.first?.day == "2025-12-26")
+  #expect(days.count == 112)
+  #expect(days.first?.day == "2026-01-23")
   #expect(days.last?.day == "2026-05-14")
-  #expect(days.filter { $0.requests == 0 }.count == 139)
+  #expect(days.filter { $0.requests == 0 }.count == 111)
   #expect(days.first { $0.day == "2026-05-14" }?.requests == 1)
 }

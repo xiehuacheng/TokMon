@@ -74,6 +74,64 @@ import Testing
   #expect(metadata?.firstPrompt == "Plan native TokMon sessions")
 }
 
+@Test func scannerUsesCodexSessionNameBeforeProjectNameInRequestTitles() throws {
+  let dataDir = try makeTokMonTempDir()
+  let codexHome = dataDir.appendingPathComponent("codex-home", isDirectory: true)
+  let sessionsDir = codexHome.appendingPathComponent("sessions", isDirectory: true)
+  try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+  let logURL = sessionsDir.appendingPathComponent("named-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "named-session",
+          "model": "gpt-test",
+        ],
+      ],
+      [
+        "type": "event_msg",
+        "timestamp": "2026-05-14T01:00:00.000Z",
+        "payload": [
+          "type": "user_message",
+          "message": "Plan the status popover",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T01:01:00.000Z",
+        inputTokens: 20,
+        outputTokens: 5,
+      ),
+    ],
+    to: logURL,
+  )
+  try JSONLine([
+    "id": "named-session",
+    "thread_name": "Polished UI Session",
+    "updated_at": "2026-05-14T01:05:00.000Z",
+  ]).write(to: codexHome.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: sessionsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let metadata = try #require(try database.sessionMetadata(source: "codex", id: "named-session"))
+  let records = try TokMonQueryStore(database: database).records(
+    filter: TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", source: nil, model: nil),
+    page: 0,
+    limit: 10,
+  )
+
+  #expect(metadata.title == "Polished UI Session - Plan the status popover")
+  #expect(records.rows.first?.sessionTitle == "Polished UI Session - Plan the status popover")
+}
+
 @Test func scannerKeepsCodexTokenCountsWithSameTotalsAtDifferentTimestamps() throws {
   let dataDir = try makeTokMonTempDir()
   let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
@@ -659,7 +717,7 @@ import Testing
   #expect(try scanner.scan(config: config) == 1)
 
   let metadata = try database.sessionMetadata(source: "codex", id: "indexed-session")
-  #expect(metadata?.title == "codex-home - First user prompt fallback")
+  #expect(metadata?.title == "Indexed Codex Title - First user prompt fallback")
   #expect(metadata?.firstPrompt == "First user prompt fallback")
 }
 
@@ -734,11 +792,11 @@ import Testing
   #expect(try scanner.scan(config: config) == 0)
 
   let metadata = try database.sessionMetadata(source: "codex", id: "real-session-id")
-  #expect(metadata?.title == "codex-home - Fallback title from prompt")
+  #expect(metadata?.title == "Session Index Real Title - Fallback title from prompt")
   #expect(metadata?.firstPrompt == "Fallback title from prompt")
   #expect(metadata?.model == "gpt-indexed")
   let sessions = try TokMonQueryStore(database: database).sessions(limit: 10)
-  #expect(sessions.first?.title == "codex-home - Fallback title from prompt")
+  #expect(sessions.first?.title == "Session Index Real Title - Fallback title from prompt")
 }
 
 @Test func scannerDedupesClaudeAssistantUsageByMessageId() throws {
@@ -795,6 +853,264 @@ import Testing
   #expect(records[0].cacheRead == 3)
 }
 
+@Test func scannerImportsClaudeUsageLineCompletedAfterPartialRead() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  let usageLine = try JSONLine([
+    "type": "assistant",
+    "sessionId": "claude-session",
+    "timestamp": "2026-05-14T03:00:00.000Z",
+    "message": [
+      "id": "msg-partial",
+      "model": "claude-test",
+      "usage": [
+        "input_tokens": 12,
+        "output_tokens": 6,
+        "cache_creation_input_tokens": 2,
+        "cache_read_input_tokens": 3,
+      ],
+    ],
+  ])
+  let splitIndex = usageLine.index(usageLine.startIndex, offsetBy: usageLine.count / 2)
+  try String(usageLine[..<splitIndex]).write(to: logURL, atomically: true, encoding: .utf8)
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 0)
+
+  let handle = try FileHandle(forWritingTo: logURL)
+  try handle.seekToEnd()
+  try handle.write(contentsOf: Data(String(usageLine[splitIndex...]).utf8))
+  try handle.close()
+
+  #expect(try scanner.scan(config: config) == 1)
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.source == "claude-code")
+  #expect(record.sessionId == "claude-session")
+  #expect(record.model == "claude-test")
+  #expect(record.inputTokens == 12)
+  #expect(record.outputTokens == 6)
+}
+
+@Test func scannerRecoversClaudeUsageWhenSavedOffsetPointsInsideLine() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  let usageLine = try JSONLine([
+    "type": "assistant",
+    "sessionId": "claude-session",
+    "timestamp": "2026-05-14T03:00:00.000Z",
+    "message": [
+      "id": "msg-recovered",
+      "model": "claude-test",
+      "usage": [
+        "input_tokens": 21,
+        "output_tokens": 9,
+      ],
+    ],
+  ])
+  try usageLine.write(to: logURL, atomically: true, encoding: .utf8)
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let splitIndex = usageLine.index(usageLine.startIndex, offsetBy: usageLine.count / 2)
+  let staleOffset = Int64(String(usageLine[..<splitIndex]).utf8.count)
+  try database.setScanState(
+    filePath: scannerFilePath(logURL),
+    state: TokMonScanState(
+      offset: staleOffset,
+      sessionId: "claude-session",
+      model: nil,
+      lastUsageKey: nil,
+    ),
+  )
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+  let record = try #require(try database.allUsageRecords().first)
+  #expect(record.sessionId == "claude-session")
+  #expect(record.model == "claude-test")
+  #expect(record.inputTokens == 21)
+  #expect(record.outputTokens == 9)
+}
+
+@Test func scannerRechecksPreviousClaudeLineWhenAppendingAfterStaleOffset() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  let missedLine = try JSONLine([
+    "type": "assistant",
+    "sessionId": "claude-session",
+    "timestamp": "2026-05-14T03:00:00.000Z",
+    "message": [
+      "id": "msg-missed",
+      "model": "claude-test",
+      "usage": [
+        "input_tokens": 13,
+        "output_tokens": 5,
+      ],
+    ],
+  ])
+  try missedLine.write(to: logURL, atomically: true, encoding: .utf8)
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  try database.setScanState(
+    filePath: scannerFilePath(logURL),
+    state: TokMonScanState(
+      offset: Int64(missedLine.utf8.count),
+      sessionId: "claude-session",
+      model: nil,
+      lastUsageKey: nil,
+    ),
+  )
+  let appendedLine = try JSONLine([
+    "type": "assistant",
+    "sessionId": "claude-session",
+    "timestamp": "2026-05-14T03:01:00.000Z",
+    "message": [
+      "id": "msg-appended",
+      "model": "claude-test",
+      "usage": [
+        "input_tokens": 8,
+        "output_tokens": 4,
+      ],
+    ],
+  ])
+  let handle = try FileHandle(forWritingTo: logURL)
+  try handle.seekToEnd()
+  try handle.write(contentsOf: Data(appendedLine.utf8))
+  try handle.close()
+
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 2)
+  let records = try database.allUsageRecords()
+  #expect(records.map(\.inputTokens) == [13, 8])
+}
+
+@Test func scannerImportsClaudeAssistantRequestsWithZeroTokenUsage() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-24T06:08:17.667Z",
+        "message": [
+          "id": "chatcmpl-zero",
+          "type": "message",
+          "role": "assistant",
+          "model": "qwen3.6-35b",
+          "usage": [
+            "input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 0,
+          ],
+          "content": [
+            [
+              "type": "text",
+              "text": "Done",
+            ],
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+  let record = try #require(try database.allUsageRecords().first)
+  #expect(record.source == "claude-code")
+  #expect(record.sessionId == "claude-session")
+  #expect(record.model == "qwen3.6-35b")
+  #expect(record.inputTokens == 0)
+  #expect(record.outputTokens == 0)
+}
+
+@Test func scannerBackfillsClaudeZeroUsageWhenLegacyStateReachedEndOfFile() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-24T06:08:17.667Z",
+        "message": [
+          "id": "chatcmpl-zero",
+          "type": "message",
+          "role": "assistant",
+          "model": "qwen3.6-35b",
+          "usage": [
+            "input_tokens": 0,
+            "output_tokens": 0,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  try database.setScanState(
+    filePath: scannerFilePath(logURL),
+    state: TokMonScanState(
+      offset: fileByteSize(logURL),
+      sessionId: "claude-session",
+      model: nil,
+      lastUsageKey: nil,
+      lastMtime: nil,
+    ),
+  )
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+  #expect(try database.allUsageRecords().count == 1)
+}
+
 @Test func scannerParsesCodexJavaScriptPayloadStrings() throws {
   let dataDir = try makeTokMonTempDir()
   let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
@@ -832,6 +1148,250 @@ import Testing
   #expect(records.first?.inputTokens == 17)
   #expect(records.first?.cacheRead == 3)
   #expect(records.first?.reasoningTokens == 2)
+}
+
+@Test func scannerImportsQwenCodeUsageMetadataFromChatLogs() throws {
+  let dataDir = try makeTokMonTempDir()
+  let qwenRoot = dataDir.appendingPathComponent("qwen-projects", isDirectory: true)
+  let chatsDir = qwenRoot
+    .appendingPathComponent("-Users-orange-Desktop-Project-job-LLM", isDirectory: true)
+    .appendingPathComponent("chats", isDirectory: true)
+  try FileManager.default.createDirectory(at: chatsDir, withIntermediateDirectories: true)
+  let logURL = chatsDir.appendingPathComponent("qwen-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "uuid": "user-1",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:48:56.747Z",
+        "type": "user",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "message": [
+          "role": "user",
+          "parts": [
+            ["text": "Plan the ASR service"],
+          ],
+        ],
+      ],
+      [
+        "uuid": "assistant-1",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:49:00.000Z",
+        "type": "assistant",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "model": "qwen3-coder-plus",
+        "message": [
+          "role": "assistant",
+          "parts": [
+            ["text": "Sure"],
+          ],
+        ],
+        "usageMetadata": [
+          "promptTokenCount": 19179,
+          "candidatesTokenCount": 9,
+          "thoughtsTokenCount": 3,
+          "totalTokenCount": 19191,
+          "cachedContentTokenCount": 100,
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "qwen-code": TokMonSourceConfig(path: qwenRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+  let record = try #require(try database.allUsageRecords().first)
+  #expect(record.source == "qwen-code")
+  #expect(record.sessionId == "qwen-session")
+  #expect(record.model == "qwen3-coder-plus")
+  #expect(record.inputTokens == 19079)
+  #expect(record.outputTokens == 9)
+  #expect(record.cacheRead == 100)
+  #expect(record.reasoningTokens == 3)
+
+  let metadata = try #require(try database.sessionMetadata(source: "qwen-code", id: "qwen-session"))
+  #expect(metadata.title == "LLM - Plan the ASR service")
+  #expect(metadata.model == "qwen3-coder-plus")
+}
+
+@Test func scannerImportsQwenCodeSubagentTelemetryFromChatLogs() throws {
+  let dataDir = try makeTokMonTempDir()
+  let qwenRoot = dataDir.appendingPathComponent("qwen-projects", isDirectory: true)
+  let chatsDir = qwenRoot
+    .appendingPathComponent("-Users-orange-Desktop-Project-job-LLM", isDirectory: true)
+    .appendingPathComponent("chats", isDirectory: true)
+  try FileManager.default.createDirectory(at: chatsDir, withIntermediateDirectories: true)
+  let logURL = chatsDir.appendingPathComponent("qwen-subagent-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "uuid": "user-1",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:48:56.747Z",
+        "type": "user",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "message": [
+          "role": "user",
+          "parts": [
+            ["text": "Explore the ASR project"],
+          ],
+        ],
+      ],
+      [
+        "uuid": "assistant-main",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:49:04.373Z",
+        "type": "assistant",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "model": "qwen3.6-27b",
+        "message": [
+          "role": "model",
+          "parts": [
+            ["text": "I will explore it."],
+          ],
+        ],
+        "usageMetadata": [
+          "promptTokenCount": 19185,
+          "candidatesTokenCount": 238,
+          "thoughtsTokenCount": 0,
+          "totalTokenCount": 19423,
+          "cachedContentTokenCount": 0,
+        ],
+      ],
+      [
+        "uuid": "subagent-response",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:49:20.841Z",
+        "type": "system",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "subtype": "ui_telemetry",
+        "systemPayload": [
+          "uiEvent": [
+            "event.name": "qwen-code.api_response",
+            "event.timestamp": "2026-05-24T12:49:20.841Z",
+            "response_id": "chatcmpl-subagent",
+            "model": "qwen3.6-27b",
+            "input_token_count": 11357,
+            "output_token_count": 211,
+            "cached_content_token_count": 57,
+            "thoughts_token_count": 13,
+            "total_token_count": 11581,
+            "prompt_id": "qwen-session#Explore-9e5f1bb1#0",
+            "subagent_name": "Explore",
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "qwen-code": TokMonSourceConfig(path: qwenRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 2)
+  let records = try database.allUsageRecords()
+  #expect(records.map(\.source) == ["qwen-code", "qwen-code"])
+  #expect(records.map(\.sessionId) == ["qwen-session", "qwen-session"])
+  #expect(records.map(\.model) == ["qwen3.6-27b", "qwen3.6-27b"])
+  #expect(records.map(\.inputTokens) == [19185, 11300])
+  #expect(records.map(\.outputTokens) == [238, 211])
+  #expect(records.map(\.cacheRead) == [0, 57])
+  #expect(records.map(\.reasoningTokens) == [0, 13])
+
+  let metadata = try #require(try database.sessionMetadata(source: "qwen-code", id: "qwen-session"))
+  #expect(metadata.title == "LLM - Explore the ASR project")
+  #expect(metadata.model == "qwen3.6-27b")
+}
+
+@Test func scannerBackfillsQwenCodeSubagentTelemetryAfterLegacyScanStateReachedEndOfFile() throws {
+  let dataDir = try makeTokMonTempDir()
+  let qwenRoot = dataDir.appendingPathComponent("qwen-projects", isDirectory: true)
+  let chatsDir = qwenRoot
+    .appendingPathComponent("-Users-orange-Desktop-Project-job-LLM", isDirectory: true)
+    .appendingPathComponent("chats", isDirectory: true)
+  try FileManager.default.createDirectory(at: chatsDir, withIntermediateDirectories: true)
+  let logURL = chatsDir.appendingPathComponent("legacy-qwen-subagent-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "uuid": "user-1",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:48:56.747Z",
+        "type": "user",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "message": [
+          "role": "user",
+          "parts": [
+            ["text": "Explore the ASR project"],
+          ],
+        ],
+      ],
+      [
+        "uuid": "subagent-response",
+        "sessionId": "qwen-session",
+        "timestamp": "2026-05-24T12:49:20.841Z",
+        "type": "system",
+        "cwd": "/Users/orange/Desktop/Project/job/LLM",
+        "subtype": "ui_telemetry",
+        "systemPayload": [
+          "uiEvent": [
+            "event.name": "qwen-code.api_response",
+            "event.timestamp": "2026-05-24T12:49:20.841Z",
+            "response_id": "chatcmpl-subagent",
+            "model": "qwen3.6-27b",
+            "input_token_count": 11357,
+            "output_token_count": 211,
+            "cached_content_token_count": 57,
+            "thoughts_token_count": 13,
+            "total_token_count": 11581,
+            "prompt_id": "qwen-session#Explore-9e5f1bb1#0",
+            "subagent_name": "Explore",
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  try database.setScanState(
+    filePath: scannerFilePath(logURL),
+    state: TokMonScanState(
+      offset: try fileByteSize(logURL),
+      sessionId: "qwen-session",
+      model: "qwen3.6-27b",
+      lastUsageKey: nil,
+      lastMtime: String(try fileModifiedAt(logURL).timeIntervalSince1970),
+    ),
+  )
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "qwen-code": TokMonSourceConfig(path: qwenRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+  let record = try #require(try database.allUsageRecords().first)
+  #expect(record.source == "qwen-code")
+  #expect(record.sessionId == "qwen-session")
+  #expect(record.model == "qwen3.6-27b")
+  #expect(record.inputTokens == 11300)
+  #expect(record.outputTokens == 211)
+  #expect(record.cacheRead == 57)
+  #expect(record.reasoningTokens == 13)
 }
 
 @Test func scannerContinuesAfterUnreadableJsonlFile() throws {

@@ -74,9 +74,10 @@ struct TokMonHeatmapLayout: Equatable {
   }
 
   private static let defaultWeekdayLabels = [
-    WeekdayLabel(weekdayIndex: 1, label: "Mon"),
-    WeekdayLabel(weekdayIndex: 3, label: "Wed"),
-    WeekdayLabel(weekdayIndex: 5, label: "Fri"),
+    WeekdayLabel(weekdayIndex: 0, label: "Mon"),
+    WeekdayLabel(weekdayIndex: 2, label: "Wed"),
+    WeekdayLabel(weekdayIndex: 4, label: "Fri"),
+    WeekdayLabel(weekdayIndex: 6, label: "Sun"),
   ]
 
   private static func parsedDays(

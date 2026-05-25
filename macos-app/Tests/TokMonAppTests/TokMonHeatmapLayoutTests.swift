@@ -13,8 +13,8 @@ import Testing
 
   let layout = TokMonHeatmapLayout(days: days)
 
-  #expect(layout.weekdayLabels.map(\.label) == ["Mon", "Wed", "Fri"])
-  #expect(layout.weekdayLabels.map(\.weekdayIndex) == [1, 3, 5])
+  #expect(layout.weekdayLabels.map(\.label) == ["Mon", "Wed", "Fri", "Sun"])
+  #expect(layout.weekdayLabels.map(\.weekdayIndex) == [0, 2, 4, 6])
   #expect(layout.weeks.count == 2)
   #expect(layout.weeks.allSatisfy { $0.cells.count == 7 })
   #expect(layout.weeks[0].cells[3]?.day == "2026-01-29")

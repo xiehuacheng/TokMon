@@ -25,7 +25,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(output_tokens), 0) as total_output,
              COALESCE(SUM(cache_creation), 0) as total_cache_creation,
              COALESCE(SUM(cache_read), 0) as total_cache_read,
-             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning
+             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0) as total_cache_hit_input,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0) as total_cache_hit_cache_read
       FROM usage_records
       \(scoped.whereSQL)
     """, params: scoped.params) { row in
@@ -36,6 +38,8 @@ final class TokMonQueryStore {
         totalCacheCreation: row.int(3),
         totalCacheRead: row.int(4),
         totalReasoning: row.int(5),
+        totalCacheHitInput: row.int(6),
+        totalCacheHitCacheRead: row.int(7),
       )
     }.first ?? TokMonTotals(
       totalRequests: 0,
@@ -52,7 +56,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0) as cache_hit_cache_read
       FROM usage_records
       \(scoped.whereSQL)
       GROUP BY \(sourceColumn)
@@ -64,6 +70,8 @@ final class TokMonQueryStore {
         outputTokens: row.int(3),
         cacheCreation: row.int(4),
         cacheRead: row.int(5),
+        cacheHitInputTokens: row.int(6),
+        cacheHitCacheRead: row.int(7),
       )
     }
 
@@ -74,7 +82,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0) as cache_hit_cache_read
       FROM usage_records
       \(scoped.whereSQL)
       GROUP BY \(modelColumn), \(sourceColumn)
@@ -88,6 +98,8 @@ final class TokMonQueryStore {
         outputTokens: row.int(4),
         cacheCreation: row.int(5),
         cacheRead: row.int(6),
+        cacheHitInputTokens: row.int(7),
+        cacheHitCacheRead: row.int(8),
       )
     }
 
@@ -99,6 +111,12 @@ final class TokMonQueryStore {
     let format = interval == "day" ? "%Y-%m-%d" : "%Y-%m-%d %H:00"
     let bucketExpression = scoped.usesRollups ? "strftime('\(format)', period_start)" : "strftime('\(format)', created_at, 'localtime')"
     let requestsExpression = scoped.usesRollups ? "COALESCE(SUM(requests), 0)" : "COUNT(*)"
+    let cacheHitInputExpression = scoped.usesRollups
+      ? "COALESCE(SUM(cache_hit_input_tokens), 0)"
+      : "COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0)"
+    let cacheHitReadExpression = scoped.usesRollups
+      ? "COALESCE(SUM(cache_hit_cache_read), 0)"
+      : "COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0)"
     let tableAlias = scoped.tablePrefix.map { " \($0)" } ?? ""
     return try requiredDatabase.queryRows("""
       SELECT \(bucketExpression) as bucket,
@@ -106,7 +124,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
              COALESCE(SUM(cache_read), 0) as cache_read,
-             \(requestsExpression) as requests
+             \(requestsExpression) as requests,
+             \(cacheHitInputExpression) as cache_hit_input_tokens,
+             \(cacheHitReadExpression) as cache_hit_cache_read
       FROM \(scoped.tableName)\(tableAlias)
       \(scoped.whereSQL)
       GROUP BY bucket
@@ -119,11 +139,13 @@ final class TokMonQueryStore {
         cacheCreation: row.int(3),
         cacheRead: row.int(4),
         requests: row.int(5),
+        cacheHitInputTokens: row.int(6),
+        cacheHitCacheRead: row.int(7),
       )
     }
   }
 
-  func heatmap(source: String?, model: String?, endingAt: Date = Date(), days: Int = 140) throws -> [TokMonHeatmapDay] {
+  func heatmap(source: String?, model: String?, endingAt: Date = Date(), days: Int = 112) throws -> [TokMonHeatmapDay] {
     let calendar = Calendar.current
     let endDay = calendar.startOfDay(for: endingAt)
     guard let startDay = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: endDay) else {
@@ -148,7 +170,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
       FROM tokmon_usage_rollups
       \(whereSQL)
       GROUP BY day
@@ -160,6 +184,8 @@ final class TokMonQueryStore {
         outputTokens: row.int(3),
         cacheCreation: row.int(4),
         cacheRead: row.int(5),
+        cacheHitInputTokens: row.int(6),
+        cacheHitCacheRead: row.int(7),
       )
     }
 
@@ -190,6 +216,9 @@ final class TokMonQueryStore {
       SELECT u.source,
              u.session_id,
              COALESCE(metadata_exact.title, metadata_file.title) as session_title,
+             COALESCE(metadata_exact.first_prompt, metadata_file.first_prompt) as first_prompt,
+             COALESCE(metadata_exact.project_path, metadata_file.project_path) as project_path,
+             COALESCE(metadata_exact.file_path, metadata_file.file_path) as metadata_file_path,
              u.model,
              u.input_tokens,
              u.output_tokens,
@@ -209,17 +238,27 @@ final class TokMonQueryStore {
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
     """, params: rowParams) { row in
-      TokMonRecordRow(
+      let fallbackTitle = displaySessionTitle(row.string(2))
+      let firstPrompt = displayPrompt(row.string(3))
+      let projectName = sessionProjectName(
+        projectPath: row.string(4).isEmpty ? nil : row.string(4),
+        filePath: row.string(5).isEmpty ? nil : row.string(5),
+      )
+      return TokMonRecordRow(
         source: row.string(0),
         sessionId: row.string(1),
-        sessionTitle: displaySessionTitle(row.string(2)),
-        model: row.string(3),
-        inputTokens: row.int(4),
-        outputTokens: row.int(5),
-        cacheCreation: row.int(6),
-        cacheRead: row.int(7),
-        reasoningTokens: row.int(8),
-        createdAt: row.string(9),
+        sessionTitle: sessionTitle(
+          fallbackTitle: fallbackTitle,
+          firstPrompt: firstPrompt,
+          projectName: projectName,
+        ),
+        model: row.string(6),
+        inputTokens: row.int(7),
+        outputTokens: row.int(8),
+        cacheCreation: row.int(9),
+        cacheRead: row.int(10),
+        reasoningTokens: row.int(11),
+        createdAt: row.string(12),
       )
     }
 
@@ -242,6 +281,9 @@ final class TokMonQueryStore {
       SELECT u.source,
              u.session_id,
              COALESCE(metadata_exact.title, metadata_file.title) as session_title,
+             COALESCE(metadata_exact.first_prompt, metadata_file.first_prompt) as first_prompt,
+             COALESCE(metadata_exact.project_path, metadata_file.project_path) as project_path,
+             COALESCE(metadata_exact.file_path, metadata_file.file_path) as metadata_file_path,
              u.model,
              u.input_tokens,
              u.output_tokens,
@@ -263,17 +305,27 @@ final class TokMonQueryStore {
       ORDER BY u.created_at DESC
       LIMIT ?
     """, params: params) { row in
-      TokMonRecordRow(
+      let fallbackTitle = displaySessionTitle(row.string(2))
+      let firstPrompt = displayPrompt(row.string(3))
+      let projectName = sessionProjectName(
+        projectPath: row.string(4).isEmpty ? nil : row.string(4),
+        filePath: row.string(5).isEmpty ? nil : row.string(5),
+      )
+      return TokMonRecordRow(
         source: row.string(0),
         sessionId: row.string(1),
-        sessionTitle: displaySessionTitle(row.string(2)),
-        model: row.string(3),
-        inputTokens: row.int(4),
-        outputTokens: row.int(5),
-        cacheCreation: row.int(6),
-        cacheRead: row.int(7),
-        reasoningTokens: row.int(8),
-        createdAt: row.string(9),
+        sessionTitle: sessionTitle(
+          fallbackTitle: fallbackTitle,
+          firstPrompt: firstPrompt,
+          projectName: projectName,
+        ),
+        model: row.string(6),
+        inputTokens: row.int(7),
+        outputTokens: row.int(8),
+        cacheCreation: row.int(9),
+        cacheRead: row.int(10),
+        reasoningTokens: row.int(11),
+        createdAt: row.string(12),
       )
     }
   }
@@ -381,7 +433,7 @@ final class TokMonQueryStore {
 
     var unionQueries = segments.map { segment in
       """
-      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read
       FROM tokmon_usage_rollups
       WHERE grain = '\(segment.grain)'
         AND datetime(period_start) BETWEEN datetime(?) AND datetime(?)
@@ -396,7 +448,9 @@ final class TokMonQueryStore {
                COALESCE(SUM(output_tokens), 0) as output_tokens,
                COALESCE(SUM(cache_creation), 0) as cache_creation,
                COALESCE(SUM(cache_read), 0) as cache_read,
-               COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+               COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
+               COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0) as cache_hit_input_tokens,
+               COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0) as cache_hit_cache_read
         FROM usage_records
         WHERE datetime(created_at, 'localtime') BETWEEN datetime(?) AND datetime(?)
         GROUP BY source, model
@@ -412,7 +466,7 @@ final class TokMonQueryStore {
     }
     let filteredSQL = appendOuterFilters(
       to: """
-      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read
       FROM (\(joinedUnionSQL)) rollup_segments
       """,
       filter: filter,
@@ -425,7 +479,7 @@ final class TokMonQueryStore {
   private func summaryFromYearRollups(filter: TokMonQueryFilter) throws -> TokMonSummary {
     let filteredSQL = appendOuterFilters(
       to: """
-      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens
+      SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read
       FROM tokmon_usage_rollups
       WHERE grain = 'year'
       """,
@@ -443,7 +497,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(output_tokens), 0) as total_output,
              COALESCE(SUM(cache_creation), 0) as total_cache_creation,
              COALESCE(SUM(cache_read), 0) as total_cache_read,
-             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning
+             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning,
+             COALESCE(SUM(cache_hit_input_tokens), 0) as total_cache_hit_input,
+             COALESCE(SUM(cache_hit_cache_read), 0) as total_cache_hit_cache_read
       FROM (\(filteredSQL)) filtered_rollups
     """, params: filteredParams) { row in
       TokMonTotals(
@@ -453,6 +509,8 @@ final class TokMonQueryStore {
         totalCacheCreation: row.int(3),
         totalCacheRead: row.int(4),
         totalReasoning: row.int(5),
+        totalCacheHitInput: row.int(6),
+        totalCacheHitCacheRead: row.int(7),
       )
     }.first ?? TokMonTotals(
       totalRequests: 0,
@@ -469,7 +527,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
       FROM (\(filteredSQL)) filtered_rollups
       GROUP BY source
     """, params: filteredParams) { row in
@@ -480,6 +540,8 @@ final class TokMonQueryStore {
         outputTokens: row.int(3),
         cacheCreation: row.int(4),
         cacheRead: row.int(5),
+        cacheHitInputTokens: row.int(6),
+        cacheHitCacheRead: row.int(7),
       )
     }
 
@@ -490,7 +552,9 @@ final class TokMonQueryStore {
              COALESCE(SUM(input_tokens), 0) as input_tokens,
              COALESCE(SUM(output_tokens), 0) as output_tokens,
              COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
       FROM (\(filteredSQL)) filtered_rollups
       GROUP BY model, source
       ORDER BY requests DESC
@@ -503,6 +567,8 @@ final class TokMonQueryStore {
         outputTokens: row.int(4),
         cacheCreation: row.int(5),
         cacheRead: row.int(6),
+        cacheHitInputTokens: row.int(7),
+        cacheHitCacheRead: row.int(8),
       )
     }
 
@@ -730,6 +796,13 @@ final class TokMonQueryStore {
       return fallbackTitle
     }
 
+    if let fallbackTitle,
+       let split = splitSessionTitle(fallbackTitle),
+       split.firstPrompt == firstPrompt,
+       !isIgnoredSessionTitlePrefix(split.prefix) {
+      return "\(split.prefix) - \(firstPrompt)"
+    }
+
     let projectName = projectName ?? ""
     guard !projectName.isEmpty else {
       return firstPrompt
@@ -761,6 +834,19 @@ final class TokMonQueryStore {
     return projectName
   }
 
+  private func splitSessionTitle(_ title: String) -> (prefix: String, firstPrompt: String)? {
+    let separator = " - "
+    guard let range = title.range(of: separator) else {
+      return nil
+    }
+    let prefix = String(title[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let firstPrompt = String(title[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prefix.isEmpty, !firstPrompt.isEmpty else {
+      return nil
+    }
+    return (prefix, firstPrompt)
+  }
+
   private func projectNameFromFilePath(_ filePath: String) -> String {
     let fileURL = URL(fileURLWithPath: filePath)
     let parent = fileURL.deletingLastPathComponent()
@@ -769,6 +855,11 @@ final class TokMonQueryStore {
       return components[index - 1]
     }
     return parent.lastPathComponent
+  }
+
+  private func isIgnoredSessionTitlePrefix(_ prefix: String) -> Bool {
+    let normalized = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized == ".codex"
   }
 
   private func fillHeatmapDays(

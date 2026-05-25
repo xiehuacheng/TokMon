@@ -35,7 +35,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     statusItem.button?.target = self
     statusItem.button?.action = #selector(toggleStatusPanel)
     statusItem.button?.contentTintColor = .labelColor
-    statusItem.button?.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+    statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     bindStatusItemUpdates()
     updateStatusItem(snapshot: runtime.stats.snapshot)
   }

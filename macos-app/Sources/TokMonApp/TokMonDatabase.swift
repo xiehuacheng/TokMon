@@ -67,8 +67,8 @@ final class TokMonDatabase {
   func insertUsage(_ record: TokMonUsageRecord) throws -> Bool {
     let statement = try prepare("""
       INSERT OR IGNORE INTO usage_records
-        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """)
     defer { sqlite3_finalize(statement) }
 
@@ -81,6 +81,7 @@ final class TokMonDatabase {
     try bind(record.cacheRead, at: 7, in: statement)
     try bind(record.reasoningTokens, at: 8, in: statement)
     try bind(record.createdAt, at: 9, in: statement)
+    try bind(record.cacheHitSupported ? 1 : 0, at: 10, in: statement)
     try stepDone(statement)
 
     let inserted = sqlite3_changes(requiredConnection) > 0
@@ -270,7 +271,7 @@ final class TokMonDatabase {
 
   func allUsageRecords() throws -> [TokMonUsageRecord] {
     let statement = try prepare("""
-      SELECT source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at
+      SELECT source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported
       FROM usage_records
       ORDER BY created_at ASC, id ASC
     """)
@@ -289,6 +290,7 @@ final class TokMonDatabase {
         cacheRead: Int(sqlite3_column_int64(statement, 6)),
         reasoningTokens: Int(sqlite3_column_int64(statement, 7)),
         createdAt: stringColumn(statement, index: 8) ?? "",
+        cacheHitSupported: Int(sqlite3_column_int64(statement, 9)) != 0,
       ))
       result = sqlite3_step(statement)
     }
@@ -348,6 +350,7 @@ final class TokMonDatabase {
         cache_creation INTEGER NOT NULL DEFAULT 0,
         cache_read INTEGER NOT NULL DEFAULT 0,
         reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_hit_supported INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         UNIQUE(source, session_id, created_at, input_tokens, output_tokens)
       );
@@ -388,15 +391,36 @@ final class TokMonDatabase {
         cache_creation INTEGER NOT NULL DEFAULT 0,
         cache_read INTEGER NOT NULL DEFAULT 0,
         reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_hit_cache_read INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(grain, period_start, source, model)
       );
     """)
-    try addColumnIfMissing(
+    let addedUsageCacheSupport = try addColumnIfMissing(
+      table: "usage_records",
+      column: "cache_hit_supported",
+      definition: "cache_hit_supported INTEGER NOT NULL DEFAULT 1",
+    )
+    _ = try addColumnIfMissing(
       table: "tokmon_session_metadata",
       column: "project_path",
       definition: "project_path TEXT",
     )
-    try backfillUsageRollupsIfNeeded()
+    let addedRollupCacheHitInput = try addColumnIfMissing(
+      table: "tokmon_usage_rollups",
+      column: "cache_hit_input_tokens",
+      definition: "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+    )
+    let addedRollupCacheHitRead = try addColumnIfMissing(
+      table: "tokmon_usage_rollups",
+      column: "cache_hit_cache_read",
+      definition: "cache_hit_cache_read INTEGER NOT NULL DEFAULT 0",
+    )
+    if addedUsageCacheSupport || addedRollupCacheHitInput || addedRollupCacheHitRead {
+      try rebuildUsageRollupsFromUsageRecords()
+    } else {
+      try backfillUsageRollupsIfNeeded()
+    }
     try pruneDuplicateOpenCodeProviderUsageRecords()
     try exec("""
 
@@ -414,15 +438,17 @@ final class TokMonDatabase {
     for period in periods {
       let statement = try prepare("""
         INSERT INTO tokmon_usage_rollups
-          (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+          (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(grain, period_start, source, model) DO UPDATE SET
           requests = tokmon_usage_rollups.requests + 1,
           input_tokens = tokmon_usage_rollups.input_tokens + excluded.input_tokens,
           output_tokens = tokmon_usage_rollups.output_tokens + excluded.output_tokens,
           cache_creation = tokmon_usage_rollups.cache_creation + excluded.cache_creation,
           cache_read = tokmon_usage_rollups.cache_read + excluded.cache_read,
-          reasoning_tokens = tokmon_usage_rollups.reasoning_tokens + excluded.reasoning_tokens
+          reasoning_tokens = tokmon_usage_rollups.reasoning_tokens + excluded.reasoning_tokens,
+          cache_hit_input_tokens = tokmon_usage_rollups.cache_hit_input_tokens + excluded.cache_hit_input_tokens,
+          cache_hit_cache_read = tokmon_usage_rollups.cache_hit_cache_read + excluded.cache_hit_cache_read
       """)
       defer { sqlite3_finalize(statement) }
 
@@ -435,6 +461,8 @@ final class TokMonDatabase {
       try bind(record.cacheCreation, at: 7, in: statement)
       try bind(record.cacheRead, at: 8, in: statement)
       try bind(record.reasoningTokens, at: 9, in: statement)
+      try bind(record.cacheHitSupported ? record.inputTokens : 0, at: 10, in: statement)
+      try bind(record.cacheHitSupported ? record.cacheRead : 0, at: 11, in: statement)
       try stepDone(statement)
     }
   }
@@ -575,7 +603,7 @@ final class TokMonDatabase {
   private func insertUsageRollupsFromUsageRecords() throws {
     try exec("""
       INSERT INTO tokmon_usage_rollups
-        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
       SELECT 'day',
              datetime(created_at, 'localtime', 'start of day'),
              source,
@@ -585,12 +613,14 @@ final class TokMonDatabase {
              COALESCE(SUM(output_tokens), 0),
              COALESCE(SUM(cache_creation), 0),
              COALESCE(SUM(cache_read), 0),
-             COALESCE(SUM(reasoning_tokens), 0)
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0)
       FROM usage_records
       GROUP BY 2, source, model;
 
       INSERT INTO tokmon_usage_rollups
-        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
       SELECT 'week',
              datetime(created_at, 'localtime', 'start of day', '-' || ((strftime('%w', datetime(created_at, 'localtime')) + 6) % 7) || ' days'),
              source,
@@ -600,12 +630,14 @@ final class TokMonDatabase {
              COALESCE(SUM(output_tokens), 0),
              COALESCE(SUM(cache_creation), 0),
              COALESCE(SUM(cache_read), 0),
-             COALESCE(SUM(reasoning_tokens), 0)
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0)
       FROM usage_records
       GROUP BY 2, source, model;
 
       INSERT INTO tokmon_usage_rollups
-        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
       SELECT 'month',
              datetime(created_at, 'localtime', 'start of month'),
              source,
@@ -615,12 +647,14 @@ final class TokMonDatabase {
              COALESCE(SUM(output_tokens), 0),
              COALESCE(SUM(cache_creation), 0),
              COALESCE(SUM(cache_read), 0),
-             COALESCE(SUM(reasoning_tokens), 0)
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0)
       FROM usage_records
       GROUP BY 2, source, model;
 
       INSERT INTO tokmon_usage_rollups
-        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens)
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
       SELECT 'year',
              datetime(created_at, 'localtime', 'start of year'),
              source,
@@ -630,7 +664,9 @@ final class TokMonDatabase {
              COALESCE(SUM(output_tokens), 0),
              COALESCE(SUM(cache_creation), 0),
              COALESCE(SUM(cache_read), 0),
-             COALESCE(SUM(reasoning_tokens), 0)
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN input_tokens ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN cache_hit_supported != 0 THEN cache_read ELSE 0 END), 0)
       FROM usage_records
       GROUP BY 2, source, model;
     """)
@@ -642,11 +678,12 @@ final class TokMonDatabase {
     }
   }
 
-  private func addColumnIfMissing(table: String, column: String, definition: String) throws {
+  private func addColumnIfMissing(table: String, column: String, definition: String) throws -> Bool {
     guard try !columnExists(table: table, column: column) else {
-      return
+      return false
     }
     try exec("ALTER TABLE \(table) ADD COLUMN \(definition);")
+    return true
   }
 
   private func columnExists(table: String, column: String) throws -> Bool {
