@@ -64,9 +64,13 @@ actor TokMonEngineActor {
     return try refreshRangeStats(preserving: existingSnapshot, now: now)
   }
 
-  func scan() throws -> Int {
+  func scan(paths: [String]? = nil) throws -> Int {
     let config = try engine.configStore.loadConfig()
-    return try engine.scanner.scan(config: config)
+    return try engine.scanner.scan(config: config, paths: paths)
+  }
+
+  func databaseDataVersion() -> UInt64 {
+    engine.database.dataVersion
   }
 
   func rebuildAndRescan() throws -> Int {

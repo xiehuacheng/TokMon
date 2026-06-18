@@ -60,6 +60,9 @@ struct StatusPopoverView: View {
     .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
       syncSessionBubbleHitSurface()
     }
+    .onAppear {
+      stats.popoverDidAppear()
+    }
     .onDisappear {
       runtime.statusPanelSessionBubbleY = nil
     }

@@ -71,6 +71,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     guard let panel = statusPanel, !isClosingStatusPanel else {
       return
     }
+    runtime.stats.popoverDidDisappear()
     isClosingStatusPanel = true
     removeOutsideClickMonitor()
     setStatusItemHighlighted(false)

@@ -13,6 +13,15 @@ struct TokMonSettingsWindow: View {
     ("qwen-code", "Qwen Code"),
   ]
 
+  private let refreshRateOptions = [
+    (1000, "1s"),
+    (3000, "3s"),
+    (5000, "5s"),
+    (10000, "10s"),
+    (30000, "30s"),
+    (60000, "60s"),
+  ]
+
   var body: some View {
     TokMonLiquidGlassScene {
       ZStack {
@@ -32,9 +41,9 @@ struct TokMonSettingsWindow: View {
                       Text(label).tag(value)
                     }
                   }
-                  .pickerStyle(.segmented)
+                  .pickerStyle(.menu)
                   .labelsHidden()
-                  .frame(width: 330)
+                  .frame(width: 220)
                 }
                 FieldRow("Claude Code") {
                   TextField("~/.claude/projects", text: $store.draft.claudePath)
@@ -59,6 +68,16 @@ struct TokMonSettingsWindow: View {
                   Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
                     ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
                       Text(mode.displayLabel).tag(mode)
+                    }
+                  }
+                  .pickerStyle(.menu)
+                  .labelsHidden()
+                  .frame(width: 220)
+                }
+                FieldRow("Refresh") {
+                  Picker("Refresh Rate", selection: $store.draft.refreshRate) {
+                    ForEach(refreshRateOptions, id: \.0) { ms, label in
+                      Text(label).tag(ms)
                     }
                   }
                   .pickerStyle(.menu)
@@ -414,13 +433,16 @@ private extension View {
 final class TokMonSettingsWindowController {
   private var window: NSWindow?
   private let settingsStore: TokMonSettingsStore
+  private let onSettingsSaved: (@MainActor () -> Void)?
 
-  init(engine: TokMonEngine) {
+  init(engine: TokMonEngine, onSettingsSaved: (@MainActor () -> Void)? = nil) {
     settingsStore = TokMonSettingsStore(engine: engine)
+    self.onSettingsSaved = onSettingsSaved
   }
 
-  init(engineActor: TokMonEngineActor) {
+  init(engineActor: TokMonEngineActor, onSettingsSaved: (@MainActor () -> Void)? = nil) {
     settingsStore = TokMonSettingsStore(engineActor: engineActor)
+    self.onSettingsSaved = onSettingsSaved
   }
 
   func show() {
@@ -443,6 +465,7 @@ final class TokMonSettingsWindowController {
       store: settingsStore,
       onSaveAndClose: { [weak self] in
         self?.window?.close()
+        self?.onSettingsSaved?()
       },
     ))
     window.isReleasedWhenClosed = false

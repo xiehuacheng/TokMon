@@ -48,6 +48,9 @@ final class TokMonStatsStore: ObservableObject {
   private var usageSessionsLimit = 50
   private var selectedUsageSession: TokMonUsageSessionSelection?
 
+  private var isPopoverVisible = false
+  private var lastRefreshedDataVersion: UInt64 = 0
+
   init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engine.map { TokMonEngineActor(engine: $0) }
     self.nowProvider = nowProvider
@@ -84,11 +87,37 @@ final class TokMonStatsStore: ObservableObject {
       timerTask = Task { [weak self] in
         while !Task.isCancelled {
           guard let self else { return }
-          try? await Task.sleep(nanoseconds: self.refreshDelay)
+          let interval = self.adaptiveRefreshInterval()
+          try? await Task.sleep(nanoseconds: interval)
+          guard !Task.isCancelled else { return }
           await self.refresh()
         }
       }
     }
+  }
+
+  private func adaptiveRefreshInterval() -> UInt64 {
+    guard isPopoverVisible else { return 30_000_000_000 }
+    return refreshDelay
+  }
+
+  private func shouldRefresh() async -> Bool {
+    guard let nativeEngineActor else { return false }
+    let currentVersion = await nativeEngineActor.databaseDataVersion()
+    let isFirstRefresh = lastRefreshedDataVersion == 0
+    guard isFirstRefresh || isPopoverVisible || currentVersion != lastRefreshedDataVersion else {
+      return false
+    }
+    lastRefreshedDataVersion = currentVersion
+    return true
+  }
+
+  func popoverDidAppear() {
+    isPopoverVisible = true
+  }
+
+  func popoverDidDisappear() {
+    isPopoverVisible = false
   }
 
   func stopObserving() {
@@ -97,6 +126,16 @@ final class TokMonStatsStore: ObservableObject {
   }
 
   func refresh() async {
+    guard await shouldRefresh() else { return }
+    await refresh(scan: false)
+  }
+
+  func refreshWithScan() async {
+    guard await shouldRefresh() else { return }
+    await refresh(scan: true)
+  }
+
+  private func refresh(scan: Bool) async {
     guard !isRefreshing, !isUpdatingDashboardRange else {
       return
     }
@@ -105,12 +144,21 @@ final class TokMonStatsStore: ObservableObject {
 
     do {
       if let nativeEngineActor {
-        snapshot = try await nativeEngineActor.refreshStats(
-          now: nowProvider(),
-          recordsLimit: recordsLimit,
-          sessionsLimit: usageSessionsLimit,
-          selectedSession: selectedUsageSession,
-        )
+        if scan {
+          snapshot = try await nativeEngineActor.refreshStats(
+            now: nowProvider(),
+            recordsLimit: recordsLimit,
+            sessionsLimit: usageSessionsLimit,
+            selectedSession: selectedUsageSession,
+          )
+        } else {
+          snapshot = try await nativeEngineActor.refreshStatsWithoutScan(
+            now: nowProvider(),
+            recordsLimit: recordsLimit,
+            sessionsLimit: usageSessionsLimit,
+            selectedSession: selectedUsageSession,
+          )
+        }
       }
       errorMessage = nil
     } catch {

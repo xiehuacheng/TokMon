@@ -233,7 +233,7 @@ final class TokMonQueryStore {
       LEFT JOIN tokmon_session_metadata metadata_file
         ON metadata_file.source = u.source
         AND metadata_exact.id IS NULL
-        AND substr(metadata_file.file_path, -length(u.session_id || '.jsonl')) = u.session_id || '.jsonl'
+        AND substr(metadata_file.file_path, -length(u.session_file_suffix)) = u.session_file_suffix
       \(scoped.whereSQL)
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
@@ -298,7 +298,7 @@ final class TokMonQueryStore {
       LEFT JOIN tokmon_session_metadata metadata_file
         ON metadata_file.source = u.source
         AND metadata_exact.id IS NULL
-        AND substr(metadata_file.file_path, -length(u.session_id || '.jsonl')) = u.session_id || '.jsonl'
+        AND substr(metadata_file.file_path, -length(u.session_file_suffix)) = u.session_file_suffix
       \(scoped.whereSQL)
       AND u.source = ?
       AND u.session_id = ?

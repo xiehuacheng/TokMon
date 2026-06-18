@@ -903,6 +903,129 @@ import Testing
   #expect(record.outputTokens == 6)
 }
 
+@Test func scannerMergesClaudeUsageRecordsWithSameMessageId() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "id": "msg-cache-partial",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 50936,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+          ],
+        ],
+      ],
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:01.000Z",
+        "message": [
+          "id": "msg-cache-partial",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 38904,
+            "output_tokens": 532,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 12032,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 38904)
+  #expect(records[0].outputTokens == 532)
+  #expect(records[0].cacheRead == 12032)
+}
+
+@Test func scannerReplacesClaudePartialRecordOnIncrementalScan() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "id": "msg-cache-incremental",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 1000,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let handle = try FileHandle(forWritingTo: logURL)
+  try handle.seekToEnd()
+  try handle.write(contentsOf: Data("\n".utf8))
+  try handle.write(contentsOf: Data(try JSONLine([
+    "type": "assistant",
+    "sessionId": "claude-session",
+    "timestamp": "2026-05-14T03:00:01.000Z",
+    "message": [
+      "id": "msg-cache-incremental",
+      "model": "claude-test",
+      "usage": [
+        "input_tokens": 800,
+        "output_tokens": 100,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 500,
+      ],
+    ],
+  ]).utf8))
+  try handle.close()
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 800)
+  #expect(records[0].outputTokens == 100)
+  #expect(records[0].cacheRead == 500)
+}
+
 @Test func scannerRecoversClaudeUsageWhenSavedOffsetPointsInsideLine() throws {
   let dataDir = try makeTokMonTempDir()
   let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)

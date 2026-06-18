@@ -16,6 +16,7 @@ let package = Package(
       path: "Sources/TokMonApp",
       linkerSettings: [
         .linkedLibrary("sqlite3"),
+        .linkedFramework("CoreServices"),
       ],
     ),
     .testTarget(

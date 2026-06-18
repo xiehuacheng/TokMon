@@ -10,27 +10,133 @@ final class TokMonScanner {
     self.database = database
   }
 
+  // MARK: - Directory Signature Cache
+
+  private struct DirectorySignature: Equatable {
+    let fileCount: Int
+    let fileSignatures: [String]
+  }
+
+  private var directorySignatures: [String: DirectorySignature] = [:]
+
+  private func directorySignature(for directory: URL) throws -> DirectorySignature {
+    guard let enumerator = FileManager.default.enumerator(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+      options: [.skipsHiddenFiles]
+    ) else {
+      return DirectorySignature(fileCount: 0, fileSignatures: [])
+    }
+
+    var fileSignatures: [String] = []
+    for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
+      let attributes = fileAttributes(fileURL)
+      let mtime = attributes.mtime ?? "missing"
+      fileSignatures.append("\(fileURL.path):\(attributes.size):\(mtime)")
+    }
+    return DirectorySignature(fileCount: fileSignatures.count, fileSignatures: fileSignatures.sorted())
+  }
+
+  // MARK: - Codex Session Name Cache
+
+  private struct CodexSessionIndexCacheEntry {
+    let signature: String
+    let name: String?
+  }
+
+  private var codexSessionIndexCache: [String: CodexSessionIndexCacheEntry] = [:]
+
+  // MARK: - Main Entry Points
+
   func scan(config: TokMonConfig) throws -> Int {
+    try scan(config: config, paths: nil)
+  }
+
+  func scan(config: TokMonConfig, paths: [String]?) throws -> Int {
+    let expandedPaths = paths?.map { expandedPath($0).path }
+
     var count = 0
+
     if let source = config.sources["claude-code"] {
-      count += try scanClaudeCode(directory: expandedPath(source.path))
+      let sourcePath = expandedPath(source.path).path
+      if let expandedPaths {
+        let matchingPaths = expandedPaths.filter { $0.hasPrefix(sourcePath) }
+        if !matchingPaths.isEmpty {
+          count += try scanClaudeCode(paths: matchingPaths)
+        } else if paths == nil || paths!.isEmpty {
+          count += try scanClaudeCode(directory: expandedPath(source.path))
+        }
+      } else {
+        count += try scanClaudeCode(directory: expandedPath(source.path))
+      }
     }
+
     if let source = config.sources["codex"] {
-      count += try scanCodex(directory: expandedPath(source.path))
+      let sourcePath = expandedPath(source.path).path
+      if let expandedPaths {
+        let matchingPaths = expandedPaths.filter { $0.hasPrefix(sourcePath) }
+        if !matchingPaths.isEmpty {
+          count += try scanCodex(paths: matchingPaths)
+        } else if paths == nil || paths!.isEmpty {
+          count += try scanCodex(directory: expandedPath(source.path))
+        }
+      } else {
+        count += try scanCodex(directory: expandedPath(source.path))
+      }
     }
+
     if let source = config.sources["opencode"] {
-      count += try scanOpenCode(directory: expandedPath(source.path))
+      let sourcePath = expandedPath(source.path).path
+      if let expandedPaths {
+        let matchingPaths = expandedPaths.filter { $0.hasPrefix(sourcePath) || $0 == sourcePath }
+        if !matchingPaths.isEmpty {
+          count += try scanOpenCode(paths: matchingPaths)
+        } else if paths == nil || paths!.isEmpty {
+          count += try scanOpenCode(directory: expandedPath(source.path))
+        }
+      } else {
+        count += try scanOpenCode(directory: expandedPath(source.path))
+      }
     }
+
     if let source = config.sources["qwen-code"] {
-      count += try scanQwenCode(directory: expandedPath(source.path))
+      let sourcePath = expandedPath(source.path).path
+      if let expandedPaths {
+        let matchingPaths = expandedPaths.filter { $0.hasPrefix(sourcePath) }
+        if !matchingPaths.isEmpty {
+          count += try scanQwenCode(paths: matchingPaths)
+        } else if paths == nil || paths!.isEmpty {
+          count += try scanQwenCode(directory: expandedPath(source.path))
+        }
+      } else {
+        count += try scanQwenCode(directory: expandedPath(source.path))
+      }
     }
+
     return count
   }
+
+  // MARK: - Source Scanners
 
   private func scanClaudeCode(directory: URL) throws -> Int {
     try scanFiles(in: directory) { fileURL in
       try scanClaudeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
     }
+  }
+
+  private func scanClaudeCode(paths: [String]) throws -> Int {
+    var count = 0
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      if url.pathExtension == "jsonl" {
+        count += try scanClaudeFile(url, fallbackSessionId: url.deletingPathExtension().lastPathComponent)
+      } else if url.hasDirectoryPath {
+        count += try scanFiles(in: url, fileURLs: nil) { fileURL in
+          try scanClaudeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
+        }
+      }
+    }
+    return count
   }
 
   private func scanCodex(directory: URL) throws -> Int {
@@ -42,6 +148,21 @@ final class TokMonScanner {
     }
   }
 
+  private func scanCodex(paths: [String]) throws -> Int {
+    var count = 0
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      if url.pathExtension == "jsonl" {
+        count += try scanCodexFile(url, fallbackSessionId: codexFallbackSessionId(for: url))
+      } else if url.hasDirectoryPath {
+        count += try scanFiles(in: url, fileURLs: nil) { fileURL in
+          try scanCodexFile(fileURL, fallbackSessionId: codexFallbackSessionId(for: fileURL))
+        }
+      }
+    }
+    return count
+  }
+
   private func scanOpenCode(directory: URL) throws -> Int {
     let databaseURL = directory.appendingPathComponent("opencode.db")
     guard FileManager.default.fileExists(atPath: databaseURL.path) else {
@@ -50,13 +171,69 @@ final class TokMonScanner {
     return try scanOpenCodeDatabase(databaseURL)
   }
 
+  private func scanOpenCode(paths: [String]) throws -> Int {
+    var count = 0
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      let databaseURL: URL
+      if url.lastPathComponent == "opencode.db" {
+        databaseURL = url
+      } else {
+        databaseURL = url.appendingPathComponent("opencode.db")
+      }
+      guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+        continue
+      }
+      count += try scanOpenCodeDatabase(databaseURL)
+    }
+    return count
+  }
+
   private func scanQwenCode(directory: URL) throws -> Int {
     try scanFiles(in: directory) { fileURL in
       try scanQwenCodeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
     }
   }
 
-  private func scanFiles(in directory: URL, scanner: (URL) throws -> Int) throws -> Int {
+  private func scanQwenCode(paths: [String]) throws -> Int {
+    var count = 0
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      if url.pathExtension == "jsonl" {
+        count += try scanQwenCodeFile(url, fallbackSessionId: url.deletingPathExtension().lastPathComponent)
+      } else if url.hasDirectoryPath {
+        count += try scanFiles(in: url, fileURLs: nil) { fileURL in
+          try scanQwenCodeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
+        }
+      }
+    }
+    return count
+  }
+
+  // MARK: - File Enumeration
+
+  private func scanFiles(in directory: URL, fileURLs: [URL]? = nil, scanner: (URL) throws -> Int) throws -> Int {
+    if let fileURLs {
+      var count = 0
+      for fileURL in fileURLs where fileURL.pathExtension == "jsonl" {
+        guard
+          let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+          values.isRegularFile == true
+        else {
+          continue
+        }
+        count += try scanner(fileURL)
+      }
+      return count
+    }
+
+    // Check directory signature cache for full scans
+    let signature = try directorySignature(for: directory)
+    if let cached = directorySignatures[directory.path], cached == signature {
+      return 0
+    }
+    directorySignatures[directory.path] = signature
+
     guard let enumerator = FileManager.default.enumerator(
       at: directory,
       includingPropertiesForKeys: [.isRegularFileKey],
@@ -78,12 +255,13 @@ final class TokMonScanner {
     return count
   }
 
+  // MARK: - Individual File Scanners
+
   private func scanClaudeFile(_ fileURL: URL, fallbackSessionId: String) throws -> Int {
     let filePath = fileURL.path
-    guard let fileSize = try? byteSize(fileURL) else {
-      return 0
-    }
-    let fileMtime = fileModificationStamp(fileURL)
+    let attributes = fileAttributes(fileURL)
+    let fileSize = attributes.size
+    let fileMtime = attributes.mtime
     let state = try database.scanState(filePath: filePath)
     if let fileMtime,
        state.offset == fileSize,
@@ -96,7 +274,7 @@ final class TokMonScanner {
       || (fileSize == state.offset && state.lastUsageKey == nil)
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
-      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset, lastMtime: state.lastMtime)
     guard let range else {
       return 0
     }
@@ -104,8 +282,10 @@ final class TokMonScanner {
       return 0
     }
 
-    var count = 0
-    var lastUsageKey = range.offset == 0 ? nil : state.lastUsageKey
+    let previousLastKey = state.lastUsageKey.flatMap { ClaudeUsageKey(jsonString: $0) }
+    var pendingByMessageId: [String: TokMonUsageRecord] = [:]
+    var orderedMessageIds: [String] = []
+    var recordsWithoutMessageId: [TokMonUsageRecord] = []
     var model = range.offset == 0 ? nil : state.model
     var firstPrompt: String?
     var lastPrompt: String?
@@ -113,6 +293,7 @@ final class TokMonScanner {
     var lastActiveAt: String?
     var projectPath: String?
     var nextOffset = range.offset
+
     for line in lines {
       guard let object = parseJSONObject(line.text) else {
         if line.isTerminated {
@@ -138,14 +319,57 @@ final class TokMonScanner {
         continue
       }
       model = parsed.usage.model
-      let usageKey = parsed.messageId.isEmpty ? claudeUsageKey(parsed.usage) : parsed.messageId
-      if usageKey == lastUsageKey {
-        continue
+      if parsed.messageId.isEmpty {
+        recordsWithoutMessageId.append(parsed.usage)
+      } else {
+        let messageId = parsed.messageId
+        if let existing = pendingByMessageId[messageId] {
+          if isMoreCompleteRecord(parsed.usage, than: existing) {
+            pendingByMessageId[messageId] = parsed.usage
+          }
+        } else {
+          pendingByMessageId[messageId] = parsed.usage
+          orderedMessageIds.append(messageId)
+        }
       }
-      lastUsageKey = usageKey
-      if try database.insertUsage(parsed.usage) {
-        count += 1
+    }
+
+    var recordsToInsert: [TokMonUsageRecord] = recordsWithoutMessageId
+    for messageId in orderedMessageIds {
+      if let record = pendingByMessageId[messageId] {
+        recordsToInsert.append(record)
       }
+    }
+
+    if !shouldRescanFromStart,
+       let previousKey = previousLastKey,
+       let firstNewMessageId = orderedMessageIds.first,
+       firstNewMessageId == previousKey.messageId {
+      try database.deleteClaudeUsageRecord(
+        source: "claude-code",
+        sessionId: fallbackSessionId,
+        createdAt: previousKey.createdAt,
+        inputTokens: previousKey.inputTokens,
+        outputTokens: previousKey.outputTokens,
+        cacheCreation: previousKey.cacheCreation,
+        cacheRead: previousKey.cacheRead,
+        reasoningTokens: previousKey.reasoningTokens
+      )
+    }
+
+    var count = 0
+    if !recordsToInsert.isEmpty {
+      count = try database.insertUsages(recordsToInsert)
+    }
+
+    let newLastKey: String?
+    if let lastMessageId = orderedMessageIds.last,
+       let lastRecord = pendingByMessageId[lastMessageId] {
+      newLastKey = ClaudeUsageKey(messageId: lastMessageId, record: lastRecord).jsonString
+    } else if let lastNoMessageId = recordsWithoutMessageId.last {
+      newLastKey = claudeUsageKey(lastNoMessageId)
+    } else {
+      newLastKey = state.lastUsageKey
     }
 
     try database.setScanState(
@@ -154,20 +378,25 @@ final class TokMonScanner {
         offset: nextOffset,
         sessionId: fallbackSessionId,
         model: model,
-        lastUsageKey: lastUsageKey,
+        lastUsageKey: newLastKey,
         lastMtime: fileMtime,
       ),
     )
-    try upsertClaudeSessionMetadata(
-      sessionId: fallbackSessionId,
-      model: model,
+
+    let metadata = TokMonSessionMetadata(
+      id: fallbackSessionId,
+      source: "claude-code",
+      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
       firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: model == "unknown" ? nil : model,
       startedAt: startedAt,
       lastActiveAt: lastActiveAt,
       filePath: filePath,
       projectPath: projectPath,
     )
+    try database.upsertSessionMetadatas([metadata])
+
     return count
   }
 
@@ -176,10 +405,9 @@ final class TokMonScanner {
     fallbackSessionId: String,
   ) throws -> Int {
     let filePath = fileURL.path
-    guard let fileSize = try? byteSize(fileURL) else {
-      return 0
-    }
-    let fileMtime = fileModificationStamp(fileURL)
+    let attributes = fileAttributes(fileURL)
+    let fileSize = attributes.size
+    let fileMtime = attributes.mtime
     let state = try database.scanState(filePath: filePath)
     if let fileMtime, state.offset == fileSize, state.lastMtime == fileMtime {
       return 0
@@ -188,7 +416,7 @@ final class TokMonScanner {
       || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
-      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset, lastMtime: state.lastMtime)
     guard let range else {
       return 0
     }
@@ -196,7 +424,7 @@ final class TokMonScanner {
       return 0
     }
 
-    var count = 0
+    var records: [TokMonUsageRecord] = []
     var resolvedSessionId = range.offset == 0 ? fallbackSessionId : (state.sessionId ?? fallbackSessionId)
     var lastModel = range.offset == 0 ? "unknown" : (state.model ?? "unknown")
     var lastUsageKey = range.offset == 0 ? nil : state.lastUsageKey
@@ -269,9 +497,12 @@ final class TokMonScanner {
         reasoningTokens: intValue(usage["reasoning_output_tokens"]),
         createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
       )
-      if try database.insertUsage(record) {
-        count += 1
-      }
+      records.append(record)
+    }
+
+    var count = 0
+    if !records.isEmpty {
+      count = try database.insertUsages(records)
     }
 
     try database.setScanState(
@@ -284,26 +515,29 @@ final class TokMonScanner {
         lastMtime: fileMtime,
       ),
     )
-    try upsertCodexSessionMetadata(
-      sessionId: resolvedSessionId,
-      sessionName: codexSessionName(for: resolvedSessionId, filePath: filePath),
-      model: lastModel,
+
+    let metadata = TokMonSessionMetadata(
+      id: resolvedSessionId,
+      source: "codex",
+      title: sessionTitle(sessionName: codexSessionName(for: resolvedSessionId, filePath: filePath), projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
       firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: lastModel == "unknown" ? nil : lastModel,
       startedAt: startedAt,
       lastActiveAt: lastActiveAt,
       filePath: filePath,
       projectPath: projectPath,
     )
+    try database.upsertSessionMetadatas([metadata])
+
     return count
   }
 
   private func scanQwenCodeFile(_ fileURL: URL, fallbackSessionId: String) throws -> Int {
     let filePath = fileURL.path
-    guard let fileSize = try? byteSize(fileURL) else {
-      return 0
-    }
-    let fileMtime = fileModificationStamp(fileURL)
+    let attributes = fileAttributes(fileURL)
+    let fileSize = attributes.size
+    let fileMtime = attributes.mtime
     let state = try database.scanState(filePath: filePath)
     let hasCurrentQwenCodeState = hasCurrentQwenCodeScanState(state)
     if let fileMtime,
@@ -317,7 +551,7 @@ final class TokMonScanner {
       || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
-      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset, lastMtime: state.lastMtime)
     guard let range else {
       return 0
     }
@@ -325,7 +559,7 @@ final class TokMonScanner {
       return 0
     }
 
-    var count = 0
+    var records: [TokMonUsageRecord] = []
     var resolvedSessionId = range.offset == 0 ? fallbackSessionId : (state.sessionId ?? fallbackSessionId)
     var lastModel = range.offset == 0 ? "unknown" : (state.model ?? "unknown")
     var lastUsageKey = range.offset == 0 ? nil : qwenCodeStoredUsageKey(state.lastUsageKey)
@@ -370,9 +604,7 @@ final class TokMonScanner {
           continue
         }
         lastUsageKey = telemetry.usageKey
-        if try database.insertUsage(telemetry.usage) {
-          count += 1
-        }
+        records.append(telemetry.usage)
         continue
       }
       guard let usage = object["usageMetadata"] as? [String: Any],
@@ -400,9 +632,12 @@ final class TokMonScanner {
         reasoningTokens: intValue(usage["thoughtsTokenCount"]),
         createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
       )
-      if try database.insertUsage(record) {
-        count += 1
-      }
+      records.append(record)
+    }
+
+    var count = 0
+    if !records.isEmpty {
+      count = try database.insertUsages(records)
     }
 
     try database.setScanState(
@@ -415,16 +650,21 @@ final class TokMonScanner {
         lastMtime: fileMtime,
       ),
     )
-    try upsertQwenCodeSessionMetadata(
-      sessionId: resolvedSessionId,
-      model: lastModel,
+
+    let metadata = TokMonSessionMetadata(
+      id: resolvedSessionId,
+      source: "qwen-code",
+      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
       firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: lastModel == "unknown" ? nil : lastModel,
       startedAt: startedAt,
       lastActiveAt: lastActiveAt,
       filePath: filePath,
       projectPath: projectPath,
     )
+    try database.upsertSessionMetadatas([metadata])
+
     return count
   }
 
@@ -441,9 +681,18 @@ final class TokMonScanner {
       return 0
     }
 
-    let openCodeMessages = try openCodeUsageMessages(databaseURL)
+    let after: Int64? = state.lastUsageKey.flatMap { key in
+      let parts = key.split(separator: ":")
+      guard parts.count >= 2 else { return nil }
+      return Int64(parts[1])
+    }
+
+    let openCodeMessages = try openCodeUsageMessages(databaseURL, after: after)
     var count = 0
     var lastUsageKey = state.lastUsageKey
+    var sessionMetadatas: [TokMonSessionMetadata] = []
+    var seenSessions = Set<String>()
+
     for message in openCodeMessages where message.usageKey != state.lastUsageKey {
       let record = TokMonUsageRecord(
         source: "opencode",
@@ -461,21 +710,35 @@ final class TokMonScanner {
         provider: message.provider,
       ) {
         lastUsageKey = message.usageKey
-        try upsertOpenCodeSessionMetadata(message.session)
+        if !seenSessions.contains(message.session.id) {
+          seenSessions.insert(message.session.id)
+          sessionMetadatas.append(openCodeSessionMetadata(message.session))
+        }
         continue
       }
       if try database.insertUsage(record) {
         count += 1
       }
       lastUsageKey = message.usageKey
-      try upsertOpenCodeSessionMetadata(message.session)
+      if !seenSessions.contains(message.session.id) {
+        seenSessions.insert(message.session.id)
+        sessionMetadatas.append(openCodeSessionMetadata(message.session))
+      }
     }
 
     if lastUsageKey == nil {
       for message in openCodeMessages {
-        try upsertOpenCodeSessionMetadata(message.session)
+        if !seenSessions.contains(message.session.id) {
+          seenSessions.insert(message.session.id)
+          sessionMetadatas.append(openCodeSessionMetadata(message.session))
+        }
       }
     }
+
+    if !sessionMetadatas.isEmpty {
+      try database.upsertSessionMetadatas(sessionMetadatas)
+    }
+
     try database.setScanState(
       filePath: filePath,
       state: TokMonScanState(
@@ -490,13 +753,50 @@ final class TokMonScanner {
   }
 
   private func backfillOpenCodeSessionMetadataIfNeeded(_ databaseURL: URL) throws {
-    let openCodeMessages = try openCodeUsageMessages(databaseURL)
+    let sessionsNeedingBackfill = try database.sessionIdsWithEnvironmentContext(source: "opencode", filePath: databaseURL.path)
+    guard !sessionsNeedingBackfill.isEmpty else { return }
+
+    let state = try database.scanState(filePath: databaseURL.path)
+    let after: Int64? = state.lastUsageKey.flatMap { key in
+      let parts = key.split(separator: ":")
+      guard parts.count >= 2 else { return nil }
+      return Int64(parts[1])
+    }
+
+    let openCodeMessages = try openCodeUsageMessages(databaseURL, sessionIds: sessionsNeedingBackfill, after: after)
+    var sessionMetadatas: [TokMonSessionMetadata] = []
+    var seenSessions = Set<String>()
     for message in openCodeMessages {
-      try upsertOpenCodeSessionMetadata(message.session)
+      if !seenSessions.contains(message.session.id) {
+        seenSessions.insert(message.session.id)
+        sessionMetadatas.append(openCodeSessionMetadata(message.session))
+      }
+    }
+    if !sessionMetadatas.isEmpty {
+      try database.upsertSessionMetadatas(sessionMetadatas)
     }
   }
 
-  private func openCodeUsageMessages(_ databaseURL: URL) throws -> [OpenCodeUsageMessage] {
+  private func openCodeSessionMetadata(_ session: OpenCodeSessionSnapshot) -> TokMonSessionMetadata {
+    TokMonSessionMetadata(
+      id: session.id,
+      source: "opencode",
+      title: sessionTitle(projectPath: session.projectPath, filePath: session.filePath, firstPrompt: session.firstPrompt),
+      firstPrompt: session.firstPrompt,
+      lastPrompt: session.firstPrompt,
+      model: session.model == "unknown" ? nil : session.model,
+      startedAt: session.startedAt,
+      lastActiveAt: session.lastActiveAt,
+      filePath: session.filePath,
+      projectPath: session.projectPath,
+    )
+  }
+
+  private func openCodeUsageMessages(_ databaseURL: URL, after: Int64? = nil) throws -> [OpenCodeUsageMessage] {
+    try openCodeUsageMessages(databaseURL, sessionIds: nil, after: after)
+  }
+
+  private func openCodeUsageMessages(_ databaseURL: URL, sessionIds: [String]?, after: Int64? = nil) throws -> [OpenCodeUsageMessage] {
     var connection: OpaquePointer?
     guard sqlite3_open_v2(databaseURL.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let connection else {
       let message = connection.map { String(cString: sqlite3_errmsg($0)) } ?? "Unable to open opencode database"
@@ -509,7 +809,7 @@ final class TokMonScanner {
       sqlite3_close(connection)
     }
 
-    let sql = """
+    var sql = """
       SELECT m.id,
              m.session_id,
              m.time_created,
@@ -540,14 +840,37 @@ final class TokMonScanner {
              ) as first_prompt
       FROM message m
       JOIN session s ON s.id = m.session_id
-      ORDER BY m.time_created ASC, m.id ASC
     """
+    var conditions: [String] = []
+    if let sessionIds, !sessionIds.isEmpty {
+      let placeholders = sessionIds.map { _ in "?" }.joined(separator: ",")
+      conditions.append("m.session_id IN (\(placeholders))")
+    }
+    if after != nil {
+      conditions.append("m.time_created >= ?")
+    }
+    if !conditions.isEmpty {
+      sql += " WHERE " + conditions.joined(separator: " AND ")
+    }
+    sql += " ORDER BY m.time_created ASC, m.id ASC"
+
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
       throw TokMonScannerError.openCodeDatabase(String(cString: sqlite3_errmsg(connection)))
     }
     defer {
       sqlite3_finalize(statement)
+    }
+
+    var bindIndex: Int32 = 1
+    if let sessionIds {
+      for sessionId in sessionIds {
+        sqlite3_bind_text(statement, bindIndex, sessionId, -1, SQLITE_TRANSIENT)
+        bindIndex += 1
+      }
+    }
+    if let after {
+      sqlite3_bind_int64(statement, bindIndex, after)
     }
 
     var messages: [OpenCodeUsageMessage] = []
@@ -1069,7 +1392,17 @@ final class TokMonScanner {
     }
     let indexURL = URL(fileURLWithPath: components[..<sessionIndex].joined(separator: "/"))
       .appendingPathComponent("session_index.jsonl")
+
+    let attributes = fileAttributes(indexURL)
+    let signature = "\(attributes.size):\(attributes.mtime ?? "missing")"
+
+    let cacheKey = indexURL.path
+    if let cached = codexSessionIndexCache[cacheKey], cached.signature == signature {
+      return cached.name
+    }
+
     guard let text = try? String(contentsOf: indexURL, encoding: .utf8) else {
+      codexSessionIndexCache[cacheKey] = CodexSessionIndexCacheEntry(signature: signature, name: nil)
       return nil
     }
     for line in text.components(separatedBy: "\n") {
@@ -1078,8 +1411,10 @@ final class TokMonScanner {
             let name = normalizedPrompt(stringValue(object["thread_name"])) else {
         continue
       }
+      codexSessionIndexCache[cacheKey] = CodexSessionIndexCacheEntry(signature: signature, name: name)
       return name
     }
+    codexSessionIndexCache[cacheKey] = CodexSessionIndexCacheEntry(signature: signature, name: nil)
     return nil
   }
 
@@ -1159,13 +1494,16 @@ final class TokMonScanner {
     return formatter.string(from: date)
   }
 
+  private let maxReadLinesBytesPerCall: Int64 = 4 * 1024 * 1024
+
   private func readLines(_ fileURL: URL, range: AppendRange) throws -> [ScannedLine] {
     let handle = try FileHandle(forReadingFrom: fileURL)
     defer {
       try? handle.close()
     }
     try handle.seek(toOffset: UInt64(range.offset))
-    let data = try handle.read(upToCount: Int(range.length)) ?? Data()
+    let readLength = min(range.length, maxReadLinesBytesPerCall)
+    let data = try handle.read(upToCount: Int(readLength)) ?? Data()
     var lines: [ScannedLine] = []
     var lineStart = data.startIndex
     var index = data.startIndex
@@ -1184,31 +1522,33 @@ final class TokMonScanner {
     }
     if lineStart < data.endIndex {
       let lineData = data[lineStart..<data.endIndex]
+      let nextOffset = range.offset + Int64(data.count)
       lines.append(ScannedLine(
         text: String(decoding: lineData, as: UTF8.self),
-        nextOffset: range.nextOffset,
+        nextOffset: nextOffset,
         isTerminated: false,
       ))
     }
     return lines
   }
 
-  private func byteSize(_ fileURL: URL) throws -> Int64 {
-    let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-    if let size = attributes[.size] as? NSNumber {
-      return size.int64Value
+  // MARK: - File Attributes (Merged stat calls)
+
+  private func fileAttributes(_ fileURL: URL) -> (size: Int64, mtime: String?) {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path) else {
+      return (0, nil)
     }
-    return 0
+    let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    let mtime = (attributes[.modificationDate] as? Date).map { String($0.timeIntervalSince1970) }
+    return (size, mtime)
+  }
+
+  private func byteSize(_ fileURL: URL) throws -> Int64 {
+    fileAttributes(fileURL).size
   }
 
   private func fileModificationStamp(_ fileURL: URL) -> String? {
-    guard
-      let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-      let modifiedAt = attributes[.modificationDate] as? Date
-    else {
-      return nil
-    }
-    return String(modifiedAt.timeIntervalSince1970)
+    fileAttributes(fileURL).mtime
   }
 
   private func openCodeDatabaseSignature(_ databaseURL: URL) -> (size: Int64, stamp: String)? {
@@ -1223,10 +1563,10 @@ final class TokMonScanner {
       guard FileManager.default.fileExists(atPath: url.path) else {
         return nil
       }
-      let size = (try? byteSize(url)) ?? 0
-      totalSize += size
-      let mtime = fileModificationStamp(url) ?? "missing"
-      return "\(url.lastPathComponent):\(size):\(mtime)"
+      let attributes = fileAttributes(url)
+      totalSize += attributes.size
+      let mtime = attributes.mtime ?? "missing"
+      return "\(url.lastPathComponent):\(attributes.size):\(mtime)"
     }
     guard !parts.isEmpty else {
       return nil
@@ -1234,8 +1574,18 @@ final class TokMonScanner {
     return (totalSize, parts.joined(separator: "|"))
   }
 
-  private func appendRange(fileURL: URL, fileSize: Int64, offset: Int64) -> AppendRange? {
-    let start = fileSize < offset ? 0 : (lineStartOffset(fileURL, offset: offset) ?? offset)
+  // MARK: - Append Range with lastMtime optimization
+
+  private func appendRange(fileURL: URL, fileSize: Int64, offset: Int64, lastMtime: String?) -> AppendRange? {
+    let start: Int64
+    if fileSize < offset {
+      start = 0
+    } else if lastMtime != nil && offset > 0 {
+      // Trust that the previous scan ended at a line boundary
+      start = offset
+    } else {
+      start = lineStartOffset(fileURL, offset: offset) ?? offset
+    }
     let length = fileSize - start
     guard length >= 0 else {
       return nil
@@ -1339,6 +1689,12 @@ final class TokMonScanner {
     ].joined(separator: ":")
   }
 
+  private func isMoreCompleteRecord(_ lhs: TokMonUsageRecord, than rhs: TokMonUsageRecord) -> Bool {
+    let lhsScore = lhs.outputTokens + lhs.cacheRead + lhs.cacheCreation + lhs.inputTokens
+    let rhsScore = rhs.outputTokens + rhs.cacheRead + rhs.cacheCreation + rhs.inputTokens
+    return lhsScore > rhsScore
+  }
+
   private func claudeUsageKey(_ usage: TokMonUsageRecord) -> String {
     [
       usage.sessionId,
@@ -1394,6 +1750,39 @@ final class TokMonScanner {
     default:
       nil
     }
+  }
+}
+
+private struct ClaudeUsageKey: Codable {
+  let messageId: String
+  let createdAt: String
+  let inputTokens: Int
+  let outputTokens: Int
+  let cacheCreation: Int
+  let cacheRead: Int
+  let reasoningTokens: Int
+
+  init(messageId: String, record: TokMonUsageRecord) {
+    self.messageId = messageId
+    createdAt = record.createdAt
+    inputTokens = record.inputTokens
+    outputTokens = record.outputTokens
+    cacheCreation = record.cacheCreation
+    cacheRead = record.cacheRead
+    reasoningTokens = record.reasoningTokens
+  }
+
+  var jsonString: String {
+    let data = try? JSONEncoder().encode(self)
+    return data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+  }
+
+  init?(jsonString: String) {
+    guard let data = jsonString.data(using: .utf8),
+          let decoded = try? JSONDecoder().decode(ClaudeUsageKey.self, from: data) else {
+      return nil
+    }
+    self = decoded
   }
 }
 
@@ -1655,3 +2044,5 @@ private struct RelaxedObjectLiteralParser {
     return true
   }
 }
+
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

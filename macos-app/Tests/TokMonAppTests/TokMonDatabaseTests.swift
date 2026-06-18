@@ -248,6 +248,44 @@ import Testing
   #expect(try db.sessionMetadata(source: "claude-code", id: "claude-1") == nil)
 }
 
+@Test func databaseLockProtectsConcurrentAccess() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let record = TokMonUsageRecord(
+    source: "codex",
+    sessionId: "session-1",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 3,
+    cacheCreation: 0,
+    cacheRead: 2,
+    reasoningTokens: 1,
+    createdAt: "2026-05-14T01:00:00.000Z"
+  )
+
+  let group = DispatchGroup()
+  var errors: [Error] = []
+  let errorLock = NSLock()
+
+  for _ in 0..<20 {
+    group.enter()
+    DispatchQueue.global().async {
+      do {
+        _ = try db.insertUsage(record)
+      } catch {
+        errorLock.lock()
+        errors.append(error)
+        errorLock.unlock()
+      }
+      group.leave()
+    }
+  }
+
+  group.wait()
+  #expect(errors.isEmpty, "Concurrent inserts should not throw: \(errors)")
+  #expect(try db.usageRecordCount() == 1, "Duplicate inserts should be ignored")
+}
+
 
 private func withRawSQLiteDatabase(at url: URL, _ body: (OpaquePointer?) throws -> Void) throws {
   var db: OpaquePointer?
