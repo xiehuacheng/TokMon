@@ -17,27 +17,25 @@ struct StatusPopoverView: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      TokMonLiquidGlassScene {
-        ZStack(alignment: .top) {
-          VStack(alignment: .leading, spacing: 10) {
-            pinnedHeader
-            ScrollView(showsIndicators: false) {
-              scrollingPageContent
-                .padding(.horizontal, 11)
-                .padding(.bottom, 11)
-                .frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)
-                .background(Color.black.opacity(0.001))
-                .contentShape(Rectangle())
-            }
+      ZStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 10) {
+          pinnedHeader
+          ScrollView(showsIndicators: false) {
+            scrollingPageContent
+              .padding(.horizontal, 11)
+              .padding(.bottom, 11)
+              .frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)
+              .background(Color.clear)
+              .contentShape(Rectangle())
           }
-          .clipShape(StatusPanelContentMask())
         }
+        .clipShape(StatusPanelContentMask())
       }
       .background(alignment: .top) {
         StatusPanelShell()
       }
       .frame(width: statusPanelMainWidth, height: statusPanelHeight)
-      .background(Color.black.opacity(0.001))
+      .background(Color.clear)
       .contentShape(Rectangle())
       .coordinateSpace(name: StatusPopoverCoordinateSpace.main)
       .padding(.leading, sessionBubbleWidth + sessionBubbleGutter)
@@ -79,11 +77,12 @@ struct StatusPopoverView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
           RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(Color.black.opacity(0.22))
+            .fill(.regularMaterial)
             .overlay {
               RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(TokMonGlass.danger.opacity(0.32), lineWidth: 1)
+                .strokeBorder(TokMonGlass.danger.opacity(0.35), lineWidth: 1)
             }
+            .shadow(color: TokMonGlass.ambientShadow, radius: 6, y: 2)
         }
     }
   }
@@ -127,24 +126,25 @@ struct StatusPopoverView: View {
     HStack(alignment: .center, spacing: 10) {
       ZStack {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Color.white.opacity(0.12))
+          .fill(.regularMaterial)
           .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
           }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
         Text("T")
           .font(.system(size: 17, weight: .black, design: .rounded))
-          .foregroundStyle(TokMonGlass.neutralTint)
+          .foregroundStyle(.primary)
       }
       .frame(width: 30, height: 30)
 
       VStack(alignment: .leading, spacing: 3) {
         Text("TokMon")
           .font(.system(size: 14, weight: .heavy, design: .rounded))
-          .foregroundStyle(TokMonGlass.neutralTint)
+          .foregroundStyle(.primary)
         Text("\(serverLine) · \(updatedLine)")
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .lineLimit(1)
       }
 
@@ -169,12 +169,12 @@ struct StatusPopoverView: View {
       } else if let state = stats.snapshot.dashboardState {
         Text(state.rangeDisplay)
           .font(.system(size: 13, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         Text("Waiting for TokMon settings...")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
@@ -349,7 +349,7 @@ struct StatusPopoverView: View {
         StatusSessionBubbleShell()
       }
       .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-      .shadow(color: Color.black.opacity(0.30), radius: 18, y: 9)
+      .shadow(color: Color.black.opacity(0.12), radius: 18, y: 9)
       .transition(.tokMonPanelDrilldown)
     }
   }
@@ -404,7 +404,7 @@ struct StatusPopoverView: View {
   private func emptyState(_ message: String) -> some View {
     Text(message)
       .font(.system(size: 13, weight: .semibold, design: .rounded))
-      .foregroundStyle(TokMonGlass.mutedTint)
+      .foregroundStyle(.secondary)
       .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
   }
 
@@ -716,13 +716,13 @@ struct StatusPopoverView: View {
     case "qwen-code":
       TokMonGlass.danger
     default:
-      TokMonGlass.mutedTint
+      .secondary
     }
   }
 
   private func heatmapColor(value: Double, maxValue: Double) -> Color {
     guard maxValue > 0, value > 0 else {
-      return Color.white.opacity(0.08)
+      return Color.secondary.opacity(0.12)
     }
     let opacity = 0.30 + 0.55 * (value / maxValue)
     return TokMonGlass.success.opacity(opacity)
@@ -792,25 +792,11 @@ private struct SessionRowFramePreferenceKey: PreferenceKey {
 private struct StatusPanelShell: View {
   var body: some View {
     shellShape
-      .fill(.regularMaterial)
-      .overlay { shellShape.fill(Color.black.opacity(0.34)) }
+      .fill(.ultraThinMaterial)
       .overlay {
-        shellShape.fill(
-          LinearGradient(
-            colors: [
-              Color.white.opacity(0.10),
-              Color.white.opacity(0.025),
-              Color.black.opacity(0.12),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing,
-          )
-        )
+        shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
       }
-      .overlay {
-        shellShape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-      }
-      .shadow(color: Color.black.opacity(0.24), radius: 22, y: 10)
+      .shadow(color: TokMonGlass.ambientShadow, radius: 24, y: 12)
       .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
   }
 
@@ -822,24 +808,11 @@ private struct StatusPanelShell: View {
 private struct StatusSessionBubbleShell: View {
   var body: some View {
     shellShape
-      .fill(.regularMaterial)
-      .overlay { shellShape.fill(Color.black.opacity(0.34)) }
+      .fill(.ultraThinMaterial)
       .overlay {
-        shellShape.fill(
-          LinearGradient(
-            colors: [
-              Color.white.opacity(0.10),
-              Color.white.opacity(0.025),
-              Color.black.opacity(0.12),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing,
-          )
-        )
+        shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
       }
-      .overlay {
-        shellShape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-      }
+      .shadow(color: TokMonGlass.ambientShadow, radius: 20, y: 10)
       .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
   }
 
@@ -870,12 +843,12 @@ private struct SessionDrilldownScrollShell<Content: View>: View {
           minHeight: sessionBubbleScrollHeight,
           alignment: .topLeading,
         )
-        .background(Color.black.opacity(0.001))
+        .background(Color.clear)
         .contentShape(Rectangle())
     }
     .frame(maxWidth: .infinity, alignment: .topLeading)
     .frame(height: sessionBubbleScrollHeight, alignment: .topLeading)
-    .background(Color.black.opacity(0.001))
+    .background(Color.clear)
     .contentShape(Rectangle())
   }
 }
@@ -894,7 +867,7 @@ private struct SessionDrilldownHeader: View {
           .minimumScaleFactor(0.88)
         Text(firstPrompt)
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .lineLimit(2)
           .truncationMode(.tail)
       }
@@ -907,7 +880,7 @@ private struct SessionDrilldownHeader: View {
       }
       .buttonStyle(.plain)
       .focusable(false)
-      .foregroundStyle(TokMonGlass.mutedTint)
+      .foregroundStyle(.secondary)
       .help("Close session details")
     }
   }
@@ -922,15 +895,16 @@ private struct HeaderIconButton: View {
     Button(action: action) {
       Image(systemName: systemName)
         .font(.system(size: 14, weight: .bold))
-        .foregroundStyle(TokMonGlass.neutralTint)
+        .foregroundStyle(.primary)
         .frame(width: 28, height: 28)
         .background {
           RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color.white.opacity(0.07))
+            .fill(.regularMaterial)
             .overlay {
               RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
             }
+            .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
         }
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
@@ -960,14 +934,14 @@ private struct SystemMenuPageRail: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .foregroundStyle(selectedPage == page ? TokMonGlass.neutralTint : TokMonGlass.mutedTint)
+        .foregroundStyle(selectedPage == page ? .primary : .secondary)
         .background {
           if selectedPage == page {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
               .fill(TokMonGlass.accent.opacity(0.18))
               .overlay {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                  .strokeBorder(TokMonGlass.accent.opacity(0.26), lineWidth: 1)
+                  .strokeBorder(TokMonGlass.accent.opacity(0.28), lineWidth: 1)
               }
               .matchedGeometryEffect(id: "pageRailSelection", in: selectionNamespace)
           }
@@ -977,11 +951,12 @@ private struct SystemMenuPageRail: View {
     .padding(3)
     .background {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(TokMonGlass.hudRailFill)
+        .fill(.thinMaterial)
         .overlay {
           RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+            .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
         }
+        .shadow(color: TokMonGlass.ambientShadow, radius: 6, y: 2)
     }
   }
 }
@@ -1006,7 +981,7 @@ private struct RangePresetControl: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .foregroundStyle(selectedLabel == preset.label ? TokMonGlass.neutralTint : TokMonGlass.mutedTint)
+        .foregroundStyle(selectedLabel == preset.label ? .primary : .secondary)
         .tokMonSelectionPill(isSelected: selectedLabel == preset.label, cornerRadius: 10)
         .help("Show \(preset.displayLabel)")
       }
@@ -1082,12 +1057,12 @@ private struct PrimaryMetricTile: View {
         HStack {
           Text(metric.series.label.uppercased())
             .font(.system(size: 11, weight: .heavy, design: .rounded))
-            .foregroundStyle(TokMonGlass.mutedTint)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
           Spacer(minLength: 0)
           Text(metric.series.icon)
             .font(.system(size: 12, weight: .black, design: .rounded))
-            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : .secondary)
         }
         MetricValueText(value: metric.value, isSelected: metric.isSelected)
         if !hideDelta {
@@ -1174,11 +1149,11 @@ private struct TotalTokensMetricTile: View {
       HStack(spacing: 6) {
         Text(metric.series.label.uppercased())
           .font(.system(size: 11, weight: .heavy, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .lineLimit(1)
         Text(metric.series.icon)
           .font(.system(size: 12, weight: .black, design: .rounded))
-          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : .secondary)
         if !isExpanded {
           Spacer(minLength: 30)
         }
@@ -1194,12 +1169,13 @@ private struct TotalTokensMetricTile: View {
     } label: {
       Image(systemName: isExpanded ? "chevron.left" : "chevron.right")
         .font(.system(size: 11, weight: .black))
-        .foregroundStyle(TokMonGlass.neutralTint)
+        .foregroundStyle(.primary)
         .frame(width: 24, height: 24)
         .background {
           Circle()
-            .fill(Color.white.opacity(0.075))
-            .overlay { Circle().strokeBorder(Color.white.opacity(0.11), lineWidth: 1) }
+            .fill(.regularMaterial)
+            .overlay { Circle().strokeBorder(TokMonGlass.glassEdge, lineWidth: 1) }
+            .shadow(color: TokMonGlass.ambientShadow, radius: 3, y: 1)
         }
         .contentShape(Circle())
     }
@@ -1216,11 +1192,11 @@ private struct TokenDetailMiniMetric: View {
     VStack(alignment: .leading, spacing: 3) {
       Text(metric.series.compactLabel)
         .font(.system(size: 9, weight: .heavy, design: .rounded))
-        .foregroundStyle(TokMonGlass.mutedTint)
+        .foregroundStyle(.secondary)
         .lineLimit(1)
       Text(metric.value)
         .font(.system(size: 12, weight: .black, design: .rounded).monospacedDigit())
-        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.88))
+        .foregroundStyle(.primary.opacity(0.88))
         .lineLimit(1)
     }
     .padding(.horizontal, 7)
@@ -1228,10 +1204,10 @@ private struct TokenDetailMiniMetric: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background {
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(Color.white.opacity(0.045))
+        .fill(.regularMaterial)
         .overlay {
           RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+            .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
         }
     }
   }
@@ -1250,17 +1226,17 @@ private struct CompactMetricTile: View {
         HStack {
           Text(metric.series.compactLabel.uppercased())
             .font(.system(size: 9, weight: .heavy, design: .rounded))
-            .foregroundStyle(TokMonGlass.mutedTint)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.72)
           Spacer(minLength: 0)
           Text(metric.series.icon)
             .font(.system(size: 10, weight: .black, design: .rounded))
-            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.mutedTint)
+            .foregroundStyle(metric.isSelected ? TokMonGlass.accent : .secondary)
         }
         Text(metric.value)
           .font(.system(size: 15, weight: .black, design: .rounded).monospacedDigit())
-          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : TokMonGlass.neutralTint)
+          .foregroundStyle(metric.isSelected ? TokMonGlass.accent : .primary)
           .lineLimit(1)
           .minimumScaleFactor(0.62)
         if !hideDelta {
@@ -1287,7 +1263,7 @@ private struct MetricDelta: View {
   var body: some View {
     Text(text)
       .font(.system(size: 13, weight: .bold, design: .rounded))
-      .foregroundStyle(TokMonGlass.mutedTint)
+      .foregroundStyle(.secondary)
       .lineLimit(1)
   }
 }
@@ -1299,7 +1275,7 @@ private struct MetricValueText: View {
   var body: some View {
     Text(value)
       .font(.system(size: 20, weight: .black, design: .rounded).monospacedDigit())
-      .foregroundStyle(isSelected ? TokMonGlass.accent : TokMonGlass.neutralTint)
+      .foregroundStyle(isSelected ? TokMonGlass.accent : .primary)
       .lineLimit(1)
       .fixedSize(horizontal: true, vertical: false)
       .frame(minWidth: 76, alignment: .leading)
@@ -1340,7 +1316,7 @@ private struct TokMonHudActivityCard: View {
       if days.isEmpty {
         Text("No recent activity.")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
       } else {
         RecentActivityGrid(
@@ -1367,7 +1343,7 @@ private struct TokMonHudBreakdownCard: View {
       if rows.isEmpty {
         Text("No usage in the selected range.")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
       } else {
         VStack(spacing: 0) {
@@ -1379,7 +1355,7 @@ private struct TokMonHudBreakdownCard: View {
               VStack(alignment: .leading, spacing: 3) {
                 Text(row.title)
                   .font(.system(size: 13, weight: .heavy, design: .rounded))
-                  .foregroundStyle(TokMonGlass.neutralTint)
+                  .foregroundStyle(.primary)
                   .lineLimit(1)
                   .truncationMode(.middle)
               }
@@ -1387,12 +1363,12 @@ private struct TokMonHudBreakdownCard: View {
               Spacer(minLength: 12)
               Text(row.value)
                 .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
-                .foregroundStyle(TokMonGlass.neutralTint.opacity(0.82))
+                .foregroundStyle(.primary.opacity(0.82))
                 .lineLimit(1)
             }
             .padding(.vertical, 7)
             if row.id != rows.last?.id {
-              Divider().overlay(Color.white.opacity(0.08))
+              Divider().overlay(Color.secondary.opacity(0.20))
             }
           }
         }
@@ -1416,12 +1392,12 @@ private struct TokMonHudSectionHeader: View {
     HStack {
       Text(title)
         .font(.system(size: 14, weight: .heavy, design: .rounded))
-        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.84))
+        .foregroundStyle(.primary.opacity(0.84))
       Spacer()
       if let trailing {
         Text(trailing)
           .font(.system(size: 12, weight: .heavy, design: .rounded))
-          .foregroundStyle(TokMonGlass.neutralTint.opacity(0.78))
+          .foregroundStyle(.primary.opacity(0.78))
           .lineLimit(1)
       }
     }
@@ -1461,7 +1437,7 @@ private struct RecentActivityGrid: View {
                       .fill(day.map { colorForValue(
                         TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value,
                         maxValue,
-                      ) } ?? Color.white.opacity(0.045))
+                      ) } ?? Color.secondary.opacity(0.12))
                   }
                   .frame(width: cellSize, height: cellSize)
                   .contentShape(Rectangle())
@@ -1490,7 +1466,7 @@ private struct HeatmapMonthAxis: View {
       ForEach(layout.monthLabels) { month in
         Text(month.label)
           .font(.system(size: 9, weight: .bold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .offset(x: metrics.labelWidth + CGFloat(month.weekIndex) * (metrics.cellSize + metrics.gap))
       }
     }
@@ -1509,7 +1485,7 @@ private struct HeatmapWeekdayAxis: View {
         if let label = labels.first(where: { $0.weekdayIndex == weekdayIndex }) {
           Text(label.label)
             .font(.system(size: 8, weight: .bold, design: .rounded))
-            .foregroundStyle(TokMonGlass.mutedTint)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .frame(width: 26, height: cellSize, alignment: .leading)
@@ -1545,7 +1521,7 @@ private struct TrendLineChart: View {
             .frame(width: yAxisWidth, height: chartRect.height)
           ZStack {
             ChartGrid(horizontalLines: 3, verticalLines: 6)
-              .stroke(Color.white.opacity(0.08), lineWidth: 1)
+              .stroke(Color.secondary.opacity(0.20), lineWidth: 1)
             if chartPoints.count > 1 {
               smoothedTrendFill(points: chartPoints, size: chartRect.size)
                 .fill(
@@ -1674,7 +1650,7 @@ private struct TrendYAxisLabels: View {
       Text(formatValue(scale.minValue))
     }
     .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit())
-    .foregroundStyle(TokMonGlass.mutedTint)
+    .foregroundStyle(.secondary)
     .frame(height: height)
   }
 }
@@ -1694,7 +1670,7 @@ private struct TrendXAxisLabels: View {
       }
     }
     .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit())
-    .foregroundStyle(TokMonGlass.mutedTint)
+    .foregroundStyle(.secondary)
     .lineLimit(1)
     .padding(.leading, leadingPadding)
   }
@@ -1787,7 +1763,7 @@ private struct RequestRowView: View {
         Spacer()
         Text(shortTimestamp(row.createdAt))
           .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
       }
       HStack(spacing: 10) {
         Text(sourceLabel)
@@ -1798,7 +1774,7 @@ private struct RequestRowView: View {
           .frame(width: 78, alignment: .leading)
         Text(sessionDisplayLabel)
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
       }
@@ -1907,7 +1883,7 @@ private struct SessionRowView: View {
             .truncationMode(.middle)
           Text(firstPrompt)
             .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(TokMonGlass.mutedTint)
+            .foregroundStyle(.secondary)
             .lineLimit(2)
             .truncationMode(.tail)
         }
@@ -1917,7 +1893,7 @@ private struct SessionRowView: View {
             .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
           Text(formatCost(cost))
             .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-            .foregroundStyle(TokMonGlass.mutedTint)
+            .foregroundStyle(.secondary)
         }
       }
       .padding(14)
@@ -1945,7 +1921,7 @@ private struct DetailLine: View {
   var body: some View {
     HStack {
       Text(label)
-        .foregroundStyle(TokMonGlass.mutedTint)
+        .foregroundStyle(.secondary)
       Spacer()
       Text(value)
         .lineLimit(1)
@@ -1962,9 +1938,9 @@ private struct TokenChip: View {
   var body: some View {
     HStack(spacing: 4) {
       Text(label)
-        .foregroundStyle(TokMonGlass.mutedTint)
+        .foregroundStyle(.secondary)
       Text(value)
-        .foregroundStyle(TokMonGlass.neutralTint)
+        .foregroundStyle(.primary)
     }
     .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
     .lineLimit(1)
@@ -1991,25 +1967,17 @@ private struct HudCardModifier: ViewModifier {
   var isSelected = false
 
   func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
     content
       .background {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-          .fill(TokMonGlass.hudCardFill)
-          .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-              .fill(
-                LinearGradient(
-                  colors: [Color.white.opacity(0.05), Color.clear],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing,
-                )
-              )
-          }
-          .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-              .strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.42) : TokMonGlass.hudCardStroke, lineWidth: 1)
-          }
+        shape
+          .fill(.thinMaterial)
       }
+      .clipShape(shape)
+      .overlay {
+        shape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+      }
+      .shadow(color: TokMonGlass.ambientShadow, radius: 10, y: 4)
   }
 }
 
@@ -2017,14 +1985,15 @@ private struct HudInsetCardModifier: ViewModifier {
   var isSelected = false
 
   func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
     content
       .background {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-          .fill(Color.black.opacity(0.14))
-          .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.36) : Color.white.opacity(0.08), lineWidth: 1)
-          }
+        shape
+          .fill(.regularMaterial)
+      }
+      .clipShape(shape)
+      .overlay {
+        shape.strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.42) : TokMonGlass.glassEdge, lineWidth: 1)
       }
   }
 }
@@ -2039,31 +2008,33 @@ private extension View {
   }
 
   func requestActionButton() -> some View {
-    foregroundStyle(TokMonGlass.neutralTint.opacity(0.86))
+    foregroundStyle(.primary.opacity(0.86))
       .padding(.horizontal, 12)
       .frame(minWidth: 76, minHeight: 26)
       .background {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Color.white.opacity(0.065))
+          .fill(.regularMaterial)
           .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
           }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
       }
       .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
   }
 
   func sessionDrilldownActionButton() -> some View {
-    foregroundStyle(TokMonGlass.neutralTint.opacity(0.90))
+    foregroundStyle(.primary.opacity(0.90))
       .padding(.horizontal, 10)
       .frame(minWidth: 76, minHeight: 24)
       .background {
         Capsule()
-          .fill(Color.white.opacity(0.065))
+          .fill(.regularMaterial)
           .overlay {
             Capsule()
-              .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
           }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
       }
       .contentShape(Capsule())
   }
