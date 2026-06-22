@@ -1,17 +1,17 @@
 import SwiftUI
 
 enum TokMonGlass {
-  /// Vibrant orange — primary brand color for totals, selected states, and Claude Code.
-  static let accent = Color(nsColor: NSColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 1))
+  /// Deep sea teal — primary brand color for totals, selected states, and Claude Code.
+  static let accent = Color(nsColor: NSColor(red: 0.031, green: 0.569, blue: 0.698, alpha: 1))
 
-  /// Lime green — used for cost, cache hit rate, and Codex.
-  static let success = Color(nsColor: NSColor(red: 0.518, green: 0.800, blue: 0.086, alpha: 1))
+  /// Mint green — used for cost, cache hit rate, and Codex.
+  static let success = Color(nsColor: NSColor(red: 0.063, green: 0.725, blue: 0.510, alpha: 1))
 
-  /// Warm amber — used for cache-related series and OpenCode.
-  static let warning = Color(nsColor: NSColor(red: 0.961, green: 0.620, blue: 0.043, alpha: 1))
+  /// Sky blue — used for cache-related series and OpenCode.
+  static let warning = Color(nsColor: NSColor(red: 0.220, green: 0.740, blue: 0.970, alpha: 1))
 
-  /// Rose red — errors, zero/negative deltas, and Qwen Code.
-  static let danger = Color(nsColor: NSColor(red: 0.937, green: 0.267, blue: 0.267, alpha: 1))
+  /// Rose coral — errors, zero/negative deltas, and Qwen Code.
+  static let danger = Color(nsColor: NSColor(red: 0.957, green: 0.247, blue: 0.369, alpha: 1))
 
   /// Subtle glass edge stroke used on non-Liquid-Glass platforms to keep
   /// material surfaces from melting into busy wallpapers.

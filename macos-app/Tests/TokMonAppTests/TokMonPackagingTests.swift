@@ -192,7 +192,6 @@ import Testing
   #expect(!style.contains("func tokMonCard"))
   #expect(!style.contains("func tokMonControl"))
   #expect(!style.contains("TokMonLiquidBackdrop"))
-  #expect(!style.contains("NSColor(red: 0.03"))
   #expect(!style.contains("Color.black.opacity(baseOpacity)"))
   #expect(!style.contains("let baseOpacity = 0.16 + prominence * 0.06"))
   #expect(!style.contains("Color.white.opacity(baseOpacity)"))
@@ -209,8 +208,8 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("NSColor(red: 0.976, green: 0.451, blue: 0.086"))
-  #expect(style.contains("NSColor(red: 0.518, green: 0.800, blue: 0.086"))
+  #expect(style.contains("NSColor(red: 0.031, green: 0.569, blue: 0.698"))
+  #expect(style.contains("NSColor(red: 0.063, green: 0.725, blue: 0.510"))
   #expect(!style.contains("TokMonGlass.accent.opacity(0.78)"))
 }
 
