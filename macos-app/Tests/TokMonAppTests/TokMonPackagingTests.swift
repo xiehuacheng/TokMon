@@ -175,7 +175,7 @@ import Testing
   #expect(!style.contains("hoverLocation"))
 }
 
-@Test func liquidGlassStyleUsesDarkTranslucentHudSurfaces() throws {
+@Test func liquidGlassStyleUsesLightTranslucentHudSurfaces() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -186,12 +186,18 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("let baseOpacity = 0.18 + prominence * 0.06"))
-  #expect(style.contains("let highlightOpacity = 0.05 + prominence * 0.045"))
-  #expect(style.contains("Color.white.opacity(0.12"))
+  #expect(style.contains("struct TokMonMaterialSurface"))
+  #expect(style.contains("Material"))
+  #expect(style.contains(".ultraThin"))
+  #expect(style.contains(".thin"))
+  #expect(style.contains(".regular"))
+  #expect(style.contains("TokMonGlass.glassEdge"))
+  #expect(style.contains("TokMonGlass.ambientShadow"))
   #expect(!style.contains("TokMonLiquidBackdrop"))
   #expect(!style.contains("NSColor(red: 0.03"))
-  #expect(!style.contains("let baseOpacity = 0.24 + prominence * 0.08"))
+  #expect(!style.contains("Color.black.opacity(baseOpacity)"))
+  #expect(!style.contains("let baseOpacity = 0.16 + prominence * 0.06"))
+  #expect(!style.contains("Color.white.opacity(baseOpacity)"))
 }
 
 @Test func liquidGlassStyleUsesCalmerIcyPaletteAndSoftSelection() throws {
@@ -205,15 +211,12 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("NSColor(red: 0.64, green: 0.82, blue: 1.0"))
-  #expect(style.contains("NSColor(red: 0.58, green: 0.78, blue: 0.66"))
-  #expect(style.contains("neutralTint = Color.white.opacity(0.86)"))
-  #expect(style.contains("mutedTint = Color.white.opacity(0.52)"))
-  #expect(style.contains("shape.fill(isSelected ? TokMonGlass.accent.opacity(0.24)"))
+  #expect(style.contains("NSColor(red: 0.20, green: 0.47, blue: 0.86"))
+  #expect(style.contains("NSColor(red: 0.24, green: 0.59, blue: 0.39"))
   #expect(!style.contains("TokMonGlass.accent.opacity(0.78)"))
 }
 
-@Test func statusPanelShellUsesSystemMenuTranslucency() throws {
+@Test func statusPanelShellUsesLightLiquidGlassTranslucency() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -224,12 +227,10 @@ import Testing
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(view.contains(".fill(.regularMaterial)"))
-  #expect(view.contains("Color.black.opacity(0.34)"))
-  #expect(view.contains("Color.white.opacity(0.12)"))
-  #expect(view.contains("LinearGradient("))
-  #expect(!view.contains("Color.black.opacity(0.46)"))
-  #expect(!view.contains("Color.black.opacity(0.08)"))
+  #expect(view.contains(".fill(.ultraThinMaterial)"))
+  #expect(view.contains("TokMonGlass.glassEdge"))
+  #expect(!view.contains("Color.black.opacity(0.34)"))
+  #expect(!view.contains(".preferredColorScheme(.dark)"))
 }
 
 @Test func statusPopoverMatchesSystemMenuHudMockupStructure() throws {
@@ -254,7 +255,7 @@ import Testing
   #expect(view.contains("HeaderIconButton(systemName: \"power\""))
   #expect(view.contains("columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 2)"))
   #expect(view.contains("MetricDelta"))
-  #expect(view.contains("TokMonGlass.hudCardFill"))
+  #expect(view.contains(".thinMaterial"))
   #expect(!view.contains(".pickerStyle(.segmented)"))
 }
 
@@ -865,9 +866,10 @@ import Testing
   let settings = try String(contentsOf: settingsURL, encoding: .utf8)
 
   #expect(settings.contains("SettingsWindowShell()"))
-  #expect(settings.contains("TokMonGlass.hudCardFill"))
-  #expect(settings.contains("TokMonGlass.hudCardStroke"))
-  #expect(settings.contains(".preferredColorScheme(.dark)"))
+  #expect(settings.contains(".fill(.ultraThinMaterial)"))
+  #expect(settings.contains(".thinMaterial"))
+  #expect(settings.contains(".regularMaterial"))
+  #expect(!settings.contains(".preferredColorScheme(.dark)"))
   #expect(settings.contains(".font(.system(size: 15, weight: .heavy, design: .rounded))"))
 }
 
@@ -999,7 +1001,7 @@ import Testing
 
   #expect(view.contains(".frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)"))
   #expect(view.contains(".contentShape(Rectangle())"))
-  #expect(view.contains("Color.black.opacity(0.001)"))
+  #expect(view.contains("Color.clear"))
 }
 
 @Test func statusPopoverVisiblePanelsConsumeClicksAcrossTransparentGaps() throws {
@@ -1031,7 +1033,7 @@ import Testing
     .components(separatedBy: "private struct StatusPanelContentMask: Shape")
     .first ?? ""
 
-  #expect(rootBody.contains(".background(Color.black.opacity(0.001))"))
+  #expect(rootBody.contains(".background(Color.clear)"))
   #expect(rootBody.contains(".contentShape(Rectangle())"))
   #expect(mainShell.contains(".contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))"))
   #expect(!mainShell.contains(".allowsHitTesting(false)"))
@@ -1075,8 +1077,9 @@ import Testing
   #expect(view.contains("proxy.frame(in: .named(StatusPopoverCoordinateSpace.main))"))
   #expect(view.contains("StatusSessionBubbleShell()"))
   #expect(view.contains("private struct StatusSessionBubbleShell: View"))
-  #expect(view.contains(".fill(.regularMaterial)"))
-  #expect(view.contains("Color.black.opacity(0.34)"))
+  #expect(view.contains(".fill(.ultraThinMaterial)"))
+  #expect(view.contains("TokMonGlass.glassEdge"))
+  #expect(!view.contains("Color.black.opacity(0.34)"))
   #expect(!view.contains(".frame(width: sessionBubbleWidth, alignment: .topLeading)\n      .hudCard()"))
 }
 
@@ -1112,7 +1115,7 @@ import Testing
   #expect(view.contains("minHeight: sessionBubbleScrollHeight"))
   #expect(view.contains(".frame(maxWidth: .infinity, alignment: .topLeading)"))
   #expect(view.contains(".frame(height: sessionBubbleScrollHeight, alignment: .topLeading)"))
-  #expect(view.contains(".background(Color.black.opacity(0.001))"))
+  #expect(view.contains(".background(Color.clear)"))
   #expect(view.contains(".contentShape(Rectangle())"))
   #expect(!view.contains(".frame(width: sessionBubbleWidth, height: sessionBubbleScrollHeight, alignment: .topLeading)"))
   #expect(!view.contains("content\n        .padding(14)"))
@@ -1133,7 +1136,7 @@ import Testing
   #expect(view.contains("scrollingPageContent"))
   #expect(view.contains("private var pinnedHeader: some View"))
   #expect(view.contains("private var scrollingPageContent: some View"))
-  #expect(view.contains("ScrollView(showsIndicators: false) {\n              scrollingPageContent"))
+  #expect(view.contains("ScrollView(showsIndicators: false) {\n            scrollingPageContent"))
   #expect(!view.contains("ScrollView(showsIndicators: false) {\n            VStack(alignment: .leading, spacing: 10) {\n              header"))
 }
 
