@@ -791,13 +791,20 @@ private struct SessionRowFramePreferenceKey: PreferenceKey {
 
 private struct StatusPanelShell: View {
   var body: some View {
-    shellShape
-      .fill(.ultraThinMaterial)
-      .overlay {
-        shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-      }
-      .shadow(color: TokMonGlass.ambientShadow, radius: 24, y: 12)
-      .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+    if #available(macOS 26.0, *) {
+      shellShape
+        .fill(.clear)
+        .glassEffect(.regular, in: shellShape)
+        .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+    } else {
+      shellShape
+        .fill(.ultraThinMaterial)
+        .overlay {
+          shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+        }
+        .shadow(color: TokMonGlass.ambientShadow, radius: 24, y: 12)
+        .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+    }
   }
 
   private var shellShape: RoundedRectangle {
@@ -807,13 +814,20 @@ private struct StatusPanelShell: View {
 
 private struct StatusSessionBubbleShell: View {
   var body: some View {
-    shellShape
-      .fill(.ultraThinMaterial)
-      .overlay {
-        shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-      }
-      .shadow(color: TokMonGlass.ambientShadow, radius: 20, y: 10)
-      .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    if #available(macOS 26.0, *) {
+      shellShape
+        .fill(.clear)
+        .glassEffect(.regular, in: shellShape)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    } else {
+      shellShape
+        .fill(.ultraThinMaterial)
+        .overlay {
+          shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+        }
+        .shadow(color: TokMonGlass.ambientShadow, radius: 20, y: 10)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
   }
 
   private var shellShape: RoundedRectangle {
@@ -898,13 +912,19 @@ private struct HeaderIconButton: View {
         .foregroundStyle(.primary)
         .frame(width: 28, height: 28)
         .background {
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(.regularMaterial)
-            .overlay {
-              RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-            }
-            .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
+          if #available(macOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .fill(.clear)
+              .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+          } else {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .fill(.regularMaterial)
+              .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                  .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+              }
+              .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
+          }
         }
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
@@ -950,13 +970,19 @@ private struct SystemMenuPageRail: View {
     }
     .padding(3)
     .background {
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(.thinMaterial)
-        .overlay {
-          RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-        }
-        .shadow(color: TokMonGlass.ambientShadow, radius: 6, y: 2)
+      if #available(macOS 26.0, *) {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .fill(.clear)
+          .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+      } else {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .fill(.thinMaterial)
+          .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+          }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 6, y: 2)
+      }
     }
   }
 }

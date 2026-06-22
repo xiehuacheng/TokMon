@@ -126,13 +126,19 @@ struct TokMonSettingsWindow: View {
   private var header: some View {
     HStack(alignment: .center, spacing: 12) {
       ZStack {
-        RoundedRectangle(cornerRadius: 11, style: .continuous)
-          .fill(.regularMaterial)
-          .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-          }
-          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
+        if #available(macOS 26.0, *) {
+          RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(.clear)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        } else {
+          RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(.regularMaterial)
+            .overlay {
+              RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+            }
+            .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
+        }
         Image(systemName: "gearshape")
           .font(.system(size: 15, weight: .heavy))
           .foregroundStyle(TokMonGlass.accent)
@@ -284,14 +290,24 @@ struct TokMonSettingsWindow: View {
 
 private struct SettingsWindowShell: View {
   var body: some View {
+    if #available(macOS 26.0, *) {
+      shellShape
+        .fill(.clear)
+        .glassEffect(.regular, in: shellShape)
+        .allowsHitTesting(false)
+    } else {
+      shellShape
+        .fill(.ultraThinMaterial)
+        .overlay {
+          shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+        }
+        .shadow(color: TokMonGlass.ambientShadow, radius: 22, y: 10)
+        .allowsHitTesting(false)
+    }
+  }
+
+  private var shellShape: RoundedRectangle {
     RoundedRectangle(cornerRadius: 24, style: .continuous)
-      .fill(.ultraThinMaterial)
-      .overlay {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-          .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-      }
-      .shadow(color: TokMonGlass.ambientShadow, radius: 22, y: 10)
-      .allowsHitTesting(false)
   }
 }
 

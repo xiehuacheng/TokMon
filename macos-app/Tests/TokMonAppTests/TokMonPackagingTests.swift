@@ -186,7 +186,8 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("struct TokMonMaterialSurface"))
+  #expect(style.contains("struct TokMonGlassSurface"))
+  #expect(style.contains(".glassEffect"))
   #expect(style.contains("Material"))
   #expect(style.contains(".ultraThin"))
   #expect(style.contains(".thin"))
