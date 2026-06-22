@@ -1,10 +1,17 @@
 import SwiftUI
 
 enum TokMonGlass {
-  static let accent = Color(nsColor: NSColor(red: 0.20, green: 0.47, blue: 0.86, alpha: 1))
-  static let success = Color(nsColor: NSColor(red: 0.24, green: 0.59, blue: 0.39, alpha: 1))
-  static let warning = Color(nsColor: NSColor(red: 0.78, green: 0.59, blue: 0.16, alpha: 1))
-  static let danger = Color(nsColor: NSColor(red: 0.78, green: 0.27, blue: 0.29, alpha: 1))
+  /// Deep tech blue — primary brand color for totals, selected states, and Codex.
+  static let accent = Color(nsColor: NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 1))
+
+  /// Teal green — used for cost, cache hit rate, and OpenCode.
+  static let success = Color(nsColor: NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1))
+
+  /// Cool amber — used for cache-related series and Claude Code.
+  static let warning = Color(nsColor: NSColor(red: 1.0, green: 0.70, blue: 0.25, alpha: 1))
+
+  /// Bright crimson — errors, zero/negative deltas, and Qwen Code.
+  static let danger = Color(nsColor: NSColor(red: 1.0, green: 0.27, blue: 0.23, alpha: 1))
 
   /// Subtle glass edge stroke used on non-Liquid-Glass platforms to keep
   /// material surfaces from melting into busy wallpapers.

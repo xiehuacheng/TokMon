@@ -199,7 +199,7 @@ struct StatusPopoverView: View {
         days: stats.snapshot.heatmapDays,
         selectedSeries: selectedSeries.key,
         costRates: aggregateCostRates,
-        colorForValue: heatmapColor,
+        colorForValue: { value, max in heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor) },
       )
       TokMonHudBreakdownCard(
         title: "Top Models",
@@ -708,11 +708,11 @@ struct StatusPopoverView: View {
   private func colorForSource(_ source: String) -> Color {
     switch source {
     case "claude-code":
-      TokMonGlass.warning
-    case "codex":
       TokMonGlass.accent
-    case "opencode":
+    case "codex":
       TokMonGlass.success
+    case "opencode":
+      TokMonGlass.warning
     case "qwen-code":
       TokMonGlass.danger
     default:
@@ -720,12 +720,12 @@ struct StatusPopoverView: View {
     }
   }
 
-  private func heatmapColor(value: Double, maxValue: Double) -> Color {
+  private func heatmapColor(value: Double, maxValue: Double, color: Color) -> Color {
     guard maxValue > 0, value > 0 else {
       return Color.secondary.opacity(0.12)
     }
-    let opacity = 0.30 + 0.55 * (value / maxValue)
-    return TokMonGlass.success.opacity(opacity)
+    let opacity = 0.22 + 0.58 * (value / maxValue)
+    return color.opacity(opacity)
   }
 
   private func splitTokMonSessionTitle(_ title: String) -> (projectName: String, firstPrompt: String)? {
@@ -1552,7 +1552,7 @@ private struct TrendLineChart: View {
               smoothedTrendFill(points: chartPoints, size: chartRect.size)
                 .fill(
                   LinearGradient(
-                    colors: [color.opacity(0.22), TokMonGlass.success.opacity(0.12), Color.clear],
+                    colors: [color.opacity(0.22), color.opacity(0.08), Color.clear],
                     startPoint: .leading,
                     endPoint: .trailing,
                   )
@@ -2164,10 +2164,12 @@ private struct TokMonSeriesPresentation {
 
   var tintColor: Color {
     switch key {
-    case .cacheHitRate, .cost:
+    case .cost, .cacheHitRate, .cacheHit:
       TokMonGlass.success
-    case .cache, .cacheHit:
+    case .cache:
       TokMonGlass.warning
+    case .requests:
+      TokMonGlass.accent
     default:
       TokMonGlass.accent
     }

@@ -209,8 +209,8 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("NSColor(red: 0.20, green: 0.47, blue: 0.86"))
-  #expect(style.contains("NSColor(red: 0.24, green: 0.59, blue: 0.39"))
+  #expect(style.contains("NSColor(red: 0.04, green: 0.52, blue: 1.0"))
+  #expect(style.contains("NSColor(red: 0.19, green: 0.82, blue: 0.35"))
   #expect(!style.contains("TokMonGlass.accent.opacity(0.78)"))
 }
 
@@ -325,9 +325,9 @@ import Testing
     .components(separatedBy: "private func heatmapColor")
     .first ?? ""
 
-  #expect(colorFunction.contains("case \"claude-code\":\n      TokMonGlass.warning"))
-  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.accent"))
-  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.success"))
+  #expect(colorFunction.contains("case \"claude-code\":\n      TokMonGlass.accent"))
+  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.success"))
+  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.warning"))
   #expect(colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.danger"))
   #expect(!colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.warning"))
 }
