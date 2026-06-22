@@ -2164,14 +2164,14 @@ private struct TokMonSeriesPresentation {
 
   var tintColor: Color {
     switch key {
+    case .total, .input:
+      TokMonGlass.accent
+    case .requests, .output:
+      TokMonGlass.warning
     case .cost, .cacheHitRate, .cacheHit:
       TokMonGlass.success
     case .cache:
-      TokMonGlass.warning
-    case .requests:
-      TokMonGlass.accent
-    default:
-      TokMonGlass.accent
+      TokMonGlass.danger
     }
   }
 }
