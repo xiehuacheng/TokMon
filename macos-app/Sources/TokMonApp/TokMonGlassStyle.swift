@@ -6,59 +6,12 @@ enum TokMonGlass {
   static let warning = Color(nsColor: NSColor(red: 0.78, green: 0.59, blue: 0.16, alpha: 1))
   static let danger = Color(nsColor: NSColor(red: 0.78, green: 0.27, blue: 0.29, alpha: 1))
 
+  /// Subtle glass edge stroke used on non-Liquid-Glass platforms to keep
+  /// material surfaces from melting into busy wallpapers.
   static let glassEdge = Color.white.opacity(0.22)
+
+  /// Soft ambient shadow used for floating panels and controls.
   static let ambientShadow = Color.black.opacity(0.08)
-}
-
-enum TokMonGlassProminence {
-  case shell
-  case card
-  case control
-}
-
-struct TokMonGlassSurface: ViewModifier {
-  let prominence: TokMonGlassProminence
-  let cornerRadius: CGFloat
-
-  private var material: Material {
-    switch prominence {
-    case .shell: return .ultraThin
-    case .card: return .thin
-    case .control: return .regular
-    }
-  }
-
-  private var shadowRadius: CGFloat {
-    switch prominence {
-    case .shell: return 24
-    case .card: return 10
-    case .control: return 4
-    }
-  }
-
-  func body(content: Content) -> some View {
-    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-
-    if #available(macOS 26.0, *) {
-      content
-        .glassEffect(.regular, in: shape)
-    } else {
-      content
-        .background {
-          shape
-            .fill(material)
-        }
-        .clipShape(shape)
-        .overlay {
-          shape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-        }
-        .shadow(
-          color: TokMonGlass.ambientShadow,
-          radius: shadowRadius,
-          y: shadowRadius / 2
-        )
-    }
-  }
 }
 
 private struct TokMonSelectionPillModifier: ViewModifier {
@@ -84,18 +37,6 @@ private struct TokMonSelectionPillModifier: ViewModifier {
 }
 
 extension View {
-  func tokMonShell(cornerRadius: CGFloat = 30) -> some View {
-    modifier(TokMonGlassSurface(prominence: .shell, cornerRadius: cornerRadius))
-  }
-
-  func tokMonCard(cornerRadius: CGFloat = 16) -> some View {
-    modifier(TokMonGlassSurface(prominence: .card, cornerRadius: cornerRadius))
-  }
-
-  func tokMonControl(cornerRadius: CGFloat = 11) -> some View {
-    modifier(TokMonGlassSurface(prominence: .control, cornerRadius: cornerRadius))
-  }
-
   func tokMonSelectionPill(isSelected: Bool, cornerRadius: CGFloat = 7) -> some View {
     modifier(TokMonSelectionPillModifier(isSelected: isSelected, cornerRadius: cornerRadius))
   }
