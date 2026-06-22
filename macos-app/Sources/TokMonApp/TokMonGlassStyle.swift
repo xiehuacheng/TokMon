@@ -1,16 +1,16 @@
 import SwiftUI
 
 enum TokMonGlass {
-  /// Dark slate — primary UI brand color for selected states and Claude Code.
+  /// Dark slate — primary UI chrome color for totals, selected states, and Claude Code.
   static let accent = Color(nsColor: NSColor(red: 0.200, green: 0.255, blue: 0.333, alpha: 1))
 
-  /// Vivid mint green — used for cost, cache hit rate, and Codex data.
-  static let success = Color(nsColor: NSColor(red: 0.133, green: 0.773, blue: 0.369, alpha: 1))
+  /// Vibrant mint green — used for cost, cache hit rate, and Codex.
+  static let success = Color(nsColor: NSColor(red: 0.063, green: 0.725, blue: 0.510, alpha: 1))
 
-  /// Bright sky blue — used for requests, output, cache series, and OpenCode data.
+  /// Bright sky blue — used for cache-related series and OpenCode.
   static let warning = Color(nsColor: NSColor(red: 0.055, green: 0.647, blue: 0.914, alpha: 1))
 
-  /// Vivid rose — errors, cache detail, and Qwen Code data.
+  /// Rose red — errors, zero/negative deltas, and Qwen Code.
   static let danger = Color(nsColor: NSColor(red: 0.957, green: 0.247, blue: 0.369, alpha: 1))
 
   /// Subtle glass edge stroke used on non-Liquid-Glass platforms to keep
