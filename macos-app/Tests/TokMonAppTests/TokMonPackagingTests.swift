@@ -209,8 +209,8 @@ import Testing
     .appendingPathComponent("TokMonGlassStyle.swift")
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
-  #expect(style.contains("NSColor(red: 0.04, green: 0.52, blue: 1.0"))
-  #expect(style.contains("NSColor(red: 0.19, green: 0.82, blue: 0.35"))
+  #expect(style.contains("NSColor(red: 0.482, green: 0.380, blue: 1.0"))
+  #expect(style.contains("NSColor(red: 1.0, green: 0.176, blue: 0.573"))
   #expect(!style.contains("TokMonGlass.accent.opacity(0.78)"))
 }
 
