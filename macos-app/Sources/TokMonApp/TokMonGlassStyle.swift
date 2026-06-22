@@ -22,8 +22,13 @@ private struct TokMonSelectionPillModifier: ViewModifier {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
     if #available(macOS 26.0, *) {
-      content
-        .glassEffect(.regular.tint(TokMonGlass.accent), in: shape)
+      if isSelected {
+        content
+          .glassEffect(.regular.tint(TokMonGlass.accent), in: shape)
+      } else {
+        content
+          .glassEffect(.regular, in: shape)
+      }
     } else {
       content
         .background {
