@@ -23,101 +23,98 @@ struct TokMonSettingsWindow: View {
   ]
 
   var body: some View {
-    TokMonLiquidGlassScene {
-      ZStack {
-        SettingsWindowShell()
-        VStack(alignment: .leading, spacing: 0) {
-          header
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
+    ZStack {
+      SettingsWindowShell()
+      VStack(alignment: .leading, spacing: 0) {
+        header
+          .padding(.horizontal, 20)
+          .padding(.top, 18)
+          .padding(.bottom, 12)
 
-          ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 12) {
-              SettingsSection("Sources") {
-                FieldRow("Default") {
-                  Picker("Source", selection: $store.draft.source) {
-                    ForEach(sources, id: \.0) { value, label in
-                      Text(label).tag(value)
-                    }
+        ScrollView(showsIndicators: false) {
+          VStack(alignment: .leading, spacing: 12) {
+            SettingsSection("Sources") {
+              FieldRow("Default") {
+                Picker("Source", selection: $store.draft.source) {
+                  ForEach(sources, id: \.0) { value, label in
+                    Text(label).tag(value)
                   }
-                  .pickerStyle(.menu)
-                  .labelsHidden()
-                  .frame(width: 220)
                 }
-                FieldRow("Claude Code") {
-                  TextField("~/.claude/projects", text: $store.draft.claudePath)
-                    .settingsTextField(width: 430)
-                }
-                FieldRow("Codex") {
-                  TextField("~/.codex/sessions", text: $store.draft.codexPath)
-                    .settingsTextField(width: 430)
-                }
-                FieldRow("OpenCode") {
-                  TextField("~/.local/share/opencode", text: $store.draft.openCodePath)
-                    .settingsTextField(width: 430)
-                }
-                FieldRow("Qwen Code") {
-                  TextField("~/.qwen/projects", text: $store.draft.qwenCodePath)
-                    .settingsTextField(width: 430)
-                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 220)
               }
-
-              SettingsSection("Menu Bar") {
-                FieldRow("Display") {
-                  Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
-                    ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
-                      Text(mode.displayLabel).tag(mode)
-                    }
-                  }
-                  .pickerStyle(.menu)
-                  .labelsHidden()
-                  .frame(width: 220)
-                }
-                FieldRow("Refresh") {
-                  Picker("Refresh Rate", selection: $store.draft.refreshRate) {
-                    ForEach(refreshRateOptions, id: \.0) { ms, label in
-                      Text(label).tag(ms)
-                    }
-                  }
-                  .pickerStyle(.menu)
-                  .labelsHidden()
-                  .frame(width: 220)
-                }
+              FieldRow("Claude Code") {
+                TextField("~/.claude/projects", text: $store.draft.claudePath)
+                  .settingsTextField(width: 430)
               }
-
-              SettingsSection("Model Pricing") {
-                modelPricingEditor
+              FieldRow("Codex") {
+                TextField("~/.codex/sessions", text: $store.draft.codexPath)
+                  .settingsTextField(width: 430)
               }
+              FieldRow("OpenCode") {
+                TextField("~/.local/share/opencode", text: $store.draft.openCodePath)
+                  .settingsTextField(width: 430)
+              }
+              FieldRow("Qwen Code") {
+                TextField("~/.qwen/projects", text: $store.draft.qwenCodePath)
+                  .settingsTextField(width: 430)
+              }
+            }
 
-              SettingsSection("Maintenance") {
-                FieldRow("Actions") {
-                  HStack(spacing: 8) {
-                    Button("Scan Now") {
-                      Task { try? await store.scanNow() }
-                    }
-                    .tokMonGlassButton()
-                    .disabled(store.isBusy)
-
-                    Button("Rebuild Database") {
-                      Task { try? await store.rebuildAndRescan() }
-                    }
-                    .tokMonGlassButton()
-                    .disabled(store.isBusy)
+            SettingsSection("Menu Bar") {
+              FieldRow("Display") {
+                Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
+                  ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
+                    Text(mode.displayLabel).tag(mode)
                   }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 220)
+              }
+              FieldRow("Refresh") {
+                Picker("Refresh Rate", selection: $store.draft.refreshRate) {
+                  ForEach(refreshRateOptions, id: \.0) { ms, label in
+                    Text(label).tag(ms)
+                  }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 220)
+              }
+            }
+
+            SettingsSection("Model Pricing") {
+              modelPricingEditor
+            }
+
+            SettingsSection("Maintenance") {
+              FieldRow("Actions") {
+                HStack(spacing: 8) {
+                  Button("Scan Now") {
+                    Task { try? await store.scanNow() }
+                  }
+                  .tokMonGlassButton()
+                  .disabled(store.isBusy)
+
+                  Button("Rebuild Database") {
+                    Task { try? await store.rebuildAndRescan() }
+                  }
+                  .tokMonGlassButton()
+                  .disabled(store.isBusy)
                 }
               }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 14)
           }
-
-          footer
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+          .padding(.horizontal, 20)
+          .padding(.bottom, 14)
         }
+
+        footer
+          .padding(.horizontal, 20)
+          .padding(.vertical, 14)
       }
-      .preferredColorScheme(.dark)
     }
     .frame(minWidth: 660, minHeight: 580)
     .task {
@@ -130,11 +127,12 @@ struct TokMonSettingsWindow: View {
     HStack(alignment: .center, spacing: 12) {
       ZStack {
         RoundedRectangle(cornerRadius: 11, style: .continuous)
-          .fill(Color.white.opacity(0.08))
+          .fill(.regularMaterial)
           .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-              .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
           }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
         Image(systemName: "gearshape")
           .font(.system(size: 15, weight: .heavy))
           .foregroundStyle(TokMonGlass.accent)
@@ -144,10 +142,10 @@ struct TokMonSettingsWindow: View {
       VStack(alignment: .leading, spacing: 3) {
         Text("TokMon Settings")
           .font(.system(size: 15, weight: .heavy, design: .rounded))
-          .foregroundStyle(TokMonGlass.neutralTint)
+          .foregroundStyle(.primary)
         Text("TokenMonitor")
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
       }
       Spacer()
     }
@@ -161,7 +159,7 @@ struct TokMonSettingsWindow: View {
       }
       Text(store.errorMessage ?? store.statusMessage)
         .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .foregroundStyle(store.errorMessage == nil ? TokMonGlass.mutedTint : TokMonGlass.danger)
+        .foregroundStyle(store.errorMessage == nil ? .secondary : TokMonGlass.danger)
         .lineLimit(1)
       Spacer()
       Button("Save and Close") {
@@ -200,7 +198,7 @@ struct TokMonSettingsWindow: View {
       if configuredPricingModels.isEmpty {
         Text("Add a model to configure pricing.")
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(TokMonGlass.mutedTint)
+          .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
       } else {
         VStack(alignment: .leading, spacing: 8) {
@@ -241,7 +239,7 @@ struct TokMonSettingsWindow: View {
       Spacer(minLength: 0)
     }
     .font(.system(size: 10, weight: .bold, design: .rounded))
-    .foregroundStyle(TokMonGlass.mutedTint)
+    .foregroundStyle(.secondary)
   }
 
   private var configuredPricingModels: [String] {
@@ -287,16 +285,12 @@ struct TokMonSettingsWindow: View {
 private struct SettingsWindowShell: View {
   var body: some View {
     RoundedRectangle(cornerRadius: 24, style: .continuous)
-      .fill(.regularMaterial)
+      .fill(.ultraThinMaterial)
       .overlay {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
-          .fill(TokMonGlass.hudCardFill)
+          .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
       }
-      .overlay {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-          .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
-      }
-      .shadow(color: Color.black.opacity(0.22), radius: 22, y: 10)
+      .shadow(color: TokMonGlass.ambientShadow, radius: 22, y: 10)
       .allowsHitTesting(false)
   }
 }
@@ -310,7 +304,7 @@ private struct ModelPricingRow: View {
     HStack(spacing: 8) {
       Text(model)
         .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .foregroundStyle(TokMonGlass.neutralTint)
+        .foregroundStyle(.primary)
         .lineLimit(1)
         .truncationMode(.middle)
         .frame(width: 178, alignment: .leading)
@@ -356,7 +350,7 @@ private struct SettingsSection<Content: View>: View {
     VStack(alignment: .leading, spacing: 9) {
       Text(title)
         .font(.system(size: 14, weight: .heavy, design: .rounded))
-        .foregroundStyle(TokMonGlass.neutralTint.opacity(0.84))
+        .foregroundStyle(.primary.opacity(0.84))
       VStack(alignment: .leading, spacing: 10) {
         content
       }
@@ -380,7 +374,7 @@ private struct FieldRow<Content: View>: View {
     HStack(alignment: .center, spacing: 14) {
       Text(label)
         .font(.system(size: 12, weight: .bold, design: .rounded))
-        .foregroundStyle(TokMonGlass.mutedTint)
+        .foregroundStyle(.secondary)
         .frame(width: 104, alignment: .trailing)
       content
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -393,21 +387,22 @@ private extension View {
   func settingsCard() -> some View {
     background {
       RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .fill(TokMonGlass.hudCardFill)
+        .fill(.thinMaterial)
         .overlay {
           RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(TokMonGlass.hudCardStroke, lineWidth: 1)
+            .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
         }
+        .shadow(color: TokMonGlass.ambientShadow, radius: 8, y: 3)
     }
   }
 
   func settingsInsetCard() -> some View {
     background {
       RoundedRectangle(cornerRadius: 13, style: .continuous)
-        .fill(Color.black.opacity(0.14))
+        .fill(.regularMaterial)
         .overlay {
           RoundedRectangle(cornerRadius: 13, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
         }
     }
   }
@@ -415,15 +410,15 @@ private extension View {
   func settingsTextField(width: CGFloat) -> some View {
     textFieldStyle(.plain)
       .font(.system(size: 12, weight: .semibold, design: .rounded))
-      .foregroundStyle(TokMonGlass.neutralTint)
+      .foregroundStyle(.primary)
       .padding(.horizontal, 10)
       .frame(width: width, height: 28)
       .background {
         RoundedRectangle(cornerRadius: 9, style: .continuous)
-          .fill(Color.black.opacity(0.16))
+          .fill(.regularMaterial)
           .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-              .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
           }
       }
   }
