@@ -30,13 +30,18 @@ import Testing
   let repoRoot = packageDir.deletingLastPathComponent()
   let readme = try String(contentsOf: repoRoot.appendingPathComponent("README.md"), encoding: .utf8)
 
-  #expect(readme.contains("docs/images/tokmon-sessions-list.png"))
-  #expect(readme.contains("docs/images/tokmon-session-drilldown.png"))
+  #expect(readme.contains("docs/images/tokmon-popover-light.png"))
+  #expect(readme.contains("docs/images/tokmon-popover-dark.png"))
+  #expect(!readme.contains("docs/images/tokmon-sessions-list.png"))
+  #expect(!readme.contains("docs/images/tokmon-session-drilldown.png"))
   #expect(!readme.contains("docs/images/tokmon-status-tokens.png"))
   #expect(!readme.contains("docs/images/tokmon-status-sessions.png"))
   #expect(!readme.contains("docs/images/tokmon-status-popover.png"))
-  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-sessions-list.png").path))
-  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-session-drilldown.png").path))
+  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-popover-light.png").path))
+  #expect(FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-popover-dark.png").path))
+  #expect(!FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-sessions-list.png").path))
+  #expect(!FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-session-drilldown.png").path))
+  #expect(!FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent("docs/images/tokmon-status-popover.png").path))
 }
 
 @Test func infoPlistUsesTokMonBundleMetadata() throws {

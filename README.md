@@ -5,8 +5,8 @@ TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、
 ## 界面预览
 
 <p>
-  <img src="docs/images/tokmon-sessions-list.png" alt="TokMon macOS status bar sessions view with the updated TokMon header icon" width="320">
-  <img src="docs/images/tokmon-session-drilldown.png" alt="TokMon macOS status bar sessions view with the selected session drilldown panel" width="496">
+  <img src="docs/images/tokmon-popover-light.png" alt="TokMon macOS status bar popover in light mode" width="320">
+  <img src="docs/images/tokmon-popover-dark.png" alt="TokMon macOS status bar popover in dark mode" width="320">
 </p>
 
 状态栏看板展示 token 用量卡片、趋势图、活动热力图、请求明细和 session 统计；设置窗口提供路径、默认范围、模型价格、扫描和维护操作。

@@ -80,5 +80,9 @@ swift build
 cd ..
 git diff --check
 bash macos-app/scripts/build-app.sh
+hdiutil create -volname TokMon -srcfolder macos-app/release/TokMon.app -ov -format UDZO macos-app/release/TokMon-<version>.dmg
+hdiutil attach -nobrowse -readonly macos-app/release/TokMon-<version>.dmg
 open macos-app/release/TokMon.app
 ```
+
+发布 GitHub Release 时上传 `macos-app/release/TokMon-<version>.dmg`，并在发布说明中写入 DMG 的 SHA-256。
