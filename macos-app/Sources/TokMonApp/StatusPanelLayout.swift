@@ -7,4 +7,5 @@ let sessionBubbleGutter: CGFloat = 14
 let sessionBubbleScrollHeight: CGFloat = 332
 let sessionBubbleMaxHeight: CGFloat = 430
 let sessionBubbleScrollIndicatorReserve: CGFloat = 8
+let statusPanelShadowPadding: CGFloat = 32
 let statusPanelContentWidth = statusPanelMainWidth + sessionBubbleWidth + sessionBubbleGutter

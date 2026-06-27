@@ -408,8 +408,8 @@ final class TokMonDatabase {
     guard !metadatas.isEmpty else { return }
     let statement = try prepare("""
       INSERT INTO tokmon_session_metadata
-        (id, source, title, first_prompt, last_prompt, model, started_at, last_active_at, file_path, project_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, source, title, first_prompt, last_prompt, model, started_at, last_active_at, file_path, project_path, session_file_suffix)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source, id) DO UPDATE SET
         title = COALESCE(excluded.title, tokmon_session_metadata.title),
         first_prompt = CASE
@@ -437,24 +437,33 @@ final class TokMonDatabase {
           WHEN excluded.project_path IS NOT NULL THEN excluded.project_path
           ELSE tokmon_session_metadata.project_path
         END,
+        session_file_suffix = COALESCE(excluded.session_file_suffix, tokmon_session_metadata.session_file_suffix),
         updated_at = datetime('now')
     """)
     defer { sqlite3_finalize(statement) }
 
-    for metadata in metadatas {
-      try bind(metadata.id, at: 1, in: statement)
-      try bind(metadata.source, at: 2, in: statement)
-      try bind(metadata.title, at: 3, in: statement)
-      try bind(metadata.firstPrompt, at: 4, in: statement)
-      try bind(metadata.lastPrompt, at: 5, in: statement)
-      try bind(metadata.model, at: 6, in: statement)
-      try bind(metadata.startedAt, at: 7, in: statement)
-      try bind(metadata.lastActiveAt, at: 8, in: statement)
-      try bind(metadata.filePath, at: 9, in: statement)
-      try bind(metadata.projectPath, at: 10, in: statement)
-      try stepDone(statement)
-      sqlite3_reset(statement)
-      sqlite3_clear_bindings(statement)
+    try exec("BEGIN IMMEDIATE;")
+    do {
+      for metadata in metadatas {
+        try bind(metadata.id, at: 1, in: statement)
+        try bind(metadata.source, at: 2, in: statement)
+        try bind(metadata.title, at: 3, in: statement)
+        try bind(metadata.firstPrompt, at: 4, in: statement)
+        try bind(metadata.lastPrompt, at: 5, in: statement)
+        try bind(metadata.model, at: 6, in: statement)
+        try bind(metadata.startedAt, at: 7, in: statement)
+        try bind(metadata.lastActiveAt, at: 8, in: statement)
+        try bind(metadata.filePath, at: 9, in: statement)
+        try bind(metadata.projectPath, at: 10, in: statement)
+        try bind(sessionFileSuffix(for: metadata.id), at: 11, in: statement)
+        try stepDone(statement)
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
+      }
+      try exec("COMMIT;")
+    } catch {
+      try? exec("ROLLBACK;")
+      throw error
     }
   }
 
@@ -755,6 +764,7 @@ final class TokMonDatabase {
         last_active_at TEXT,
         file_path TEXT,
         project_path TEXT,
+        session_file_suffix TEXT,
         updated_at TEXT DEFAULT (datetime('now')),
         PRIMARY KEY(source, id)
       );
@@ -800,6 +810,11 @@ final class TokMonDatabase {
       column: "session_file_suffix",
       definition: "session_file_suffix TEXT",
     )
+    let addedMetadataSessionFileSuffix = try addColumnIfMissing(
+      table: "tokmon_session_metadata",
+      column: "session_file_suffix",
+      definition: "session_file_suffix TEXT",
+    )
     if addedUsageCacheSupport || addedRollupCacheHitInput || addedRollupCacheHitRead {
       try rebuildUsageRollupsFromUsageRecords()
     } else {
@@ -809,6 +824,13 @@ final class TokMonDatabase {
       try exec("""
         UPDATE usage_records
         SET session_file_suffix = session_id || '.jsonl'
+        WHERE session_file_suffix IS NULL
+      """)
+    }
+    if addedMetadataSessionFileSuffix {
+      try exec("""
+        UPDATE tokmon_session_metadata
+        SET session_file_suffix = id || '.jsonl'
         WHERE session_file_suffix IS NULL
       """)
     }
@@ -822,6 +844,7 @@ final class TokMonDatabase {
       CREATE INDEX IF NOT EXISTS idx_usage_source_created ON usage_records(source, created_at);
       CREATE INDEX IF NOT EXISTS idx_usage_model_valid ON usage_records(model) WHERE model != '' AND model != 'unknown' AND model != '<synthetic>';
       CREATE INDEX IF NOT EXISTS idx_tokmon_session_metadata_file ON tokmon_session_metadata(file_path);
+      CREATE INDEX IF NOT EXISTS idx_tokmon_session_metadata_suffix ON tokmon_session_metadata(source, session_file_suffix);
       CREATE INDEX IF NOT EXISTS idx_tokmon_usage_rollups_scope ON tokmon_usage_rollups(grain, period_start, source, model);
       CREATE INDEX IF NOT EXISTS idx_rollups_period ON tokmon_usage_rollups(period_start, grain, source, model);
     """)

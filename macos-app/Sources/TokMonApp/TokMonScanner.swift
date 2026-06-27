@@ -5,9 +5,16 @@ final class TokMonScanner {
   private static let qwenCodeScanStateVersion = "qwen-code-telemetry-v1"
 
   private let database: TokMonDatabase
+  var fileWatcher: TokMonFileWatcher?
+  private let isoTimestampFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
 
-  init(database: TokMonDatabase) {
+  init(database: TokMonDatabase, fileWatcher: TokMonFileWatcher? = nil) {
     self.database = database
+    self.fileWatcher = fileWatcher
   }
 
   // MARK: - Directory Signature Cache
@@ -29,12 +36,28 @@ final class TokMonScanner {
     }
 
     var fileSignatures: [String] = []
-    for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
-      let attributes = fileAttributes(fileURL)
-      let mtime = attributes.mtime ?? "missing"
-      fileSignatures.append("\(fileURL.path):\(attributes.size):\(mtime)")
+    for case let fileURL as URL in enumerator where isScannableLogFile(fileURL) {
+      let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+      let size = values?.fileSize.map(Int64.init) ?? 0
+      let mtime = values?.contentModificationDate.map { String($0.timeIntervalSince1970) } ?? "missing"
+      fileSignatures.append("\(fileURL.path):\(size):\(mtime)")
     }
     return DirectorySignature(fileCount: fileSignatures.count, fileSignatures: fileSignatures.sorted())
+  }
+
+  private func isScannableLogFile(_ fileURL: URL) -> Bool {
+    let ext = fileURL.pathExtension.lowercased()
+    if ext == "jsonl" {
+      return true
+    }
+    // Codex compresses cold rollout files as .jsonl.zst; we surface them here
+    // so the signature cache knows about them, but decompression is handled
+    // separately when a reader for .zst is wired up.
+    if ext == "zst" {
+      let name = fileURL.lastPathComponent.lowercased()
+      return name.hasSuffix(".jsonl.zst")
+    }
+    return false
   }
 
   // MARK: - Codex Session Name Cache
@@ -140,7 +163,36 @@ final class TokMonScanner {
   }
 
   private func scanCodex(directory: URL) throws -> Int {
-    return try scanFiles(in: directory) { fileURL in
+    // Codex stores live sessions under `sessions/` and archived ones under
+    // `archived_sessions/`. Accept either the codex home directory or one of
+    // the two session directories directly, so existing `~/.codex/sessions`
+    // configs keep working. If none of those subdirectories exist, scan the
+    // directory itself as a fallback.
+    let directoryName = directory.lastPathComponent.lowercased()
+    if directoryName == "sessions" || directoryName == "archived_sessions" {
+      return try scanCodexSessionDirectory(directory)
+    }
+
+    var count = 0
+    var scannedSubdirectory = false
+    let sessionsDir = directory.appendingPathComponent("sessions", isDirectory: true)
+    if FileManager.default.fileExists(atPath: sessionsDir.path) {
+      count += try scanCodexSessionDirectory(sessionsDir)
+      scannedSubdirectory = true
+    }
+    let archivedDir = directory.appendingPathComponent("archived_sessions", isDirectory: true)
+    if FileManager.default.fileExists(atPath: archivedDir.path) {
+      count += try scanCodexSessionDirectory(archivedDir)
+      scannedSubdirectory = true
+    }
+    if !scannedSubdirectory {
+      count += try scanCodexSessionDirectory(directory)
+    }
+    return count
+  }
+
+  private func scanCodexSessionDirectory(_ directory: URL) throws -> Int {
+    try scanFiles(in: directory) { fileURL in
       try scanCodexFile(
         fileURL,
         fallbackSessionId: codexFallbackSessionId(for: fileURL),
@@ -152,12 +204,10 @@ final class TokMonScanner {
     var count = 0
     for path in paths {
       let url = URL(fileURLWithPath: path)
-      if url.pathExtension == "jsonl" {
+      if isScannableLogFile(url) {
         count += try scanCodexFile(url, fallbackSessionId: codexFallbackSessionId(for: url))
       } else if url.hasDirectoryPath {
-        count += try scanFiles(in: url, fileURLs: nil) { fileURL in
-          try scanCodexFile(fileURL, fallbackSessionId: codexFallbackSessionId(for: fileURL))
-        }
+        count += try scanCodex(directory: url)
       }
     }
     return count
@@ -215,7 +265,7 @@ final class TokMonScanner {
   private func scanFiles(in directory: URL, fileURLs: [URL]? = nil, scanner: (URL) throws -> Int) throws -> Int {
     if let fileURLs {
       var count = 0
-      for fileURL in fileURLs where fileURL.pathExtension == "jsonl" {
+      for fileURL in fileURLs where isScannableLogFile(fileURL) {
         guard
           let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
           values.isRegularFile == true
@@ -243,7 +293,7 @@ final class TokMonScanner {
     }
 
     var count = 0
-    for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
+    for case let fileURL as URL in enumerator where isScannableLogFile(fileURL) {
       guard
         let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
         values.isRegularFile == true
@@ -461,9 +511,19 @@ final class TokMonScanner {
            !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           resolvedSessionId = sessionId
         }
-        if let model = payload?["model"] as? String,
-           !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // Codex protocol: SessionMeta carries model_provider, TurnContextItem carries model.
+        // Prefer the explicit model from turn_context, then model from session_meta (some
+        // older/derived logs still include it), then fall back to model_provider.
+        if type == "turn_context",
+           let model = normalizedPrompt(stringValue(payload?["model"])) {
           lastModel = model
+        } else if type == "session_meta",
+                  let model = normalizedPrompt(stringValue(payload?["model"])) {
+          lastModel = model
+        } else if type == "session_meta",
+                  lastModel == "unknown" || lastModel.isEmpty,
+                  let modelProvider = normalizedPrompt(stringValue(payload?["model_provider"])) {
+          lastModel = modelProvider
         }
         projectPath = projectPath ?? normalizedPrompt(stringValue(payload?["cwd"]))
       }
@@ -495,7 +555,7 @@ final class TokMonScanner {
         cacheCreation: 0,
         cacheRead: cachedInputTokens,
         reasoningTokens: intValue(usage["reasoning_output_tokens"]),
-        createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
+        createdAt: stringValue(object["timestamp"]) ?? isoTimestampFormatter.string(from: Date()),
       )
       records.append(record)
     }
@@ -515,6 +575,18 @@ final class TokMonScanner {
         lastMtime: fileMtime,
       ),
     )
+
+    // Codex keeps live session logs open for the whole session. FSEvents often
+    // misses appends to open files, so start a per-file kqueue monitor for any
+    // file that has been written to recently.
+    if let fileWatcher,
+       let fileMtime,
+       let mtime = Double(fileMtime),
+       Date().timeIntervalSince1970 - mtime < 300 {
+      Task {
+        await fileWatcher.watch(path: filePath)
+      }
+    }
 
     let metadata = TokMonSessionMetadata(
       id: resolvedSessionId,
@@ -630,7 +702,7 @@ final class TokMonScanner {
         cacheCreation: 0,
         cacheRead: cacheRead,
         reasoningTokens: intValue(usage["thoughtsTokenCount"]),
-        createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
+        createdAt: stringValue(object["timestamp"]) ?? isoTimestampFormatter.string(from: Date()),
       )
       records.append(record)
     }
@@ -809,7 +881,41 @@ final class TokMonScanner {
       sqlite3_close(connection)
     }
 
-    var sql = """
+    var conditions: [String] = []
+    if let sessionIds, !sessionIds.isEmpty {
+      let placeholders = sessionIds.map { _ in "?" }.joined(separator: ",")
+      conditions.append("m.session_id IN (\(placeholders))")
+    }
+    if after != nil {
+      conditions.append("m.time_created >= ?")
+    }
+    let whereClause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
+
+    // Use a CTE with a window function to compute the first real user prompt
+    // per session once, then LEFT JOIN it, avoiding the correlated subquery
+    // that re-scanned message/part for every assistant row.
+    let sql = """
+      WITH first_prompts AS (
+        SELECT
+          user_message.session_id AS session_id,
+          json_extract(p.data, '$.text') AS prompt_text,
+          ROW_NUMBER() OVER (
+            PARTITION BY user_message.session_id
+            ORDER BY user_message.time_created ASC,
+                     user_message.id ASC,
+                     p.time_created ASC,
+                     p.id ASC
+          ) AS rn
+        FROM message user_message
+        JOIN part p ON p.message_id = user_message.id
+          AND p.session_id = user_message.session_id
+        WHERE json_extract(user_message.data, '$.role') = 'user'
+          AND json_extract(p.data, '$.type') = 'text'
+          AND NULLIF(TRIM(json_extract(p.data, '$.text')), '') IS NOT NULL
+          AND TRIM(json_extract(p.data, '$.text')) NOT LIKE '<environment_context>%'
+          AND COALESCE(json_extract(p.data, '$.ignored'), 0) = 0
+          AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0
+      )
       SELECT m.id,
              m.session_id,
              m.time_created,
@@ -820,39 +926,13 @@ final class TokMonScanner {
              s.model,
              s.time_created,
              s.time_updated,
-             (
-               SELECT json_extract(p.data, '$.text')
-               FROM message user_message
-               JOIN part p ON p.message_id = user_message.id
-                 AND p.session_id = user_message.session_id
-               WHERE user_message.session_id = m.session_id
-                 AND json_extract(user_message.data, '$.role') = 'user'
-                 AND json_extract(p.data, '$.type') = 'text'
-                 AND NULLIF(TRIM(json_extract(p.data, '$.text')), '') IS NOT NULL
-                 AND TRIM(json_extract(p.data, '$.text')) NOT LIKE '<environment_context>%'
-                 AND COALESCE(json_extract(p.data, '$.ignored'), 0) = 0
-                 AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0
-               ORDER BY user_message.time_created ASC,
-                        user_message.id ASC,
-                        p.time_created ASC,
-                        p.id ASC
-               LIMIT 1
-             ) as first_prompt
+             fp.prompt_text AS first_prompt
       FROM message m
       JOIN session s ON s.id = m.session_id
+      LEFT JOIN first_prompts fp ON fp.session_id = m.session_id AND fp.rn = 1
+      \(whereClause)
+      ORDER BY m.time_created ASC, m.id ASC
     """
-    var conditions: [String] = []
-    if let sessionIds, !sessionIds.isEmpty {
-      let placeholders = sessionIds.map { _ in "?" }.joined(separator: ",")
-      conditions.append("m.session_id IN (\(placeholders))")
-    }
-    if after != nil {
-      conditions.append("m.time_created >= ?")
-    }
-    if !conditions.isEmpty {
-      sql += " WHERE " + conditions.joined(separator: " AND ")
-    }
-    sql += " ORDER BY m.time_created ASC, m.id ASC"
 
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1009,8 +1089,11 @@ final class TokMonScanner {
       cacheCreation: intValue(usage["cache_creation_input_tokens"]),
       cacheRead: intValue(usage["cache_read_input_tokens"]),
       reasoningTokens: 0,
-      createdAt: stringValue(object["timestamp"]) ?? ISO8601DateFormatter().string(from: Date()),
+      createdAt: stringValue(object["timestamp"]) ?? isoTimestampFormatter.string(from: Date()),
     )
+    guard hasClaudeTokenUsage(record) else {
+      return nil
+    }
     return (stringValue(messageObject["id"]) ?? "", record)
   }
 
@@ -1104,7 +1187,7 @@ final class TokMonScanner {
     let model = normalizedPrompt(stringValue(uiEvent["model"])) ?? fallbackModel
     let createdAt = normalizedPrompt(stringValue(uiEvent["event.timestamp"]))
       ?? stringValue(object["timestamp"])
-      ?? ISO8601DateFormatter().string(from: Date())
+      ?? isoTimestampFormatter.string(from: Date())
     let usage = TokMonUsageRecord(
       source: "qwen-code",
       sessionId: sessionId,
@@ -1421,8 +1504,18 @@ final class TokMonScanner {
   private func projectNameFromFilePath(_ filePath: String) -> String {
     let fileURL = URL(fileURLWithPath: filePath)
     let parent = fileURL.deletingLastPathComponent()
+    let components = parent.pathComponents
+
+    // Codex nests sessions under sessions/YYYY/MM/DD. In that case the project
+    // directory is the parent of the .codex directory (e.g. /Users/foo/bar/.codex).
+    if let sessionsIndex = components.lastIndex(of: "sessions"), sessionsIndex > 1 {
+      let codexIndex = sessionsIndex - 1
+      if components[codexIndex].lowercased() == ".codex" {
+        return components[codexIndex - 1]
+      }
+    }
+
     if parent.lastPathComponent == "sessions" || parent.lastPathComponent.count == 2 || Int(parent.lastPathComponent) != nil {
-      let components = parent.pathComponents
       if let index = components.lastIndex(of: "sessions"), index > 0 {
         return components[index - 1]
       }
@@ -1486,12 +1579,10 @@ final class TokMonScanner {
 
   private func isoTimestamp(millisecondsSince1970: Int64) -> String {
     guard millisecondsSince1970 > 0 else {
-      return ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 0))
+      return isoTimestampFormatter.string(from: Date(timeIntervalSince1970: 0))
     }
     let date = Date(timeIntervalSince1970: TimeInterval(millisecondsSince1970) / 1000)
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: date)
+    return isoTimestampFormatter.string(from: date)
   }
 
   private let maxReadLinesBytesPerCall: Int64 = 4 * 1024 * 1024
@@ -1502,33 +1593,61 @@ final class TokMonScanner {
       try? handle.close()
     }
     try handle.seek(toOffset: UInt64(range.offset))
-    let readLength = min(range.length, maxReadLinesBytesPerCall)
-    let data = try handle.read(upToCount: Int(readLength)) ?? Data()
+
     var lines: [ScannedLine] = []
-    var lineStart = data.startIndex
-    var index = data.startIndex
-    while index < data.endIndex {
-      if data[index] == 10 {
-        let lineData = data[lineStart..<index]
-        let nextOffset = range.offset + Int64(data.distance(from: data.startIndex, to: index)) + 1
-        lines.append(ScannedLine(
-          text: String(decoding: lineData, as: UTF8.self),
-          nextOffset: nextOffset,
-          isTerminated: true,
-        ))
-        lineStart = data.index(after: index)
+    var buffer = Data()
+    var bufferStartOffset: Int64 = 0  // relative to range.offset
+    var readOffset: Int64 = 0         // relative to range.offset
+
+    while readOffset < range.length {
+      let remaining = range.length - readOffset
+      let readLength = min(remaining, maxReadLinesBytesPerCall)
+      guard readLength > 0 else { break }
+      let chunk = try handle.read(upToCount: Int(readLength)) ?? Data()
+      guard !chunk.isEmpty else { break }
+
+      buffer.append(chunk)
+      readOffset += Int64(chunk.count)
+
+      var lineStart = buffer.startIndex
+      var index = buffer.startIndex
+      var foundNewline = false
+      while index < buffer.endIndex {
+        if buffer[index] == 10 {
+          let lineData = buffer[lineStart..<index]
+          let absoluteNextOffset = range.offset + bufferStartOffset + Int64(buffer.distance(from: buffer.startIndex, to: index)) + 1
+          lines.append(ScannedLine(
+            text: String(decoding: lineData, as: UTF8.self),
+            nextOffset: absoluteNextOffset,
+            isTerminated: true,
+          ))
+          lineStart = buffer.index(after: index)
+          foundNewline = true
+        }
+        index = buffer.index(after: index)
       }
-      index = data.index(after: index)
+
+      if foundNewline {
+        if lineStart < buffer.endIndex {
+          let trailing = buffer[lineStart...]
+          bufferStartOffset += Int64(buffer.distance(from: buffer.startIndex, to: lineStart))
+          buffer = Data(trailing)
+        } else {
+          buffer = Data()
+          bufferStartOffset = readOffset
+        }
+      }
     }
-    if lineStart < data.endIndex {
-      let lineData = data[lineStart..<data.endIndex]
-      let nextOffset = range.offset + Int64(data.count)
+
+    if !buffer.isEmpty {
+      let absoluteNextOffset = range.offset + bufferStartOffset + Int64(buffer.count)
       lines.append(ScannedLine(
-        text: String(decoding: lineData, as: UTF8.self),
-        nextOffset: nextOffset,
+        text: String(decoding: buffer, as: UTF8.self),
+        nextOffset: absoluteNextOffset,
         isTerminated: false,
       ))
     }
+
     return lines
   }
 
@@ -1926,6 +2045,8 @@ private struct RelaxedObjectLiteralParser {
     switch peek() {
     case "{":
       return parseObject()
+    case "[":
+      return parseArray()
     case "'", "\"":
       return parseString()
     default:
@@ -1934,6 +2055,40 @@ private struct RelaxedObjectLiteralParser {
       }
       return parseNumber()
     }
+  }
+
+  private mutating func parseArray() -> [Any]? {
+    guard consume("[") else {
+      return nil
+    }
+    skipWhitespace()
+
+    var array: [Any] = []
+    if consume("]") {
+      return array
+    }
+
+    while index < characters.count {
+      skipWhitespace()
+      guard let value = parseValue() else {
+        return nil
+      }
+      array.append(value)
+      skipWhitespace()
+
+      if consume("]") {
+        return array
+      }
+      guard consume(",") else {
+        return nil
+      }
+      skipWhitespace()
+      if consume("]") {
+        return array
+      }
+    }
+
+    return nil
   }
 
   private mutating func parseString() -> String? {
@@ -1964,6 +2119,23 @@ private struct RelaxedObjectLiteralParser {
           result.append("\r")
         case "t":
           result.append("\t")
+        case "b":
+          result.append("\u{0008}")
+        case "f":
+          result.append("\u{000C}")
+        case "\\":
+          result.append("\\")
+        case "\"":
+          result.append("\"")
+        case "'":
+          result.append("'")
+        case "u":
+          guard index + 4 <= characters.count,
+                let code = Int(String(characters[index..<index + 4]), radix: 16) else {
+            return nil
+          }
+          result.append(Character(UnicodeScalar(code)!))
+          index += 4
         default:
           result.append(escaped)
         }
@@ -2002,13 +2174,22 @@ private struct RelaxedObjectLiteralParser {
         index += 1
       }
     }
+    if let expChar = peek(), expChar == "e" || expChar == "E" {
+      index += 1
+      if let signChar = peek(), signChar == "+" || signChar == "-" {
+        index += 1
+      }
+      while let character = peek(), character.isNumber {
+        index += 1
+      }
+    }
 
     guard index > start else {
       return nil
     }
 
     let rawValue = String(characters[start..<index])
-    if rawValue.contains(".") {
+    if rawValue.contains(".") || rawValue.lowercased().contains("e") {
       return Double(rawValue)
     }
     return Int(rawValue)

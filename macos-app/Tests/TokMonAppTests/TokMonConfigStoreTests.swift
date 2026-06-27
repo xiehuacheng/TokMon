@@ -10,7 +10,7 @@ import Testing
   let state = try store.loadUIState()
 
   #expect(config.sources["claude-code"]?.path == "~/.claude/projects")
-  #expect(config.sources["codex"]?.path == "~/.codex/sessions")
+  #expect(config.sources["codex"]?.path == "~/.codex")
   #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
   #expect(config.sources["qwen-code"]?.path == "~/.qwen/projects")
   #expect(state.rangeLabel == "thisWeek")

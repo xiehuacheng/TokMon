@@ -27,6 +27,7 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 - `TokMonDatabase.swift`：SQLite schema、写入 helper、rollup 维护和重建。
 - `TokMonQueryStore.swift`：summary、trend、heatmap、records、sessions 查询。
 - `TokMonConfigStore.swift`：TokMon 配置和 UI state 读写。
+- `TokMonGlassStyle.swift`：主题色、玻璃态效果与动态颜色（浅色 / 深色模式）。
 - `docs/images/`：README 展示图。
 
 ## Claude Code 使用本仓库时的特别注意
@@ -38,9 +39,11 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 3. **环境变量**：
    - `TOKMON_PROJECT_ROOT`：Swift App 从其他目录启动时的仓库路径（见 `macos-app/Sources/TokMonApp/TokMonProjectLocator.swift`）。
 
-4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图。
+4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图；涉及 popover 位置、窗口层级或多显示器的改动，请在主显示器和副显示器上都验证。
 
-5. **不要自己 `git commit` / `git push`**，除非用户明确要求。本仓库的提交风格是简短祈使句，例如 `Clean native runtime`、`Fix token scan state`。
+5. **权限相关改动**：涉及屏幕捕获、辅助功能等 macOS 权限时，同步更新 `Packaging/Info.plist` 中对应的 `UsageDescription`，并在打包后验证权限弹窗与行为。
+
+6. **不要自己 `git commit` / `git push`**，除非用户明确要求。本仓库的提交风格是简短祈使句，例如 `Clean native runtime`、`Fix token scan state`。
 
 ## 文档入口
 

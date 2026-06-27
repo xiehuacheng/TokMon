@@ -24,7 +24,8 @@ TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、
 - 支持 Yesterday、Today、This Week、This Month、This Year、All 快捷时间范围
 - session 标题统一使用项目文件夹名和第一句 prompt
 - 支持按模型配置价格，用于费用估算
-- 右上角提供原生设置窗口和退出 App
+- 支持浅色与深色模式，主题色会自动适配以保证可读性
+- 状态栏 popover 右上角提供刷新、复制截图、打开设置窗口和退出 App
 
 ## 数据来源支持
 
@@ -46,7 +47,7 @@ bash macos-app/scripts/build-app.sh
 open macos-app/release/TokMon.app
 ```
 
-App 启动后会在菜单栏显示 TokMon 图标。点击状态栏图标可以查看实时统计、打开设置窗口或退出应用。打包产物位于 `macos-app/release/`，不会提交到 Git。
+App 启动后会在菜单栏显示 TokMon 图标。点击状态栏图标可以查看实时统计、复制面板截图、打开设置窗口或退出应用。打包产物位于 `macos-app/release/`，不会提交到 Git。
 
 ## 配置与数据
 

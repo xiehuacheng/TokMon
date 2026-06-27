@@ -3,7 +3,7 @@ import CoreServices
 
 actor TokMonSourceWatcher {
   private var stream: FSEventStreamRef?
-  private var watchedPaths: [String] = []
+  private(set) var watchedPaths: [String] = []
   private let onChange: @Sendable ([String]) -> Void
   private let configProvider: @Sendable () -> TokMonConfig
   private var pendingChangeTask: Task<Void, Never>?
@@ -21,7 +21,7 @@ actor TokMonSourceWatcher {
   init(
     configProvider: @escaping @Sendable () -> TokMonConfig,
     debounceInterval: Duration = .seconds(3),
-    minimumScanInterval: Duration = .seconds(5),
+    minimumScanInterval: Duration = .seconds(3),
     onChange: @escaping @Sendable ([String]) -> Void
   ) {
     self.configProvider = configProvider
@@ -33,15 +33,18 @@ actor TokMonSourceWatcher {
   func start() {
     stop()
     let config = configProvider()
-    let paths = config.sources.values
-      .map { expandedPath($0.path) }
+    let watchPaths = config.sources
+      .sorted { $0.key < $1.key }
+      .flatMap { sourceKey, source in
+        expandedWatchPaths(for: sourceKey, path: source.path)
+      }
       .filter { FileManager.default.fileExists(atPath: $0) }
-    guard !paths.isEmpty else {
+    guard !watchPaths.isEmpty else {
       tokMonLog("TokMonSourceWatcher: no valid source paths to watch")
       return
     }
-    watchedPaths = paths
-    tokMonLog("TokMonSourceWatcher: starting watch on \(paths)")
+    watchedPaths = watchPaths
+    tokMonLog("TokMonSourceWatcher: starting watch on \(watchPaths)")
 
     let context = TokMonSourceWatcherContext(watcher: self)
     let retained = Unmanaged.passRetained(context)
@@ -81,9 +84,9 @@ actor TokMonSourceWatcher {
         kCFAllocatorDefault,
         callback,
         contextPtr,
-        paths as CFArray,
+        watchPaths as CFArray,
         FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-        5.0,
+        1.0,
         FSEventStreamCreateFlags(
           kFSEventStreamCreateFlagFileEvents
             | kFSEventStreamCreateFlagUseCFTypes
@@ -133,34 +136,53 @@ actor TokMonSourceWatcher {
         | kFSEventStreamEventFlagItemXattrMod
         | kFSEventStreamEventFlagItemChangeOwner
     )
-    let relevantFlags = FSEventStreamEventFlags(
-      kFSEventStreamEventFlagItemCreated
-        | kFSEventStreamEventFlagItemModified
-        | kFSEventStreamEventFlagItemRenamed
-        | kFSEventStreamEventFlagItemRemoved
+    let coarseFlags = FSEventStreamEventFlags(
+      kFSEventStreamEventFlagMustScanSubDirs
+        | kFSEventStreamEventFlagKernelDropped
+        | kFSEventStreamEventFlagUserDropped
     )
+    let relevantFlags = coarseFlags
+      | FSEventStreamEventFlags(kFSEventStreamEventFlagItemCreated)
+      | FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified)
+      | FSEventStreamEventFlags(kFSEventStreamEventFlagItemRenamed)
+      | FSEventStreamEventFlags(kFSEventStreamEventFlagItemRemoved)
 
-    var changedPaths: [String] = []
+    var changedPaths = Set<String>()
     for (path, flag) in zip(paths, flags) {
       guard (flag & relevantFlags) != 0 else { continue }
       if (flag & irrelevantFlags) != 0 && (flag & relevantFlags) == 0 { continue }
 
+      // FSEvents may coalesce events for deep directories into MustScanSubDirs
+      // or KernelDropped. Treat those as "something changed under this root".
+      if (flag & coarseFlags) != 0 {
+        if let root = watchedRoot(containing: path) {
+          changedPaths.insert(root)
+        }
+        continue
+      }
+
       let filename = (path as NSString).lastPathComponent.lowercased()
       let ext = (path as NSString).pathExtension.lowercased()
       guard ext == "jsonl" || filename == "opencode.db" || filename.hasPrefix("opencode.db-") else {
+        // A directory-level event under a watched root (without coarse flags)
+        // should still trigger a scan of that root.
+        if let root = watchedRoot(containing: path), isDirectory(path) {
+          changedPaths.insert(root)
+        }
         continue
       }
-      changedPaths.append(path)
+      changedPaths.insert(path)
     }
     guard !changedPaths.isEmpty else { return }
 
     pendingChangeTask?.cancel()
 
+    let changedArray = Array(changedPaths)
     if let lastScan = lastScanTime,
        Date().timeIntervalSince(lastScan) >= minimumScanIntervalComponents {
       lastScanTime = Date()
-      tokMonLog("TokMonSourceWatcher: triggering immediate scan after \(changedPaths.count) change(s)")
-      onChange(changedPaths)
+      tokMonLog("TokMonSourceWatcher: triggering immediate scan after \(changedArray.count) change(s)")
+      onChange(changedArray)
       return
     }
 
@@ -168,8 +190,8 @@ actor TokMonSourceWatcher {
       try? await Task.sleep(for: self?.debounceInterval ?? .seconds(3))
       guard let self, !Task.isCancelled else { return }
       await self.setLastScanTime(Date())
-      tokMonLog("TokMonSourceWatcher: triggering scan after \(changedPaths.count) change(s)")
-      self.onChange(changedPaths)
+      tokMonLog("TokMonSourceWatcher: triggering scan after \(changedArray.count) change(s)")
+      self.onChange(changedArray)
     }
   }
 
@@ -182,6 +204,39 @@ actor TokMonSourceWatcher {
     seconds += Double(minimumScanInterval.components.seconds)
     seconds += Double(minimumScanInterval.components.attoseconds) / 1e18
     return seconds
+  }
+
+  private func expandedWatchPaths(for sourceKey: String, path: String) -> [String] {
+    let expanded = expandedPath(path)
+    guard sourceKey == "codex" else {
+      return [expanded]
+    }
+
+    let url = URL(fileURLWithPath: expanded)
+    var watchPaths: [String] = []
+    let sessionsDir = url.appendingPathComponent("sessions", isDirectory: true)
+    if FileManager.default.fileExists(atPath: sessionsDir.path) {
+      watchPaths.append(sessionsDir.path)
+    }
+    let archivedDir = url.appendingPathComponent("archived_sessions", isDirectory: true)
+    if FileManager.default.fileExists(atPath: archivedDir.path) {
+      watchPaths.append(archivedDir.path)
+    }
+    if watchPaths.isEmpty {
+      watchPaths.append(expanded)
+    }
+    return watchPaths
+  }
+
+  private func watchedRoot(containing path: String) -> String? {
+    watchedPaths
+      .filter { path == $0 || path.hasPrefix($0 + "/") }
+      .max(by: { $0.count < $1.count })
+  }
+
+  private func isDirectory(_ path: String) -> Bool {
+    var isDir: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
   }
 }
 

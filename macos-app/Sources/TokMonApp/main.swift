@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import QuartzCore
 import SwiftUI
 
 @MainActor
@@ -12,6 +11,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private var localClickMonitor: Any?
   private var cancellables = Set<AnyCancellable>()
   private var isClosingStatusPanel = false
+  private var activationObserver: NSObjectProtocol?
   private let statusPanelAnimationDuration: TimeInterval = 0.18
   private let statusPanelAnimationOffset: CGFloat = 10
 
@@ -24,6 +24,13 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     closeStatusPanel()
     runtime.stop()
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    guard statusPanel?.isVisible == true else {
+      return
+    }
+    closeStatusPanel()
   }
 
   private func configureStatusItem() {
@@ -54,16 +61,56 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
     setStatusItemHighlighted(true)
     Task { @MainActor in
-      await runtime.stats.refresh()
+      await runtime.stats.refreshWithScan()
     }
 
     let panelFrame = statusPanelFrame(relativeTo: button)
     let panel = makeStatusPanel()
     panel.setFrame(panelFrame, display: false)
     statusPanel = panel
+    runtime.statusPanel = panel
     animateStatusPanelOpen(panel, targetFrame: panelFrame)
-    DispatchQueue.main.async { [weak self] in
-      self?.installOutsideClickMonitor()
+    DispatchQueue.main.async { [weak self, weak panel] in
+      guard let self, let panel else { return }
+      self.runtime.beginWindowPresentation()
+      self.activateAndFocus(panel)
+      self.installOutsideClickMonitor()
+    }
+  }
+
+  private func activateAndFocus(_ panel: NSPanel) {
+    removeActivationObserver()
+    let app = NSApplication.shared
+
+    if app.isActive {
+      panel.makeKeyAndOrderFront(nil)
+      tokMonLog("TokMon activateAndFocus immediate: keyWindow=\(app.keyWindow?.title ?? "nil")")
+      return
+    }
+
+    activationObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification,
+      object: app,
+      queue: .main
+    ) { [weak self, weak panel] _ in
+      MainActor.assumeIsolated {
+        guard let self, let panel, panel.isVisible else {
+          self?.removeActivationObserver()
+          return
+        }
+        panel.makeKeyAndOrderFront(nil)
+        tokMonLog("TokMon activateAndFocus onActive: keyWindow=\(app.keyWindow?.title ?? "nil")")
+        self.removeActivationObserver()
+      }
+    }
+
+    NSApplication.shared.activate(ignoringOtherApps: true)
+  }
+
+  private func removeActivationObserver() {
+    if let activationObserver {
+      NotificationCenter.default.removeObserver(activationObserver)
+      self.activationObserver = nil
     }
   }
 
@@ -71,6 +118,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     guard let panel = statusPanel, !isClosingStatusPanel else {
       return
     }
+    removeActivationObserver()
     runtime.stats.popoverDidDisappear()
     isClosingStatusPanel = true
     removeOutsideClickMonitor()
@@ -98,9 +146,11 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func finishClosingStatusPanel(_ panel: NSPanel) {
     panel.orderOut(nil)
+    runtime.endWindowPresentation()
     statusPanel?.delegate = nil
     if statusPanel === panel {
       statusPanel = nil
+      runtime.statusPanel = nil
     }
     isClosingStatusPanel = false
   }
@@ -115,6 +165,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     let view = hostingController.view
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.clear.cgColor
+    view.layer?.masksToBounds = false
 
     let panel = TokMonStatusPanel(
       contentRect: NSRect(origin: .zero, size: NSSize(width: statusPanelContentWidth, height: statusPanelHeight)),
@@ -123,14 +174,15 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
       defer: false,
     )
     panel.contentViewController = hostingController
+    panel.contentView?.wantsLayer = true
+    panel.contentView?.layer?.masksToBounds = false
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
-    panel.level = .statusBar
+    panel.level = .modalPanel
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.hidesOnDeactivate = false
     panel.isReleasedWhenClosed = false
-    makePanelWindowTransparent(panel)
     return panel
   }
 
@@ -139,8 +191,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     startFrame.origin.y -= statusPanelAnimationOffset
     panel.alphaValue = 0
     panel.setFrame(startFrame, display: false)
-    panel.orderFrontRegardless()
-    panel.makeKeyAndOrderFront(nil)
+    panel.orderFront(nil)
     NSAnimationContext.runAnimationGroup { context in
       context.duration = statusPanelAnimationDuration
       context.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -167,23 +218,20 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func makePanelWindowTransparent(_ window: NSWindow) {
-    guard let view = window.contentViewController?.view else {
-      return
-    }
-
-    window.isOpaque = false
-    window.backgroundColor = .clear
-    view.wantsLayer = true
-    view.layer?.backgroundColor = NSColor.clear.cgColor
-  }
-
   private func statusPanelFrame(relativeTo button: NSStatusBarButton) -> NSRect {
     guard let buttonWindow = button.window, let screen = buttonWindow.screen ?? NSScreen.main else {
-      return NSRect(x: 0, y: 0, width: statusPanelContentWidth, height: statusPanelHeight)
+      return NSRect(
+        x: 0,
+        y: 0,
+        width: statusPanelContentWidth + statusPanelShadowPadding * 2,
+        height: statusPanelHeight + statusPanelShadowPadding
+      )
     }
 
-    let panelSize = NSSize(width: statusPanelContentWidth, height: statusPanelHeight)
+    let panelSize = NSSize(
+      width: statusPanelContentWidth + statusPanelShadowPadding * 2,
+      height: statusPanelHeight + statusPanelShadowPadding
+    )
     let mainPanelWidth: CGFloat = statusPanelMainWidth
     let buttonFrameInScreen = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
     let screenFrame = screen.visibleFrame
@@ -191,7 +239,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     let minMainX = screenFrame.minX + 8 + sessionBubbleWidth + sessionBubbleGutter
     let maxMainX = screenFrame.maxX - mainPanelWidth - 8
     let mainX = min(max(preferredMainX, minMainX), maxMainX)
-    let x = mainX - sessionBubbleWidth - sessionBubbleGutter
+    let x = mainX - sessionBubbleWidth - sessionBubbleGutter - statusPanelShadowPadding
     let y = screenFrame.maxY - panelSize.height
 
     return NSRect(origin: NSPoint(x: x, y: y), size: panelSize)
@@ -216,28 +264,45 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     guard let statusPanel else {
       return event
     }
-    let isStatusPanelEvent = event.window === statusPanel
-    guard isStatusPanelEvent, shouldCloseStatusPanel(for: event) else {
+    guard shouldCloseStatusPanel(for: event) else {
       return event
     }
     Task { @MainActor in
       self.closeStatusPanel()
     }
-    return isStatusPanelEvent ? nil : event
+    return event.window === statusPanel ? nil : event
   }
 
   private func shouldCloseStatusPanel(for event: NSEvent) -> Bool {
     guard let statusPanel else {
       return false
     }
+    if runtime.isSettingsWindowEvent(event) {
+      return false
+    }
     return !isPointInsideVisibleStatusPanel(NSEvent.mouseLocation, statusPanel: statusPanel)
   }
 
   private func isPointInsideVisibleStatusPanel(_ point: NSPoint, statusPanel: NSPanel) -> Bool {
-    var mainFrame = statusPanel.frame
-    mainFrame.origin.x += sessionBubbleWidth + sessionBubbleGutter
-    mainFrame.size.width = statusPanelMainWidth
+    let contentMinX = statusPanel.frame.minX + statusPanelShadowPadding
+    let contentMinY = statusPanel.frame.maxY - statusPanelHeight
+    let mainFrame = NSRect(
+      x: contentMinX + sessionBubbleWidth + sessionBubbleGutter,
+      y: contentMinY,
+      width: statusPanelMainWidth,
+      height: statusPanelHeight
+    )
     if mainFrame.insetBy(dx: -2, dy: -2).contains(point) {
+      return true
+    }
+
+    let bubbleGutterFrame = NSRect(
+      x: contentMinX,
+      y: contentMinY,
+      width: sessionBubbleWidth + sessionBubbleGutter,
+      height: statusPanelHeight
+    )
+    if bubbleGutterFrame.insetBy(dx: -2, dy: -2).contains(point) {
       return true
     }
 
@@ -245,10 +310,12 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
       return false
     }
 
-    var bubbleFrame = statusPanel.frame
-    bubbleFrame.origin.y = statusPanel.frame.maxY - sessionBubbleY - sessionBubbleMaxHeight
-    bubbleFrame.size.width = sessionBubbleWidth
-    bubbleFrame.size.height = sessionBubbleMaxHeight
+    let bubbleFrame = NSRect(
+      x: contentMinX,
+      y: statusPanel.frame.maxY - sessionBubbleY - sessionBubbleMaxHeight,
+      width: sessionBubbleWidth,
+      height: sessionBubbleMaxHeight
+    )
     return bubbleFrame.insetBy(dx: -2, dy: -2).contains(point)
   }
 
@@ -266,7 +333,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func setStatusItemHighlighted(_ highlighted: Bool) {
     statusItem.button?.state = highlighted ? .on : .off
-    statusItem.button?.contentTintColor = highlighted ? .controlAccentColor : .labelColor
+    statusItem.button?.contentTintColor = .labelColor
     statusItem.button?.highlight(highlighted)
   }
 }

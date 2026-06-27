@@ -1,4 +1,5 @@
 import SwiftUI
+import ScreenCaptureKit
 
 struct StatusPopoverView: View {
   @EnvironmentObject private var runtime: TokMonRuntime
@@ -7,7 +8,9 @@ struct StatusPopoverView: View {
   @State private var selectedSeries = TokMonSeriesPresentation.total
   @State private var expandedRequestId: String?
   @State private var isTotalTokensExpanded = false
+  @State private var refreshRotation: Double = 0
   @State private var sessionRowFrames: [String: CGRect] = [:]
+  @State private var scrollViewBounds: CGRect = .zero
   @Namespace private var pageRailSelectionNamespace
   private let numberFormatter: NumberFormatter = {
     let formatter = NumberFormatter()
@@ -17,35 +20,51 @@ struct StatusPopoverView: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      ZStack(alignment: .top) {
-        VStack(alignment: .leading, spacing: 10) {
-          pinnedHeader
-          ScrollView(showsIndicators: false) {
-            scrollingPageContent
-              .padding(.horizontal, 11)
-              .padding(.bottom, 11)
-              .frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)
-              .background(Color.clear)
-              .contentShape(Rectangle())
+      VStack(alignment: .leading, spacing: 10) {
+        pinnedHeader
+        ScrollView(showsIndicators: false) {
+          scrollingPageContent
+            .padding(.horizontal, 11)
+            .padding(.bottom, 11)
+            .frame(maxWidth: .infinity, minHeight: statusPanelScrollContentHeight, alignment: .topLeading)
+            .background(Color.clear)
+            .contentShape(Rectangle())
+        }
+        .background {
+          GeometryReader { proxy in
+            Color.clear.preference(
+              key: ScrollViewBoundsPreferenceKey.self,
+              value: proxy.frame(in: .named(StatusPopoverCoordinateSpace.main))
+            )
           }
         }
-        .clipShape(StatusPanelContentMask())
+        .onPreferenceChange(ScrollViewBoundsPreferenceKey.self) { bounds in
+          scrollViewBounds = bounds
+        }
+        .tokMonScrollEdgeFade(top: 8, bottom: 12)
       }
+      .clipShape(StatusPanelContentMask())
       .background(alignment: .top) {
         StatusPanelShell()
       }
       .frame(width: statusPanelMainWidth, height: statusPanelHeight)
+      .background {
+        RoundedRectangle(cornerRadius: 30, style: .continuous)
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 20, x: 0, y: 10)
+      }
       .background(Color.clear)
       .contentShape(Rectangle())
       .coordinateSpace(name: StatusPopoverCoordinateSpace.main)
       .padding(.leading, sessionBubbleWidth + sessionBubbleGutter)
-      if selectedPage == .sessions {
+      if selectedPage == .sessions, let selectedSessionBubbleY {
         selectedSessionDrilldown
           .offset(x: 0, y: selectedSessionBubbleY)
           .animation(TokMonMotion.gentleSpring, value: selectedSessionBubbleY)
       }
     }
-    .frame(width: statusPanelContentWidth, height: statusPanelHeight, alignment: .topLeading)
+    .padding([.bottom, .leading, .trailing], statusPanelShadowPadding)
+    .frame(width: statusPanelContentWidth + statusPanelShadowPadding * 2, height: statusPanelHeight + statusPanelShadowPadding, alignment: .topLeading)
     .onChange(of: stats.snapshot.dashboardState?.activeSeries, initial: true) { _, activeSeries in
       selectedSeries = TokMonSeriesPresentation(rawValue: activeSeries ?? "total")
     }
@@ -142,13 +161,24 @@ struct StatusPopoverView: View {
         Text("TokMon")
           .font(.system(size: 14, weight: .heavy, design: .rounded))
           .foregroundStyle(.primary)
-        Text("\(serverLine) · \(updatedLine)")
+        Text(updatedLine)
           .font(.system(size: 12, weight: .semibold, design: .rounded))
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
 
       Spacer()
+
+      HeaderIconButton(systemName: "arrow.clockwise", help: "Refresh Now", rotation: refreshRotation) {
+        let targetRotation = refreshRotation + 360
+        withAnimation(.easeInOut(duration: 0.5)) {
+          refreshRotation = targetRotation
+        }
+        Task { await stats.refreshWithScan() }
+      }
+      HeaderIconButton(systemName: "camera", completedSystemName: "checkmark", help: "Copy Screenshot") {
+        copyScreenshotToPasteboard()
+      }
 
       HeaderIconButton(systemName: "gearshape", help: "TokMon Settings") {
         runtime.openSettings()
@@ -323,7 +353,7 @@ struct StatusPopoverView: View {
           if rows.isEmpty {
             emptyState("No requests in this session for the selected range.")
           } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
               ForEach(rows) { row in
                 RequestRowView(
                   row: row,
@@ -346,10 +376,14 @@ struct StatusPopoverView: View {
       .padding(14)
       .frame(width: sessionBubbleWidth, height: sessionBubbleMaxHeight, alignment: .topLeading)
       .background(alignment: .top) {
-        StatusSessionBubbleShell()
+        ZStack {
+          RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(Color.clear)
+            .shadow(color: Color.black.opacity(0.12), radius: 18, x: 0, y: 9)
+          StatusSessionBubbleShell()
+        }
       }
       .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-      .shadow(color: Color.black.opacity(0.12), radius: 18, y: 9)
       .transition(.tokMonPanelDrilldown)
     }
   }
@@ -406,10 +440,6 @@ struct StatusPopoverView: View {
       .font(.system(size: 13, weight: .semibold, design: .rounded))
       .foregroundStyle(.secondary)
       .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-  }
-
-  private var serverLine: String {
-    "Native TokMon"
   }
 
   private var currentEstimatedCost: Double? {
@@ -499,6 +529,72 @@ struct StatusPopoverView: View {
     return format(Int(value.rounded()))
   }
 
+  private func copyScreenshotToPasteboard() {
+    guard let window = runtime.statusPanel,
+          let screen = window.screen else { return }
+
+    Task {
+      do {
+        let content = try await SCShareableContent.current
+
+        guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+          tokMonLog("Screenshot: could not read screen number")
+          return
+        }
+        let targetDisplayID = CGDirectDisplayID(screenNumber.uint32Value)
+        guard let scDisplay = content.displays.first(where: { $0.displayID == targetDisplayID }) else {
+          tokMonLog("Screenshot: could not find SCDisplay for screen \(targetDisplayID)")
+          return
+        }
+
+        let filter = SCContentFilter(display: scDisplay, excludingApplications: [], exceptingWindows: [])
+        let scale = window.backingScaleFactor
+        let config = SCStreamConfiguration()
+        config.width = Int(scDisplay.frame.width * scale)
+        config.height = Int(scDisplay.frame.height * scale)
+        config.showsCursor = false
+
+        let cgImage = try await SCScreenshotManager.captureImage(
+          contentFilter: filter,
+          configuration: config
+        )
+
+        let displayFrame = scDisplay.frame
+        let windowFrame = window.frame
+        let displayPixelHeight = Int(displayFrame.height * scale)
+
+        var windowPixelRect = CGRect(
+          x: (windowFrame.minX - displayFrame.minX) * scale,
+          y: (windowFrame.minY - displayFrame.minY) * scale,
+          width: windowFrame.width * scale,
+          height: windowFrame.height * scale
+        )
+        windowPixelRect.origin.y = CGFloat(displayPixelHeight) - windowPixelRect.maxY
+
+        let cropRect = CGRect(
+          x: windowPixelRect.minX + CGFloat(sessionBubbleWidth + sessionBubbleGutter) * scale,
+          y: windowPixelRect.minY,
+          width: CGFloat(statusPanelMainWidth + statusPanelShadowPadding * 2) * scale,
+          height: CGFloat(statusPanelHeight + statusPanelShadowPadding) * scale
+        )
+
+        guard let croppedCGImage = cgImage.cropping(to: cropRect) else {
+          tokMonLog("Screenshot: cropping failed")
+          return
+        }
+
+        let croppedSize = CGSize(width: cropRect.width / scale, height: cropRect.height / scale)
+        let image = NSImage(cgImage: croppedCGImage, size: croppedSize)
+        await MainActor.run {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.writeObjects([image])
+        }
+      } catch {
+        tokMonLog("Screenshot failed: \(error.localizedDescription)")
+      }
+    }
+  }
+
   private func selectSeries(_ series: TokMonSeriesPresentation) {
     selectedSeries = series
   }
@@ -523,10 +619,17 @@ struct StatusPopoverView: View {
     statusPanelHeight - 104
   }
 
-  private var selectedSessionBubbleY: CGFloat {
+  private var selectedSessionBubbleY: CGFloat? {
     guard let selection = stats.snapshot.selectedUsageSession,
           let rowFrame = sessionRowFrames[selection.id] else {
-      return 42
+      return nil
+    }
+
+    let visibleBounds = scrollViewBounds.isEmpty
+      ? CGRect(x: 0, y: 104, width: statusPanelMainWidth, height: statusPanelScrollContentHeight)
+      : scrollViewBounds
+    guard rowFrame.intersects(visibleBounds) else {
+      return nil
     }
 
     let minimumY: CGFloat = 12
@@ -710,9 +813,9 @@ struct StatusPopoverView: View {
     case "claude-code":
       TokMonGlass.accent
     case "codex":
-      TokMonGlass.success
+      TokMonGlass.codexTeal
     case "opencode":
-      TokMonGlass.warning
+      TokMonGlass.opencodeAmber
     case "qwen-code":
       TokMonGlass.danger
     default:
@@ -789,6 +892,14 @@ private struct SessionRowFramePreferenceKey: PreferenceKey {
   }
 }
 
+private struct ScrollViewBoundsPreferenceKey: PreferenceKey {
+  static let defaultValue: CGRect = .zero
+
+  static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+    value = nextValue()
+  }
+}
+
 private struct StatusPanelShell: View {
   var body: some View {
     if #available(macOS 26.0, *) {
@@ -802,7 +913,6 @@ private struct StatusPanelShell: View {
         .overlay {
           shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
         }
-        .shadow(color: TokMonGlass.ambientShadow, radius: 24, y: 12)
         .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
     }
   }
@@ -820,13 +930,17 @@ private struct StatusSessionBubbleShell: View {
         .glassEffect(.regular, in: shellShape)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     } else {
-      shellShape
-        .fill(.ultraThinMaterial)
-        .overlay {
-          shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-        }
-        .shadow(color: TokMonGlass.ambientShadow, radius: 20, y: 10)
-        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+      ZStack {
+        shellShape
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 20, x: 0, y: 10)
+        shellShape
+          .fill(.thinMaterial)
+          .overlay {
+            shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+          }
+      }
+      .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
   }
 
@@ -900,37 +1014,238 @@ private struct SessionDrilldownHeader: View {
   }
 }
 
+private struct GlassHoverModifier: ViewModifier {
+  let cornerRadius: CGFloat
+  let isSelected: Bool
+  @State private var isHovered = false
+  @State private var isPressed = false
+
+  func body(content: Content) -> some View {
+    content
+      .background {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .fill(isSelected
+            ? (isPressed
+                ? TokMonGlass.accentTilePress
+                : isHovered
+                  ? TokMonGlass.accentTileHover
+                  : TokMonGlass.accentTileIdle)
+            : isPressed ? TokMonGlass.cardRowPress : isHovered ? TokMonGlass.cardRowHover : TokMonGlass.cardRowIdle)
+      }
+      .overlay {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .strokeBorder(
+            isSelected ? TokMonGlass.accent.opacity(isPressed ? 0.55 : 0.50) : TokMonGlass.cardBorder,
+            lineWidth: 1)
+      }
+      .onHover { hovering in
+        isHovered = hovering
+      }
+      .simultaneousGesture(
+        DragGesture(minimumDistance: 0)
+          .onChanged { _ in isPressed = true }
+          .onEnded { _ in isPressed = false }
+      )
+  }
+}
+
+private extension View {
+  func glassHover(cornerRadius: CGFloat = 16, isSelected: Bool = false) -> some View {
+    modifier(GlassHoverModifier(cornerRadius: cornerRadius, isSelected: isSelected))
+  }
+
+  func glassCard(cornerRadius: CGFloat = 16) -> some View {
+    modifier(GlassCardModifier(cornerRadius: cornerRadius))
+  }
+}
+
+private struct GlassCardModifier: ViewModifier {
+  let cornerRadius: CGFloat
+  @State private var isHovered = false
+  @State private var isPressed = false
+
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    content
+      .background {
+        shape.fill(isPressed ? TokMonGlass.cardRowPress : isHovered ? TokMonGlass.cardRowHover : TokMonGlass.cardRowIdle)
+      }
+      .clipShape(shape)
+      .overlay {
+        shape.strokeBorder(TokMonGlass.cardBorder, lineWidth: 1)
+      }
+      .background {
+        shape
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 6, x: 0, y: 2)
+      }
+      .onHover { isHovered = $0 }
+      .simultaneousGesture(
+        DragGesture(minimumDistance: 0)
+          .onChanged { _ in isPressed = true }
+          .onEnded { _ in isPressed = false }
+      )
+  }
+}
+
+private struct GlassRowButtonStyle: ButtonStyle {
+  let cornerRadius: CGFloat
+  let isSelected: Bool
+  @State private var isHovered = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    configuration.label
+      .background {
+        shape.fill(isSelected
+          ? (configuration.isPressed
+              ? TokMonGlass.accentTilePress
+              : isHovered
+                ? TokMonGlass.accentTileHover
+                : TokMonGlass.accentTileIdle)
+          : configuration.isPressed ? TokMonGlass.cardRowPress : isHovered ? TokMonGlass.cardRowHover : TokMonGlass.cardRowIdle)
+      }
+      .clipShape(shape)
+      .overlay {
+        shape.strokeBorder(
+          isSelected ? TokMonGlass.accent.opacity(configuration.isPressed ? 0.60 : 0.55) : TokMonGlass.cardBorder,
+          lineWidth: 1)
+      }
+      .background {
+        shape
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 6, x: 0, y: 2)
+      }
+      .onHover { isHovered = $0 }
+  }
+}
+
+private struct HeaderIconButtonStyle: ButtonStyle {
+  let isHovered: Bool
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.92 : 1.0)
+      .overlay {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(Color.white.opacity(configuration.isPressed ? 0.35 : isHovered ? 0.22 : 0.0))
+          .allowsHitTesting(false)
+      }
+      .animation(.easeInOut(duration: 0.12), value: isHovered)
+      .animation(.easeInOut(duration: 0.08), value: configuration.isPressed)
+  }
+}
+
 private struct HeaderIconButton: View {
   let systemName: String
+  let completedSystemName: String?
   let help: String
+  var rotation: Double = 0
   let action: () -> Void
+  @State private var isHovered = false
+  @State private var isCompleted = false
+
+  init(
+    systemName: String,
+    completedSystemName: String? = nil,
+    help: String,
+    rotation: Double = 0,
+    action: @escaping () -> Void
+  ) {
+    self.systemName = systemName
+    self.completedSystemName = completedSystemName
+    self.help = help
+    self.rotation = rotation
+    self.action = action
+  }
 
   var body: some View {
-    Button(action: action) {
-      Image(systemName: systemName)
-        .font(.system(size: 14, weight: .bold))
-        .foregroundStyle(.primary)
-        .frame(width: 28, height: 28)
-        .background {
-          if #available(macOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(.clear)
-              .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-          } else {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(.regularMaterial)
-              .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                  .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-              }
-              .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
-          }
+    Button(action: {
+      if completedSystemName != nil {
+        isCompleted = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+          isCompleted = false
         }
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+      }
+      action()
+    }) {
+      ZStack {
+        buttonBackground
+        Image(systemName: effectiveIconName)
+          .font(.system(size: 14, weight: .bold))
+          .foregroundStyle(.primary)
+          .rotationEffect(.degrees(rotation))
+      }
+      .frame(width: 28, height: 28)
+      .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(HeaderIconButtonStyle(isHovered: isHovered))
     .focusable(false)
     .help(help)
+    .onHover { isHovered = $0 }
+  }
+
+  private var effectiveIconName: String {
+    if isCompleted, let completedSystemName {
+      return completedSystemName
+    }
+    return systemName
+  }
+
+  private var buttonBackground: some View {
+    Group {
+      if #available(macOS 26.0, *) {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(.clear)
+          .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+      } else {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(.regularMaterial)
+          .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+          }
+          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
+      }
+    }
+  }
+}
+
+private struct GlassButtonStyle: ButtonStyle {
+  let cornerRadius: CGFloat
+  let isSelected: Bool
+  @State private var isHovered = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+      .background {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .fill(isSelected
+            ? (configuration.isPressed
+                ? TokMonGlass.accentTilePress
+                : isHovered
+                  ? TokMonGlass.accentTileHover
+                  : TokMonGlass.accentTileIdle)
+            : configuration.isPressed
+              ? TokMonGlass.cardBackgroundInnerPress
+              : isHovered
+                ? TokMonGlass.cardBackgroundInnerHover
+                : TokMonGlass.cardBackgroundInner)
+      }
+      .overlay {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .strokeBorder(
+            isSelected ? TokMonGlass.accent.opacity(configuration.isPressed ? 0.55 : 0.50) : TokMonGlass.cardBorder,
+            lineWidth: 1)
+      }
+      .background {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 10, x: 0, y: 4)
+      }
+      .onHover { hovering in
+        isHovered = hovering
+      }
   }
 }
 
@@ -952,16 +1267,16 @@ private struct SystemMenuPageRail: View {
             .frame(maxWidth: .infinity, minHeight: 26)
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GlassButtonStyle(cornerRadius: 11, isSelected: false))
         .focusable(false)
         .foregroundStyle(selectedPage == page ? .primary : .secondary)
         .background {
           if selectedPage == page {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-              .fill(TokMonGlass.accent.opacity(0.18))
+              .fill(TokMonGlass.accent.opacity(0.28))
               .overlay {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                  .strokeBorder(TokMonGlass.accent.opacity(0.28), lineWidth: 1)
+                  .strokeBorder(TokMonGlass.accent.opacity(0.45), lineWidth: 1)
               }
               .matchedGeometryEffect(id: "pageRailSelection", in: selectionNamespace)
           }
@@ -979,7 +1294,7 @@ private struct SystemMenuPageRail: View {
           .fill(.thinMaterial)
           .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+              .strokeBorder(TokMonGlass.cardBorder, lineWidth: 1)
           }
           .shadow(color: TokMonGlass.ambientShadow, radius: 6, y: 2)
       }
@@ -1005,7 +1320,7 @@ private struct RangePresetControl: View {
             .frame(maxWidth: .infinity, minHeight: 22)
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(.plain)
+                .buttonStyle(GlassButtonStyle(cornerRadius: 10, isSelected: false))
         .focusable(false)
         .foregroundStyle(selectedLabel == preset.label ? .primary : .secondary)
         .tokMonSelectionPill(isSelected: selectedLabel == preset.label, cornerRadius: 10)
@@ -1097,10 +1412,9 @@ private struct PrimaryMetricTile: View {
       }
       .padding(9)
       .frame(maxWidth: .infinity, minHeight: 66, alignment: .topLeading)
-      .hudCard(isSelected: metric.isSelected)
       .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(GlassButtonStyle(cornerRadius: 16, isSelected: metric.isSelected))
     .focusable(false)
   }
 }
@@ -1122,7 +1436,7 @@ private struct TotalTokensMetricTile: View {
     }
     .padding(9)
     .frame(maxWidth: .infinity, minHeight: isExpanded ? 80 : 66, alignment: .topLeading)
-    .hudCard(isSelected: metric.isSelected)
+    .glassHover(cornerRadius: 16, isSelected: metric.isSelected)
     .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
   }
 
@@ -1271,10 +1585,9 @@ private struct CompactMetricTile: View {
       }
       .padding(9)
       .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
-      .hudCard(isSelected: metric.isSelected)
       .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(GlassButtonStyle(cornerRadius: 16, isSelected: metric.isSelected))
     .focusable(false)
   }
 }
@@ -1325,7 +1638,7 @@ private struct TokMonHudTrendCard: View {
         .frame(height: 60)
     }
     .padding(10)
-    .hudCard()
+    .hudCard(background: TokMonGlass.cardBackgroundInner)
   }
 }
 
@@ -1354,7 +1667,7 @@ private struct TokMonHudActivityCard: View {
       }
     }
     .padding(10)
-    .hudCard()
+    .hudCard(background: TokMonGlass.cardBackgroundInner)
   }
 }
 
@@ -1401,7 +1714,7 @@ private struct TokMonHudBreakdownCard: View {
       }
     }
     .padding(10)
-    .hudCard()
+    .hudCard(background: TokMonGlass.cardBackgroundInner)
   }
 }
 
@@ -1844,7 +2157,7 @@ private struct RequestRowView: View {
       }
     }
     .padding(14)
-    .hudInsetCard()
+    .glassCard(cornerRadius: 14)
   }
 
   private var cost: Double {
@@ -1923,10 +2236,9 @@ private struct SessionRowView: View {
         }
       }
       .padding(14)
-      .hudInsetCard(isSelected: isSelected)
       .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(GlassRowButtonStyle(cornerRadius: 14, isSelected: isSelected))
     .focusable(false)
   }
 
@@ -1984,53 +2296,43 @@ private struct LoadMoreButton: View {
         .font(.system(size: 13, weight: .bold, design: .rounded))
         .frame(maxWidth: .infinity)
     }
-    .tokMonGlassButton()
+    .buttonStyle(GlassButtonStyle(cornerRadius: 16, isSelected: false))
     .focusable(false)
   }
 }
 
 private struct HudCardModifier: ViewModifier {
+  var background: Color = TokMonGlass.cardBackgroundOuter
   var isSelected = false
 
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+    let cardBackground: Color = isSelected
+      ? TokMonGlass.accent.opacity(0.12)
+      : Color.clear
+
     content
       .background {
-        shape
-          .fill(.thinMaterial)
+        ZStack {
+          shape.fill(background)
+          shape.fill(cardBackground)
+        }
       }
       .clipShape(shape)
       .overlay {
-        shape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+        shape.strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.50) : TokMonGlass.cardBorder, lineWidth: 1)
       }
-      .shadow(color: TokMonGlass.ambientShadow, radius: 10, y: 4)
-  }
-}
-
-private struct HudInsetCardModifier: ViewModifier {
-  var isSelected = false
-
-  func body(content: Content) -> some View {
-    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-    content
       .background {
         shape
-          .fill(.regularMaterial)
-      }
-      .clipShape(shape)
-      .overlay {
-        shape.strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.42) : TokMonGlass.glassEdge, lineWidth: 1)
+          .fill(Color.clear)
+          .shadow(color: TokMonGlass.ambientShadow, radius: 10, x: 0, y: 4)
       }
   }
 }
 
 private extension View {
-  func hudCard(isSelected: Bool = false) -> some View {
-    modifier(HudCardModifier(isSelected: isSelected))
-  }
-
-  func hudInsetCard(isSelected: Bool = false) -> some View {
-    modifier(HudInsetCardModifier(isSelected: isSelected))
+  func hudCard(background: Color = TokMonGlass.cardBackgroundOuter, isSelected: Bool = false) -> some View {
+    modifier(HudCardModifier(background: background, isSelected: isSelected))
   }
 
   func requestActionButton() -> some View {
@@ -2047,22 +2349,6 @@ private extension View {
           .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
       }
       .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-  }
-
-  func sessionDrilldownActionButton() -> some View {
-    foregroundStyle(.primary.opacity(0.90))
-      .padding(.horizontal, 10)
-      .frame(minWidth: 76, minHeight: 24)
-      .background {
-        Capsule()
-          .fill(.regularMaterial)
-          .overlay {
-            Capsule()
-              .strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
-          }
-          .shadow(color: TokMonGlass.ambientShadow, radius: 4, y: 2)
-      }
-      .contentShape(Capsule())
   }
 }
 
@@ -2164,14 +2450,14 @@ private struct TokMonSeriesPresentation {
 
   var tintColor: Color {
     switch key {
-    case .total, .input:
-      TokMonGlass.accent
-    case .requests, .output:
-      TokMonGlass.warning
     case .cost, .cacheHitRate, .cacheHit:
       TokMonGlass.success
     case .cache:
-      TokMonGlass.danger
+      TokMonGlass.warning
+    case .requests:
+      TokMonGlass.accent
+    default:
+      TokMonGlass.accent
     }
   }
 }

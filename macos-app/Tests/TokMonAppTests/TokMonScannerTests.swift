@@ -1135,7 +1135,7 @@ import Testing
   #expect(records.map(\.inputTokens) == [13, 8])
 }
 
-@Test func scannerImportsClaudeAssistantRequestsWithZeroTokenUsage() throws {
+@Test func scannerSkipsClaudeAssistantRequestsWithZeroTokenUsage() throws {
   let dataDir = try makeTokMonTempDir()
   let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
   try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
@@ -1165,6 +1165,27 @@ import Testing
           ],
         ],
       ],
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-24T06:08:18.667Z",
+        "message": [
+          "id": "chatcmpl-nonzero",
+          "type": "message",
+          "role": "assistant",
+          "model": "qwen3.6-35b",
+          "usage": [
+            "input_tokens": 5,
+            "output_tokens": 3,
+          ],
+          "content": [
+            [
+              "type": "text",
+              "text": "Done",
+            ],
+          ],
+        ],
+      ],
     ],
     to: logURL,
   )
@@ -1178,12 +1199,14 @@ import Testing
   )
 
   #expect(try scanner.scan(config: config) == 1)
-  let record = try #require(try database.allUsageRecords().first)
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
   #expect(record.source == "claude-code")
   #expect(record.sessionId == "claude-session")
   #expect(record.model == "qwen3.6-35b")
-  #expect(record.inputTokens == 0)
-  #expect(record.outputTokens == 0)
+  #expect(record.inputTokens == 5)
+  #expect(record.outputTokens == 3)
 }
 
 @Test func scannerBackfillsClaudeZeroUsageWhenLegacyStateReachedEndOfFile() throws {
@@ -1205,6 +1228,21 @@ import Testing
           "usage": [
             "input_tokens": 0,
             "output_tokens": 0,
+          ],
+        ],
+      ],
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-24T06:08:18.667Z",
+        "message": [
+          "id": "chatcmpl-nonzero",
+          "type": "message",
+          "role": "assistant",
+          "model": "qwen3.6-35b",
+          "usage": [
+            "input_tokens": 7,
+            "output_tokens": 2,
           ],
         ],
       ],
@@ -1231,7 +1269,117 @@ import Testing
   )
 
   #expect(try scanner.scan(config: config) == 1)
-  #expect(try database.allUsageRecords().count == 1)
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.inputTokens == 7)
+  #expect(record.outputTokens == 2)
+}
+
+@Test func scannerImportsCodexArchivedSessionsFromCodexHome() throws {
+  let dataDir = try makeTokMonTempDir()
+  let codexHome = dataDir.appendingPathComponent("codex-home", isDirectory: true)
+  let sessionsDir = codexHome.appendingPathComponent("sessions", isDirectory: true)
+  let archivedDir = codexHome.appendingPathComponent("archived_sessions", isDirectory: true)
+  try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: archivedDir, withIntermediateDirectories: true)
+
+  let liveLogURL = sessionsDir.appendingPathComponent("live.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "live-session",
+          "model": "gpt-live",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T01:00:00.000Z",
+        inputTokens: 10,
+        outputTokens: 2,
+      ),
+    ],
+    to: liveLogURL,
+  )
+
+  let archivedLogURL = archivedDir.appendingPathComponent("archived.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "archived-session",
+          "model": "gpt-archived",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T02:00:00.000Z",
+        inputTokens: 20,
+        outputTokens: 4,
+      ),
+    ],
+    to: archivedLogURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: codexHome.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 2)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 2)
+  #expect(records.map(\.sessionId).sorted() == ["archived-session", "live-session"])
+  #expect(records.map(\.model).sorted() == ["gpt-archived", "gpt-live"])
+}
+
+@Test func scannerFallsBackToCodexModelProviderWhenModelIsMissing() throws {
+  let dataDir = try makeTokMonTempDir()
+  let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
+  try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+  let logURL = sessionsDir.appendingPathComponent("model-provider.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": [
+          "id": "model-provider-session",
+          "model_provider": "gpt-provider-fallback",
+        ],
+      ],
+      codexTokenCountLine(
+        timestamp: "2026-05-14T03:00:00.000Z",
+        inputTokens: 15,
+        outputTokens: 5,
+      ),
+    ],
+    to: logURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: sessionsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.sessionId == "model-provider-session")
+  #expect(record.model == "gpt-provider-fallback")
+  #expect(record.inputTokens == 15)
+  #expect(record.outputTokens == 5)
 }
 
 @Test func scannerParsesCodexJavaScriptPayloadStrings() throws {
@@ -1271,6 +1419,51 @@ import Testing
   #expect(records.first?.inputTokens == 17)
   #expect(records.first?.cacheRead == 3)
   #expect(records.first?.reasoningTokens == 2)
+}
+
+@Test func scannerParsesCodexRelaxedPayloadWithArraysEscapesAndScientificNotation() throws {
+  let dataDir = try makeTokMonTempDir()
+  let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
+  try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+  let logURL = sessionsDir.appendingPathComponent("relaxed-payload.jsonl")
+  // Codex sometimes writes payload as a JavaScript object literal string. This
+  // line uses single quotes, an array, escaped quotes, a unicode escape, and
+  // scientific notation to exercise the relaxed parser.
+  let payload = #"{id: 'session-relaxed', model: 'gpt-relaxed', tags: ['a', 'b', 'c\'d'], label: 'quote: \"hi\" 中文', ratio: 1.5e-2}"#
+  try writeJSONL(
+    [
+      [
+        "type": "session_meta",
+        "payload": payload,
+      ],
+      [
+        "type": "event_msg",
+        "timestamp": "2026-05-14T05:00:00.000Z",
+        "payload": "{type: 'token_count', info: {last_token_usage: {input_tokens: 30, output_tokens: 10, cached_input_tokens: 5, reasoning_output_tokens: 1}}}",
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "codex": TokMonSourceConfig(path: sessionsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.sessionId == "session-relaxed")
+  #expect(record.model == "gpt-relaxed")
+  #expect(record.inputTokens == 25)
+  #expect(record.outputTokens == 10)
+  #expect(record.cacheRead == 5)
+  #expect(record.reasoningTokens == 1)
 }
 
 @Test func scannerImportsQwenCodeUsageMetadataFromChatLogs() throws {

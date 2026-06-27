@@ -12,7 +12,7 @@ struct TokMonConfig: Codable, Equatable {
     port: 3388,
     sources: [
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
-      "codex": TokMonSourceConfig(path: "~/.codex/sessions"),
+      "codex": TokMonSourceConfig(path: "~/.codex"),
       "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
       "qwen-code": TokMonSourceConfig(path: "~/.qwen/projects"),
     ],

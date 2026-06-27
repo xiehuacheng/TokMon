@@ -49,8 +49,8 @@ import Testing
   #expect(plist.contains("<string>TokMon</string>"))
   #expect(plist.contains("<string>TokMon.icns</string>"))
   #expect(plist.contains("<string>local.tokmon.app</string>"))
-  #expect(plist.contains("<string>0.2.0</string>"))
-  #expect(plist.contains("<string>3</string>"))
+  #expect(plist.contains("<string>0.2.1</string>"))
+  #expect(plist.contains("<string>4</string>"))
   #expect(!plist.contains("<string>AgentMon</string>"))
   #expect(!plist.contains("<string>AgentMon.icns</string>"))
 }
@@ -169,10 +169,15 @@ import Testing
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
   #expect(style.contains("buttonStyle(.glass"))
+  #expect(style.contains(".fill(.thinMaterial)"))
+  #expect(style.contains("TokMonGlass.cardBorder"))
+  #expect(style.contains("TokMonGlass.ambientShadow"))
+  #expect(style.contains("TokMonGlass.accent.opacity"))
   #expect(!style.contains("TimelineView(.animation"))
   #expect(!style.contains("minimumInterval"))
   #expect(!style.contains(".onContinuousHover"))
   #expect(!style.contains("hoverLocation"))
+  #expect(!style.contains("buttonStyle(.bordered)"))
 }
 
 @Test func liquidGlassStyleUsesLightTranslucentHudSurfaces() throws {
@@ -209,9 +214,7 @@ import Testing
   let style = try String(contentsOf: styleURL, encoding: .utf8)
 
   #expect(style.contains("NSColor(red: 0.200, green: 0.255, blue: 0.333"))
-  #expect(style.contains("NSColor(red: 0.063, green: 0.725, blue: 0.510"))
-  #expect(style.contains("NSColor(red: 0.055, green: 0.647, blue: 0.914"))
-  #expect(style.contains("NSColor(red: 0.957, green: 0.247, blue: 0.369"))
+  #expect(style.contains("NSColor(red: 0.278, green: 0.333, blue: 0.412"))
   #expect(!style.contains("TokMonGlass.accent.opacity(0.78)"))
 }
 
@@ -226,7 +229,7 @@ import Testing
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(view.contains(".fill(.ultraThinMaterial)"))
+  #expect(view.contains(".fill(.thinMaterial)"))
   #expect(view.contains("TokMonGlass.glassEdge"))
   #expect(!view.contains("Color.black.opacity(0.34)"))
   #expect(!view.contains(".preferredColorScheme(.dark)"))
@@ -327,8 +330,8 @@ import Testing
     .first ?? ""
 
   #expect(colorFunction.contains("case \"claude-code\":\n      TokMonGlass.accent"))
-  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.success"))
-  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.warning"))
+  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.codexTeal"))
+  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.opencodeAmber"))
   #expect(colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.danger"))
   #expect(!colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.warning"))
 }
@@ -568,12 +571,6 @@ import Testing
     .first?
     .components(separatedBy: "func sessionDrilldownActionButton() -> some View")
     .first ?? ""
-  let sessionButtonModifier = view
-    .components(separatedBy: "func sessionDrilldownActionButton() -> some View")
-    .dropFirst()
-    .first?
-    .components(separatedBy: "private func shortTimestamp")
-    .first ?? ""
   let sessionHeader = view
     .components(separatedBy: "private struct SessionDrilldownHeader: View")
     .dropFirst()
@@ -592,12 +589,9 @@ import Testing
   #expect(!requestButtonModifier.contains("buttonStyle(.plain)"))
   #expect(!requestButtonModifier.contains(".focusable(false)"))
   #expect(!requestButtonModifier.contains(".contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))\n      .foregroundStyle"))
-  #expect(sessionButtonModifier.contains(".padding(.horizontal, 10)\n      .frame(minWidth: 76, minHeight: 24)\n      .background"))
-  #expect(sessionButtonModifier.contains("}\n      .contentShape(Capsule())"))
-  #expect(!sessionButtonModifier.contains(".contentShape(Rectangle())\n      .foregroundStyle"))
   #expect(sessionHeader.contains(".frame(width: 24, height: 24)\n          .contentShape(Circle())"))
-  #expect(headerIconButton.contains(".frame(width: 28, height: 28)\n        .background"))
-  #expect(headerIconButton.contains("}\n        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))"))
+  #expect(headerIconButton.contains(".frame(width: 28, height: 28)\n      .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))"))
+  #expect(headerIconButton.contains("private var buttonBackground: some View"))
   #expect(!headerIconButton.contains(".help(help)\n    .background"))
 }
 
@@ -631,14 +625,21 @@ import Testing
   #expect(layout.contains("let sessionBubbleScrollHeight: CGFloat = 332"))
   #expect(layout.contains("let sessionBubbleMaxHeight: CGFloat = 430"))
   #expect(layout.contains("let statusPanelContentWidth = statusPanelMainWidth + sessionBubbleWidth + sessionBubbleGutter"))
+  #expect(layout.contains("let statusPanelShadowPadding: CGFloat = 32"))
   #expect(view.contains(".frame(width: statusPanelMainWidth, height: statusPanelHeight)"))
-  #expect(view.contains(".frame(width: statusPanelContentWidth, height: statusPanelHeight, alignment: .topLeading)"))
+  #expect(view.contains(".frame(width: statusPanelContentWidth + statusPanelShadowPadding * 2, height: statusPanelHeight + statusPanelShadowPadding, alignment: .topLeading)"))
   #expect(view.contains(".padding(.leading, sessionBubbleWidth + sessionBubbleGutter)"))
+  #expect(view.contains(".padding([.bottom, .leading, .trailing], statusPanelShadowPadding)"))
   #expect(view.contains(".offset(x: 0, y: selectedSessionBubbleY)"))
   #expect(!view.contains(".offset(x: 0, y: 42)"))
   #expect(!view.contains(".offset(x: 8, y: 42)"))
-  #expect(main.contains("NSSize(width: statusPanelContentWidth, height: statusPanelHeight)"))
-  #expect(main.contains("let panelSize = NSSize(width: statusPanelContentWidth, height: statusPanelHeight)"))
+  #expect(main.contains("let panelSize = NSSize("))
+  #expect(main.contains("width: statusPanelContentWidth + statusPanelShadowPadding * 2,"))
+  #expect(main.contains("height: statusPanelHeight + statusPanelShadowPadding"))
+  #expect(main.contains("let x = mainX - sessionBubbleWidth - sessionBubbleGutter - statusPanelShadowPadding"))
+  #expect(main.contains("let y = screenFrame.maxY"))
+  #expect(!main.contains("adjustedFrame.size.height += statusPanelShadowPadding"))
+  #expect(!main.contains("adjustedFrame.origin.y -= statusPanelShadowPadding"))
   #expect(main.contains("let mainPanelWidth: CGFloat = statusPanelMainWidth"))
   #expect(main.contains("let preferredMainX = buttonFrameInScreen.midX - mainPanelWidth / 2"))
 }
@@ -675,6 +676,8 @@ import Testing
 
   #expect(view.contains("Button(\"Save and Close\")"))
   #expect(view.contains("onSaveAndClose()"))
+  #expect(view.contains("Button(\"Cancel\")"))
+  #expect(view.contains("onCancel()"))
   #expect(!view.contains("Button(\"Save\")"))
 }
 
@@ -689,7 +692,7 @@ import Testing
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(view.contains("\\(serverLine) · \\(updatedLine)"))
+  #expect(view.contains("Text(updatedLine)"))
   #expect(!view.contains("private var footer: some View"))
   #expect(!view.contains("footer"))
 }
@@ -872,6 +875,164 @@ import Testing
   #expect(settings.contains(".font(.system(size: 15, weight: .heavy, design: .rounded))"))
 }
 
+@Test func settingsWindowUsesIntegratedTitleBar() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let settingsURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonSettingsWindow.swift")
+  let settings = try String(contentsOf: settingsURL, encoding: .utf8)
+
+  #expect(settings.contains("let window = SettingsWindow("))
+  #expect(settings.contains("styleMask: [.titled, .fullSizeContentView]"))
+  #expect(settings.contains("window.titleVisibility = .hidden"))
+  #expect(settings.contains("window.titlebarAppearsTransparent = true"))
+  #expect(settings.contains("window.isOpaque = false"))
+  #expect(settings.contains("window.backgroundColor = .clear"))
+  #expect(settings.contains("window.isMovable = true"))
+  #expect(settings.contains("window.isMovableByWindowBackground = true"))
+  #expect(settings.contains("window.level = .modalPanel"))
+  #expect(settings.contains("window.orderFrontRegardless()"))
+  #expect(settings.contains(".overlay {\n      SettingsWindowDragHandle()"))
+  #expect(settings.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)"))
+  #expect(settings.contains("private struct SettingsWindowDragHandle: NSViewRepresentable"))
+  #expect(settings.contains("window?.performDrag(with: event)"))
+  #expect(settings.contains("override var mouseDownCanMoveWindow: Bool { true }"))
+  #expect(settings.contains("guard event.type == .leftMouseDown else"))
+  #expect(settings.contains("override func hitTest(_ point: NSPoint) -> NSView?"))
+  #expect(settings.contains("SettingsHostingView(rootView: TokMonSettingsWindow("))
+  #expect(settings.contains("SettingsHitSurface()"))
+  #expect(settings.contains(".contentShape(Rectangle())"))
+  #expect(settings.contains("private struct SettingsHitSurface: View"))
+  #expect(settings.contains("private final class SettingsHostingView<Content: View>: NSHostingView<Content>"))
+  #expect(settings.contains("return bounds.contains(point) ? self : nil"))
+  #expect(settings.contains("override func scrollWheel(with event: NSEvent)"))
+  #expect(settings.contains("private final class SettingsWindow: NSWindow"))
+  #expect(settings.contains("override func sendEvent(_ event: NSEvent)"))
+  #expect(settings.contains("case .scrollWheel"))
+  #expect(settings.contains("forwardScrollWheelToContentScroller(event)"))
+  #expect(settings.contains("private func shouldConsumeScrollWheel(_ event: NSEvent) -> Bool"))
+  #expect(settings.contains("window?.contentView?.hitTest(windowPoint) === self"))
+  #expect(settings.contains("nearestScrollView()?.scrollWheel(with: event)"))
+  #expect(settings.contains("func firstDescendant<T: NSView>(of type: T.Type) -> T?"))
+  #expect(!settings.contains("styleMask: [.borderless]"))
+}
+
+@Test func settingsWindowShellAlignsRoundedBodyAndStroke() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let settingsURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonSettingsWindow.swift")
+  let settings = try String(contentsOf: settingsURL, encoding: .utf8)
+
+  #expect(settings.contains("private struct SettingsWindowShape: InsettableShape"))
+  #expect(settings.contains("static let cornerRadius: CGFloat = 24"))
+  #expect(settings.contains(".clipShape(SettingsWindowShape())"))
+  #expect(settings.contains(".contentShape(SettingsWindowShape())"))
+  #expect(settings.contains("SettingsWindowShape()\n      .fill(Color(nsColor: NSColor(white: 1.0, alpha: 0.001)))"))
+  #expect(settings.contains(".inset(by: SettingsWindowMetrics.shellInset)"))
+  #expect(settings.contains(".strokeBorder(TokMonGlass.glassEdge, lineWidth: SettingsWindowMetrics.shellStrokeWidth)"))
+  #expect(settings.contains("static let shellStrokeWidth: CGFloat = 0.75"))
+  #expect(!settings.contains("shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)"))
+}
+
+@Test func settingsWindowFooterButtonsDoNotTakeKeyboardFocusRing() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let settingsURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonSettingsWindow.swift")
+  let settings = try String(contentsOf: settingsURL, encoding: .utf8)
+  let footer = settings
+    .components(separatedBy: "private var footer: some View")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private var modelPricingEditor")
+    .first ?? ""
+
+  #expect(footer.contains("Button(\"Cancel\")"))
+  #expect(footer.contains("Button(\"Save and Close\")"))
+  #expect(footer.contains(".keyboardShortcut(.cancelAction)\n      .focusable(false)"))
+  #expect(footer.contains(".keyboardShortcut(.defaultAction)\n      .focusable(false)"))
+}
+
+@Test func roundedScrollContentFadesBeforeViewportClipsCards() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let sourcesDir = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+  let style = try String(contentsOf: sourcesDir.appendingPathComponent("TokMonGlassStyle.swift"), encoding: .utf8)
+  let settings = try String(contentsOf: sourcesDir.appendingPathComponent("TokMonSettingsWindow.swift"), encoding: .utf8)
+  let popover = try String(contentsOf: sourcesDir.appendingPathComponent("StatusPopoverView.swift"), encoding: .utf8)
+
+  #expect(style.contains("private struct TokMonScrollEdgeFadeModifier: ViewModifier"))
+  #expect(style.contains("func tokMonScrollEdgeFade(top: CGFloat = 14, bottom: CGFloat = 14) -> some View"))
+  #expect(style.contains(".mask(alignment: .top)"))
+  #expect(style.contains("LinearGradient(colors: [.clear, .black]"))
+  #expect(style.contains("LinearGradient(colors: [.black, .clear]"))
+  #expect(settings.contains(".tokMonScrollEdgeFade(top: 10, bottom: 12)"))
+  #expect(popover.contains(".tokMonScrollEdgeFade(top: 8, bottom: 12)"))
+}
+
+@Test func settingsWindowCloseDoesNotEndStatusPanelPresentation() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let runtimeURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonRuntime.swift")
+  let runtime = try String(contentsOf: runtimeURL, encoding: .utf8)
+
+  #expect(runtime.contains("private var settingsWindowPresentationActive = false"))
+  #expect(runtime.contains("if !wasVisible {"))
+  #expect(runtime.contains("settingsWindowPresentationActive = true"))
+  #expect(runtime.contains("if self?.settingsWindowPresentationActive == true"))
+  #expect(!runtime.contains("if !wasVisible && statusPanel?.isVisible != true"))
+}
+
+@Test func statusPanelIgnoresClicksInsideSettingsWindow() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let mainURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("main.swift")
+  let runtimeURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonRuntime.swift")
+  let settingsURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("TokMonSettingsWindow.swift")
+  let main = try String(contentsOf: mainURL, encoding: .utf8)
+  let runtime = try String(contentsOf: runtimeURL, encoding: .utf8)
+  let settings = try String(contentsOf: settingsURL, encoding: .utf8)
+
+  #expect(main.contains("if runtime.isSettingsWindowEvent(event)"))
+  #expect(runtime.contains("func isSettingsWindowEvent(_ event: NSEvent) -> Bool"))
+  #expect(runtime.contains("settingsWindowController?.containsEvent(event) == true"))
+  #expect(settings.contains("func containsEvent(_ event: NSEvent) -> Bool"))
+  #expect(settings.contains("window.frame.contains(NSEvent.mouseLocation)"))
+}
+
 @Test func statsObservationAvoidsDuplicateImmediateRefreshWhenPanelOpens() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -890,7 +1051,7 @@ import Testing
 
   let observingSetup = store.components(separatedBy: "func stopObserving()").first ?? store
   #expect(!observingSetup.contains("requestRefresh()"))
-  #expect(main.contains("await runtime.stats.refresh()"))
+  #expect(main.contains("await runtime.stats.refreshWithScan()"))
 }
 
 @Test func statsObservationScansAndRefreshesAllDataForTimerTicks() throws {
@@ -943,13 +1104,18 @@ import Testing
   let main = try String(contentsOf: mainURL, encoding: .utf8)
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(main.contains("NSSize(width: statusPanelContentWidth, height: statusPanelHeight)"))
-  #expect(main.contains("let panelSize = NSSize(width: statusPanelContentWidth, height: statusPanelHeight)"))
-  #expect(main.contains("let y = screenFrame.maxY - panelSize.height"))
+  #expect(main.contains("let panelSize = NSSize("))
+  #expect(main.contains("width: statusPanelContentWidth + statusPanelShadowPadding * 2,"))
+  #expect(main.contains("height: statusPanelHeight + statusPanelShadowPadding"))
+  #expect(main.contains("let y = screenFrame.maxY"))
   #expect(!main.contains("let y = buttonFrameInScreen.minY - panelSize.height"))
-  #expect(view.contains(".frame(width: statusPanelContentWidth, height: statusPanelHeight, alignment: .topLeading)"))
+  #expect(view.contains(".frame(width: statusPanelContentWidth + statusPanelShadowPadding * 2, height: statusPanelHeight + statusPanelShadowPadding, alignment: .topLeading)"))
   #expect(view.contains(".frame(width: statusPanelMainWidth, height: statusPanelHeight)"))
   #expect(view.contains(".padding(11)"))
+  #expect(view.contains(".padding([.bottom, .leading, .trailing], statusPanelShadowPadding)"))
+  #expect(!main.contains("var adjustedFrame = panelFrame"))
+  #expect(!main.contains("adjustedFrame.size.height += statusPanelShadowPadding"))
+  #expect(!main.contains("adjustedFrame.origin.y -= statusPanelShadowPadding"))
 }
 
 @Test func statusPopoverRemovesInnerEdgeBufferAndKeepsOpenCodeDisplayName() throws {
@@ -1076,7 +1242,7 @@ import Testing
   #expect(view.contains("proxy.frame(in: .named(StatusPopoverCoordinateSpace.main))"))
   #expect(view.contains("StatusSessionBubbleShell()"))
   #expect(view.contains("private struct StatusSessionBubbleShell: View"))
-  #expect(view.contains(".fill(.ultraThinMaterial)"))
+  #expect(view.contains(".fill(.thinMaterial)"))
   #expect(view.contains("TokMonGlass.glassEdge"))
   #expect(!view.contains("Color.black.opacity(0.34)"))
   #expect(!view.contains(".frame(width: sessionBubbleWidth, alignment: .topLeading)\n      .hudCard()"))
@@ -1135,7 +1301,7 @@ import Testing
   #expect(view.contains("scrollingPageContent"))
   #expect(view.contains("private var pinnedHeader: some View"))
   #expect(view.contains("private var scrollingPageContent: some View"))
-  #expect(view.contains("ScrollView(showsIndicators: false) {\n            scrollingPageContent"))
+  #expect(view.contains("ScrollView(showsIndicators: false) {\n          scrollingPageContent"))
   #expect(!view.contains("ScrollView(showsIndicators: false) {\n            VStack(alignment: .leading, spacing: 10) {\n              header"))
 }
 
@@ -1192,7 +1358,7 @@ import Testing
   #expect(main.contains("panel.isOpaque = false"))
   #expect(main.contains("panel.backgroundColor = .clear"))
   #expect(main.contains("panel.hasShadow = false"))
-  #expect(main.contains("panel.level = .statusBar"))
+  #expect(main.contains("panel.level = .modalPanel"))
   #expect(main.contains("TokMonStatusPanel"))
   #expect(main.contains("override var canBecomeKey: Bool { true }"))
   #expect(!main.contains("func windowDidResignKey"))
@@ -1245,21 +1411,64 @@ import Testing
   #expect(main.contains("guard let statusPanel else"))
   #expect(main.contains("return !isPointInsideVisibleStatusPanel(NSEvent.mouseLocation, statusPanel: statusPanel)"))
   #expect(main.contains("private func isPointInsideVisibleStatusPanel(_ point: NSPoint, statusPanel: NSPanel) -> Bool"))
-  #expect(main.contains("var mainFrame = statusPanel.frame"))
-  #expect(main.contains("mainFrame.origin.x += sessionBubbleWidth + sessionBubbleGutter"))
-  #expect(main.contains("mainFrame.size.width = statusPanelMainWidth"))
+  #expect(main.contains("let contentMinX = statusPanel.frame.minX + statusPanelShadowPadding"))
+  #expect(main.contains("let contentMinY = statusPanel.frame.maxY - statusPanelHeight"))
+  #expect(main.contains("x: contentMinX + sessionBubbleWidth + sessionBubbleGutter,"))
+  #expect(main.contains("width: statusPanelMainWidth,"))
   #expect(main.contains("mainFrame.insetBy(dx: -2, dy: -2).contains(point)"))
+  #expect(main.contains("x: contentMinX,\n      y: contentMinY,\n      width: sessionBubbleWidth + sessionBubbleGutter,"))
   #expect(main.contains("guard let sessionBubbleY = runtime.statusPanelSessionBubbleY else"))
-  #expect(main.contains("var bubbleFrame = statusPanel.frame"))
-  #expect(main.contains("bubbleFrame.origin.y = statusPanel.frame.maxY - sessionBubbleY - sessionBubbleMaxHeight"))
-  #expect(main.contains("bubbleFrame.size.width = sessionBubbleWidth"))
-  #expect(main.contains("bubbleFrame.size.height = sessionBubbleMaxHeight"))
+  #expect(main.contains("let bubbleFrame = NSRect("))
+  #expect(main.contains("y: statusPanel.frame.maxY - sessionBubbleY - sessionBubbleMaxHeight,"))
+  #expect(main.contains("width: sessionBubbleWidth,"))
+  #expect(main.contains("height: sessionBubbleMaxHeight"))
   #expect(main.contains("guard self?.shouldCloseStatusPanel(for: event) == true else"))
   #expect(main.contains("localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown])"))
   #expect(main.contains("self?.handleLocalMouseDown(event) ?? event"))
-  #expect(main.contains("return isStatusPanelEvent ? nil : event"))
+  #expect(main.contains("return event.window === statusPanel ? nil : event"))
   #expect(!main.contains("statusPanel.frame.insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation)"))
+  #expect(!main.contains("mainFrame.origin.x += sessionBubbleWidth + sessionBubbleGutter"))
+  #expect(!main.contains("var bubbleFrame = statusPanel.frame"))
   #expect(!main.contains("NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in"))
+}
+
+@Test func statusPanelLocalMonitorClosesForAppClicksOutsidePopoverAndSettings() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let mainURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("main.swift")
+  let main = try String(contentsOf: mainURL, encoding: .utf8)
+  let localHandler = main
+    .components(separatedBy: "private func handleLocalMouseDown(_ event: NSEvent) -> NSEvent?")
+    .dropFirst()
+    .first?
+    .components(separatedBy: "private func shouldCloseStatusPanel")
+    .first ?? ""
+
+  #expect(localHandler.contains("guard shouldCloseStatusPanel(for: event) else"))
+  #expect(localHandler.contains("Task { @MainActor in\n      self.closeStatusPanel()\n    }"))
+  #expect(localHandler.contains("return event.window === statusPanel ? nil : event"))
+  #expect(!localHandler.contains("guard isStatusPanelEvent, shouldCloseStatusPanel(for: event) else"))
+}
+
+@Test func statusPanelClosesWhenTokMonLosesActivation() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let mainURL = packageDir
+    .appendingPathComponent("Sources")
+    .appendingPathComponent("TokMonApp")
+    .appendingPathComponent("main.swift")
+  let main = try String(contentsOf: mainURL, encoding: .utf8)
+
+  #expect(main.contains("func applicationDidResignActive(_ notification: Notification)"))
+  #expect(main.contains("guard statusPanel?.isVisible == true else"))
+  #expect(main.contains("closeStatusPanel()"))
 }
 
 @Test func statusPopoverPublishesVisibleSessionBubbleYForPanelHitTesting() throws {
@@ -1294,10 +1503,10 @@ import Testing
   let main = try String(contentsOf: mainURL, encoding: .utf8)
 
   #expect(main.contains("panel.hidesOnDeactivate = false"))
-  #expect(main.contains("panel.orderFrontRegardless()"))
+  #expect(main.contains("runtime.beginWindowPresentation()"))
+  #expect(main.contains("runtime.endWindowPresentation()"))
   #expect(main.contains("panel.makeKeyAndOrderFront(nil)"))
-  #expect(main.contains("DispatchQueue.main.async { [weak self] in"))
-  #expect(!main.contains("NSApplication.shared.activate(ignoringOtherApps: true)"))
+  #expect(main.contains("DispatchQueue.main.async { [weak self, weak panel] in"))
 }
 
 @Test func statusPanelContentKeepsTransparentHostingLayers() throws {
@@ -1311,7 +1520,7 @@ import Testing
     .appendingPathComponent("main.swift")
   let main = try String(contentsOf: mainURL, encoding: .utf8)
 
-  #expect(main.contains("window.isOpaque = false"))
-  #expect(main.contains("window.backgroundColor = .clear"))
+  #expect(main.contains("panel.isOpaque = false"))
+  #expect(main.contains("panel.backgroundColor = .clear"))
   #expect(main.contains("view.layer?.backgroundColor = NSColor.clear.cgColor"))
 }

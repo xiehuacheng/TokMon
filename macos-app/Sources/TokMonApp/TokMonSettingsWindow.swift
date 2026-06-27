@@ -1,8 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct TokMonSettingsWindow: View {
   @ObservedObject var store: TokMonSettingsStore
   let onSaveAndClose: () -> Void
+  let onCancel: () -> Void
   @State private var selectedPricingModel = ""
 
   private let sources = [
@@ -24,6 +26,7 @@ struct TokMonSettingsWindow: View {
 
   var body: some View {
     ZStack {
+      SettingsHitSurface()
       SettingsWindowShell()
       VStack(alignment: .leading, spacing: 0) {
         header
@@ -109,14 +112,25 @@ struct TokMonSettingsWindow: View {
           }
           .padding(.horizontal, 20)
           .padding(.bottom, 14)
+          .frame(maxWidth: .infinity, alignment: .topLeading)
+          .background(SettingsHitSurface())
+          .contentShape(Rectangle())
         }
+        .background(SettingsHitSurface())
+        .contentShape(Rectangle())
+        .tokMonScrollEdgeFade(top: 10, bottom: 12)
 
         footer
           .padding(.horizontal, 20)
           .padding(.vertical, 14)
       }
+      .background(SettingsHitSurface())
+      .contentShape(Rectangle())
     }
     .frame(minWidth: 660, minHeight: 580)
+    .background(SettingsHitSurface())
+    .clipShape(SettingsWindowShape())
+    .contentShape(SettingsWindowShape())
     .task {
       try? await store.load()
       selectedPricingModel = firstUnconfiguredPricingModel ?? ""
@@ -155,6 +169,10 @@ struct TokMonSettingsWindow: View {
       }
       Spacer()
     }
+    .overlay {
+      SettingsWindowDragHandle()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
   }
 
   private var footer: some View {
@@ -168,6 +186,16 @@ struct TokMonSettingsWindow: View {
         .foregroundStyle(store.errorMessage == nil ? .secondary : TokMonGlass.danger)
         .lineLimit(1)
       Spacer()
+      Button("Cancel") {
+        Task {
+          try? await store.load()
+          onCancel()
+        }
+      }
+      .tokMonGlassButton()
+      .keyboardShortcut(.cancelAction)
+      .focusable(false)
+      .disabled(store.isBusy)
       Button("Save and Close") {
         Task {
           do {
@@ -178,6 +206,7 @@ struct TokMonSettingsWindow: View {
       }
       .tokMonGlassButton(prominent: true)
       .keyboardShortcut(.defaultAction)
+      .focusable(false)
       .disabled(store.isBusy)
     }
   }
@@ -288,26 +317,63 @@ struct TokMonSettingsWindow: View {
   }
 }
 
+private struct SettingsHitSurface: View {
+  var body: some View {
+    SettingsWindowShape()
+      .fill(Color(nsColor: NSColor(white: 1.0, alpha: 0.001)))
+  }
+}
+
 private struct SettingsWindowShell: View {
   var body: some View {
     if #available(macOS 26.0, *) {
       shellShape
         .fill(.clear)
         .glassEffect(.regular, in: shellShape)
+        .clipShape(shellShape)
         .allowsHitTesting(false)
     } else {
       shellShape
+        .inset(by: SettingsWindowMetrics.shellInset)
         .fill(.ultraThinMaterial)
         .overlay {
-          shellShape.strokeBorder(TokMonGlass.glassEdge, lineWidth: 1)
+          shellShape
+            .inset(by: SettingsWindowMetrics.shellInset)
+            .strokeBorder(TokMonGlass.glassEdge, lineWidth: SettingsWindowMetrics.shellStrokeWidth)
         }
+        .compositingGroup()
         .shadow(color: TokMonGlass.ambientShadow, radius: 22, y: 10)
         .allowsHitTesting(false)
     }
   }
 
-  private var shellShape: RoundedRectangle {
-    RoundedRectangle(cornerRadius: 24, style: .continuous)
+  private var shellShape: SettingsWindowShape {
+    SettingsWindowShape()
+  }
+}
+
+private enum SettingsWindowMetrics {
+  static let cornerRadius: CGFloat = 24
+  static let shellInset: CGFloat = 0.75
+  static let shellStrokeWidth: CGFloat = 0.75
+}
+
+private struct SettingsWindowShape: InsettableShape {
+  var insetAmount: CGFloat = 0
+
+  func path(in rect: CGRect) -> Path {
+    let adjustedRect = rect.insetBy(dx: insetAmount, dy: insetAmount)
+    return RoundedRectangle(
+      cornerRadius: max(0, SettingsWindowMetrics.cornerRadius - insetAmount),
+      style: .continuous,
+    )
+    .path(in: adjustedRect)
+  }
+
+  func inset(by amount: CGFloat) -> SettingsWindowShape {
+    var shape = self
+    shape.insetAmount += amount
+    return shape
   }
 }
 
@@ -441,47 +507,210 @@ private extension View {
 }
 
 @MainActor
-final class TokMonSettingsWindowController {
+final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
   private var window: NSWindow?
   private let settingsStore: TokMonSettingsStore
   private let onSettingsSaved: (@MainActor () -> Void)?
+  var onWindowClosed: (@MainActor () -> Void)?
 
-  init(engine: TokMonEngine, onSettingsSaved: (@MainActor () -> Void)? = nil) {
+  var isWindowVisible: Bool { window?.isVisible == true }
+
+  init(engine: TokMonEngine, onSettingsSaved: (@MainActor () -> Void)? = nil, onWindowClosed: (@MainActor () -> Void)? = nil) {
     settingsStore = TokMonSettingsStore(engine: engine)
     self.onSettingsSaved = onSettingsSaved
+    self.onWindowClosed = onWindowClosed
+    super.init()
   }
 
-  init(engineActor: TokMonEngineActor, onSettingsSaved: (@MainActor () -> Void)? = nil) {
+  init(engineActor: TokMonEngineActor, onSettingsSaved: (@MainActor () -> Void)? = nil, onWindowClosed: (@MainActor () -> Void)? = nil) {
     settingsStore = TokMonSettingsStore(engineActor: engineActor)
     self.onSettingsSaved = onSettingsSaved
+    self.onWindowClosed = onWindowClosed
+    super.init()
   }
 
   func show() {
     if let window {
-      window.makeKeyAndOrderFront(nil)
-      NSApplication.shared.activate(ignoringOtherApps: true)
+      NSRunningApplication.current.activate(options: .activateAllWindows)
+      present(window)
       return
     }
 
-    let window = NSWindow(
+    let window = SettingsWindow(
       contentRect: NSRect(x: 0, y: 0, width: 660, height: 580),
-      styleMask: [.titled, .closable, .miniaturizable],
+      styleMask: [.titled, .fullSizeContentView],
       backing: .buffered,
       defer: false,
     )
     window.title = "TokMon Settings"
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
     window.center()
     window.minSize = NSSize(width: 660, height: 580)
-    window.contentView = NSHostingView(rootView: TokMonSettingsWindow(
+    window.contentView = SettingsHostingView(rootView: TokMonSettingsWindow(
       store: settingsStore,
       onSaveAndClose: { [weak self] in
         self?.window?.close()
         self?.onSettingsSaved?()
       },
+      onCancel: { [weak self] in
+        self?.window?.close()
+      },
     ))
+    window.isOpaque = false
+    window.backgroundColor = .clear
+    window.hasShadow = true
+    window.level = .modalPanel
+    window.isMovable = true
+    window.isMovableByWindowBackground = true
     window.isReleasedWhenClosed = false
-    window.makeKeyAndOrderFront(nil)
+    window.delegate = self
+    window.initialFirstResponder = nil
     self.window = window
-    NSApplication.shared.activate(ignoringOtherApps: true)
+    NSRunningApplication.current.activate(options: .activateAllWindows)
+    present(window)
+  }
+
+  private func present(_ window: NSWindow) {
+    window.level = .modalPanel
+    window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
+  }
+
+  func containsEvent(_ event: NSEvent) -> Bool {
+    guard let window, window.isVisible else {
+      return false
+    }
+    if event.window === window {
+      return true
+    }
+    return window.frame.contains(NSEvent.mouseLocation)
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    onWindowClosed?()
+  }
+}
+
+private final class SettingsWindow: NSWindow {
+  override func sendEvent(_ event: NSEvent) {
+    switch event.type {
+    case .scrollWheel:
+      if forwardScrollWheelToContentScroller(event) {
+        return
+      }
+    default:
+      break
+    }
+    super.sendEvent(event)
+  }
+
+  @discardableResult
+  private func forwardScrollWheelToContentScroller(_ event: NSEvent) -> Bool {
+    guard let contentView else {
+      return false
+    }
+    let point = contentView.convert(event.locationInWindow, from: nil)
+    guard contentView.bounds.contains(point) else {
+      return false
+    }
+    if contentView.hitTest(point)?.firstAncestor(of: NSScrollView.self) != nil {
+      return false
+    }
+    guard let scrollView = contentView.firstDescendant(of: NSScrollView.self) else {
+      return false
+    }
+    scrollView.scrollWheel(with: event)
+    return true
+  }
+}
+
+private final class SettingsHostingView<Content: View>: NSHostingView<Content> {
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+    true
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    if shouldConsumeScrollWheel(event) {
+      nearestScrollView()?.scrollWheel(with: event)
+      return
+    }
+    super.scrollWheel(with: event)
+  }
+
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    if let hitView = super.hitTest(point) {
+      return hitView
+    }
+    return bounds.contains(point) ? self : nil
+  }
+
+  private func shouldConsumeScrollWheel(_ event: NSEvent) -> Bool {
+    guard let contentView = window?.contentView else {
+      return false
+    }
+    let windowPoint = contentView.convert(event.locationInWindow, from: nil)
+    return window?.contentView?.hitTest(windowPoint) === self
+  }
+
+  private func nearestScrollView() -> NSScrollView? {
+    firstDescendant(of: NSScrollView.self)
+  }
+}
+
+private extension NSView {
+  func firstAncestor<T: NSView>(of type: T.Type) -> T? {
+    var view: NSView? = self
+    while let currentView = view {
+      if let matchingView = currentView as? T {
+        return matchingView
+      }
+      view = currentView.superview
+    }
+    return nil
+  }
+
+  func firstDescendant<T: NSView>(of type: T.Type) -> T? {
+    if let matchingView = self as? T {
+      return matchingView
+    }
+    for subview in subviews {
+      if let matchingView = subview.firstDescendant(of: type) {
+        return matchingView
+      }
+    }
+    return nil
+  }
+}
+
+private struct SettingsWindowDragHandle: NSViewRepresentable {
+  func makeNSView(context: Context) -> DragView {
+    DragView()
+  }
+
+  func updateNSView(_ nsView: DragView, context: Context) {}
+
+  final class DragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+      true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+      bounds.contains(point) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+      guard event.type == .leftMouseDown else {
+        super.mouseDown(with: event)
+        return
+      }
+      window?.performDrag(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+      window?.contentView?.firstDescendant(of: NSScrollView.self)?.scrollWheel(with: event)
+    }
   }
 }
