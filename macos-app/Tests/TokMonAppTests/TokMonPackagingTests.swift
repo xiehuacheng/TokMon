@@ -54,8 +54,8 @@ import Testing
   #expect(plist.contains("<string>TokMon</string>"))
   #expect(plist.contains("<string>TokMon.icns</string>"))
   #expect(plist.contains("<string>local.tokmon.app</string>"))
-  #expect(plist.contains("<string>0.2.1</string>"))
-  #expect(plist.contains("<string>4</string>"))
+  #expect(plist.contains("<string>0.2.2</string>"))
+  #expect(plist.contains("<string>5</string>"))
   #expect(!plist.contains("<string>AgentMon</string>"))
   #expect(!plist.contains("<string>AgentMon.icns</string>"))
 }
@@ -122,8 +122,8 @@ import Testing
   #expect(main.contains("import Combine"))
   #expect(main.contains("private var cancellables = Set<AnyCancellable>()"))
   #expect(main.contains("TokMonMenuBarPresentation.title("))
-  #expect(main.contains("statusItem.button?.title = title ?? \"\""))
-  #expect(main.contains("statusItem.button?.imagePosition = title == nil ? .imageOnly : .imageLeft"))
+  #expect(main.contains("button?.title = title ?? \"\""))
+  #expect(main.contains("button?.imagePosition = title == nil ? .imageOnly : .imageLeft"))
 }
 
 @Test func settingsWindowIncludesMenuBarDisplayPicker() throws {

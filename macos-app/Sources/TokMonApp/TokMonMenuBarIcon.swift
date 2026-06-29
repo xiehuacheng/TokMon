@@ -10,7 +10,7 @@ enum TokMonMenuBarIcon {
       image.isTemplate = true
     }
 
-    NSColor.labelColor.setStroke()
+    NSColor.black.setStroke()
     let transform = NSAffineTransform()
     transform.translateX(by: size.width / 2, yBy: size.height / 2)
     transform.rotate(byDegrees: 90)

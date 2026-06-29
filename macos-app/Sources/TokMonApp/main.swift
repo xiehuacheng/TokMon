@@ -12,6 +12,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private var cancellables = Set<AnyCancellable>()
   private var isClosingStatusPanel = false
   private var activationObserver: NSObjectProtocol?
+  private var appearanceObserver: NSObjectProtocol?
   private let statusPanelAnimationDuration: TimeInterval = 0.18
   private let statusPanelAnimationOffset: CGFloat = 10
 
@@ -24,6 +25,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     closeStatusPanel()
     runtime.stop()
+    removeAppearanceObserver()
   }
 
   func applicationDidResignActive(_ notification: Notification) {
@@ -35,15 +37,14 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func configureStatusItem() {
     statusItem.length = NSStatusItem.variableLength
-    let statusImage = TokMonMenuBarIcon.makeImage()
+    refreshStatusItemImage()
 
-    statusItem.button?.image = statusImage
     statusItem.button?.imagePosition = .imageOnly
     statusItem.button?.target = self
     statusItem.button?.action = #selector(toggleStatusPanel)
-    statusItem.button?.contentTintColor = .labelColor
     statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     bindStatusItemUpdates()
+    bindAppearanceChanges()
     updateStatusItem(snapshot: runtime.stats.snapshot)
   }
 
@@ -135,12 +136,39 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
       .store(in: &cancellables)
   }
 
+  private func refreshStatusItemImage() {
+    statusItem.button?.image = TokMonMenuBarIcon.makeImage()
+  }
+
+  private func bindAppearanceChanges() {
+    appearanceObserver = DistributedNotificationCenter.default.addObserver(
+      forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.refreshStatusItemImage()
+        self.updateStatusItem(snapshot: self.runtime.stats.snapshot)
+      }
+    }
+  }
+
+  private func removeAppearanceObserver() {
+    if let appearanceObserver {
+      DistributedNotificationCenter.default.removeObserver(appearanceObserver)
+      self.appearanceObserver = nil
+    }
+  }
+
   private func updateStatusItem(snapshot: TokMonStatsSnapshot) {
     let mode = snapshot.dashboardState?.menuBarDisplayMode ?? .iconOnly
     let title = TokMonMenuBarPresentation.title(for: mode, snapshot: snapshot)
-    statusItem.button?.title = title ?? ""
-    statusItem.button?.imagePosition = title == nil ? .imageOnly : .imageLeft
-    statusItem.button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: mode, snapshot: snapshot)
+    let button = statusItem.button
+
+    button?.title = title ?? ""
+    button?.imagePosition = title == nil ? .imageOnly : .imageLeft
+    button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: mode, snapshot: snapshot)
     statusItem.length = NSStatusItem.variableLength
   }
 
@@ -333,7 +361,6 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func setStatusItemHighlighted(_ highlighted: Bool) {
     statusItem.button?.state = highlighted ? .on : .off
-    statusItem.button?.contentTintColor = .labelColor
     statusItem.button?.highlight(highlighted)
   }
 }
