@@ -183,6 +183,9 @@ struct StatusPopoverView: View {
       HeaderIconButton(systemName: "gearshape", help: "TokMon Settings") {
         runtime.openSettings()
       }
+      HeaderIconButton(systemName: "arrow.up.circle", help: "Check for Updates") {
+        runtime.updater.checkForUpdates()
+      }
       HeaderIconButton(systemName: "power", help: "Quit TokMon") {
         runtime.quit()
       }

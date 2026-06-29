@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private let runtime = TokMonRuntime.shared
+  private let updater = TokMonUpdater.shared
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private var statusPanel: NSPanel?
   private var outsideClickMonitor: Any?

@@ -5,6 +5,7 @@ final class TokMonRuntime: ObservableObject {
   static let shared = TokMonRuntime()
 
   let stats: TokMonStatsStore
+  let updater = TokMonUpdater.shared
   @Published var statusPanelSessionBubbleY: CGFloat?
   weak var statusPanel: NSPanel?
 

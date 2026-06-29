@@ -54,8 +54,11 @@ import Testing
   #expect(plist.contains("<string>TokMon</string>"))
   #expect(plist.contains("<string>TokMon.icns</string>"))
   #expect(plist.contains("<string>local.tokmon.app</string>"))
-  #expect(plist.contains("<string>0.2.2</string>"))
-  #expect(plist.contains("<string>5</string>"))
+  #expect(plist.contains("<key>CFBundleShortVersionString</key>"))
+  #expect(plist.contains("<key>CFBundleVersion</key>"))
+  #expect(plist.contains("<key>SUFeedURL</key>"))
+  #expect(plist.contains("<key>SUPublicEDKey</key>"))
+  #expect(plist.contains("<string>Sec53LN0JTswXG+jHGMcEkIgaDX6VcW3N/GEayxWa+A=</string>"))
   #expect(!plist.contains("<string>AgentMon</string>"))
   #expect(!plist.contains("<string>AgentMon.icns</string>"))
 }
@@ -1528,4 +1531,59 @@ import Testing
   #expect(main.contains("panel.isOpaque = false"))
   #expect(main.contains("panel.backgroundColor = .clear"))
   #expect(main.contains("view.layer?.backgroundColor = NSColor.clear.cgColor"))
+}
+
+@Test func packageDependsOnSparkle() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let package = try String(contentsOf: packageDir.appendingPathComponent("Package.swift"), encoding: .utf8)
+
+  #expect(package.contains("sparkle-project/Sparkle"))
+  #expect(package.contains(".product(name: \"Sparkle\", package: \"Sparkle\")"))
+}
+
+@Test func updaterIsWiredIntoRuntimeAndPopover() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let sourcesDir = packageDir.appendingPathComponent("Sources").appendingPathComponent("TokMonApp")
+  let runtime = try String(contentsOf: sourcesDir.appendingPathComponent("TokMonRuntime.swift"), encoding: .utf8)
+  let main = try String(contentsOf: sourcesDir.appendingPathComponent("main.swift"), encoding: .utf8)
+  let popover = try String(contentsOf: sourcesDir.appendingPathComponent("StatusPopoverView.swift"), encoding: .utf8)
+  let updater = try String(contentsOf: sourcesDir.appendingPathComponent("TokMonUpdater.swift"), encoding: .utf8)
+
+  #expect(updater.contains("SPUStandardUpdaterController"))
+  #expect(updater.contains("func checkForUpdates()"))
+  #expect(runtime.contains("let updater = TokMonUpdater.shared"))
+  #expect(main.contains("private let updater = TokMonUpdater.shared"))
+  #expect(popover.contains("arrow.up.circle"))
+  #expect(popover.contains("runtime.updater.checkForUpdates()"))
+}
+
+@Test func buildScriptEmbedsSparkleFramework() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let script = try String(contentsOf: packageDir.appendingPathComponent("scripts/build-app.sh"), encoding: .utf8)
+
+  #expect(script.contains("Sparkle.framework"))
+  #expect(script.contains("Contents/Frameworks"))
+  #expect(script.contains("@executable_path/../Frameworks"))
+}
+
+@Test func dmgScriptGeneratesAppcastAndSignature() throws {
+  let packageDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let script = try String(contentsOf: packageDir.appendingPathComponent("scripts/build-dmg.sh"), encoding: .utf8)
+
+  #expect(script.contains("sign_update"))
+  #expect(script.contains("appcast.xml"))
+  #expect(script.contains("sparkle:edSignature"))
+  #expect(script.contains("SUFeedURL") || script.contains("github.com/xiehuacheng/TokMon/releases"))
 }

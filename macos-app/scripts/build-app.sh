@@ -28,6 +28,14 @@ cp "$APP_ROOT/.build/release/$APP_NAME" "$TMP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$APP_ROOT/Packaging/Info.plist" "$TMP_BUNDLE/Contents/Info.plist"
 cp "$APP_ROOT/Assets/TokMon.icns" "$TMP_RESOURCES/TokMon.icns"
 
+# Embed Sparkle framework so the updater can load at runtime.
+SPARKLE_FRAMEWORK="$APP_ROOT/.build/release/Sparkle.framework"
+if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
+    mkdir -p "$TMP_BUNDLE/Contents/Frameworks"
+    cp -R "$SPARKLE_FRAMEWORK" "$TMP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$TMP_BUNDLE/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+fi
+
 printf "APPL????" > "$TMP_BUNDLE/Contents/PkgInfo"
 
 # Remove Finder metadata that breaks strict code signature validation.
@@ -41,5 +49,10 @@ codesign --verify --deep --strict "$TMP_BUNDLE" >/dev/null
 
 rm -rf "$APP_BUNDLE"
 cp -a "$TMP_BUNDLE" "$APP_BUNDLE"
+
+# Note: the release directory may be watched by Finder, which can attach
+# FinderInfo metadata to the bundle after it is copied. The DMG build script
+# strips this metadata before shipping, so strict verification is done on the
+# temporary bundle above where Finder does not interfere.
 
 echo "Built $APP_BUNDLE"
