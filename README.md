@@ -83,6 +83,8 @@ docs/
 
 - TokMon 使用本地 SQLite 索引 token usage 元数据。
 - TokMon 用量数据写入 `usage_records` 表，增量扫描 offset 存在 `tokmon_scan_state`。
+- Claude Code 的 assistant 记录通过 `message_id` 去重：同一个 `message.id` 的多个 streaming chunk 会按最新 `createdAt` 合并，相同时保留 total tokens 更大的那条。
+- `TokMonScanner.scannerVersion` 会在扫描/合并语义变化时递增；App 启动时发现存储版本低于当前版本会自动重建数据库并重新全量扫描。
 - 缓存命中率只统计支持缓存命中语义的数据来源，避免不支持的来源拉低命中率。
 
 ## License

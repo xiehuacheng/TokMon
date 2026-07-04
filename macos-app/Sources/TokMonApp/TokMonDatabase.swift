@@ -64,31 +64,6 @@ final class TokMonDatabase {
     return try _tableExists(name)
   }
 
-  func deleteClaudeUsageRecord(
-    source: String,
-    sessionId: String,
-    createdAt: String,
-    inputTokens: Int,
-    outputTokens: Int,
-    cacheCreation: Int,
-    cacheRead: Int,
-    reasoningTokens: Int
-  ) throws {
-    lock.lock()
-    defer { lock.unlock() }
-    try _deleteClaudeUsageRecord(
-      source: source,
-      sessionId: sessionId,
-      createdAt: createdAt,
-      inputTokens: inputTokens,
-      outputTokens: outputTokens,
-      cacheCreation: cacheCreation,
-      cacheRead: cacheRead,
-      reasoningTokens: reasoningTokens
-    )
-    bumpDataVersion()
-  }
-
   func insertUsage(_ record: TokMonUsageRecord) throws -> Bool {
     lock.lock()
     defer { lock.unlock() }
@@ -217,76 +192,24 @@ final class TokMonDatabase {
     return false
   }
 
-  private func _deleteClaudeUsageRecord(
-    source: String,
-    sessionId: String,
-    createdAt: String,
-    inputTokens: Int,
-    outputTokens: Int,
-    cacheCreation: Int,
-    cacheRead: Int,
-    reasoningTokens: Int
-  ) throws {
-    let selectStatement = try prepare("""
-      SELECT model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_supported, created_at
-      FROM usage_records
-      WHERE source = ? AND session_id = ? AND created_at = ?
-        AND input_tokens = ? AND output_tokens = ? AND cache_creation = ?
-        AND cache_read = ? AND reasoning_tokens = ?
-      LIMIT 1
-    """)
-    defer { sqlite3_finalize(selectStatement) }
-    try bind(source, at: 1, in: selectStatement)
-    try bind(sessionId, at: 2, in: selectStatement)
-    try bind(createdAt, at: 3, in: selectStatement)
-    try bind(inputTokens, at: 4, in: selectStatement)
-    try bind(outputTokens, at: 5, in: selectStatement)
-    try bind(cacheCreation, at: 6, in: selectStatement)
-    try bind(cacheRead, at: 7, in: selectStatement)
-    try bind(reasoningTokens, at: 8, in: selectStatement)
-
-    var oldRecord: TokMonUsageRecord?
-    if sqlite3_step(selectStatement) == SQLITE_ROW {
-      oldRecord = TokMonUsageRecord(
-        source: source,
-        sessionId: sessionId,
-        model: stringColumn(selectStatement, index: 0) ?? "unknown",
-        inputTokens: Int(sqlite3_column_int64(selectStatement, 1)),
-        outputTokens: Int(sqlite3_column_int64(selectStatement, 2)),
-        cacheCreation: Int(sqlite3_column_int64(selectStatement, 3)),
-        cacheRead: Int(sqlite3_column_int64(selectStatement, 4)),
-        reasoningTokens: Int(sqlite3_column_int64(selectStatement, 5)),
-        createdAt: stringColumn(selectStatement, index: 7) ?? createdAt
-      )
+  private func _insertUsage(_ record: TokMonUsageRecord) throws -> Bool {
+    if let messageId = record.messageId, !messageId.isEmpty,
+       let existing = try _existingUsageRecord(source: record.source, sessionId: record.sessionId, messageId: messageId) {
+      let merged = TokMonUsageRecord.claudeRecordByRecency(existing, record)
+      guard merged != existing else { return false }
+      try subtractUsageRollups(for: existing)
+      try _updateUsageRecord(merged)
+      try upsertUsageRollups(for: merged)
+      return true
     }
-
-    let deleteStatement = try prepare("""
-      DELETE FROM usage_records
-      WHERE source = ? AND session_id = ? AND created_at = ?
-        AND input_tokens = ? AND output_tokens = ? AND cache_creation = ?
-        AND cache_read = ? AND reasoning_tokens = ?
-    """)
-    defer { sqlite3_finalize(deleteStatement) }
-    try bind(source, at: 1, in: deleteStatement)
-    try bind(sessionId, at: 2, in: deleteStatement)
-    try bind(createdAt, at: 3, in: deleteStatement)
-    try bind(inputTokens, at: 4, in: deleteStatement)
-    try bind(outputTokens, at: 5, in: deleteStatement)
-    try bind(cacheCreation, at: 6, in: deleteStatement)
-    try bind(cacheRead, at: 7, in: deleteStatement)
-    try bind(reasoningTokens, at: 8, in: deleteStatement)
-    try stepDone(deleteStatement)
-
-    if let oldRecord {
-      try subtractUsageRollups(for: oldRecord)
-    }
+    return try _insertNewUsage(record)
   }
 
-  private func _insertUsage(_ record: TokMonUsageRecord) throws -> Bool {
+  private func _insertNewUsage(_ record: TokMonUsageRecord) throws -> Bool {
     let statement = try prepare("""
       INSERT OR IGNORE INTO usage_records
-        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix, message_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """)
     defer { sqlite3_finalize(statement) }
 
@@ -301,6 +224,7 @@ final class TokMonDatabase {
     try bind(record.createdAt, at: 9, in: statement)
     try bind(record.cacheHitSupported ? 1 : 0, at: 10, in: statement)
     try bind(sessionFileSuffix(for: record.sessionId), at: 11, in: statement)
+    try bind(record.messageId, at: 12, in: statement)
     try stepDone(statement)
 
     let inserted = sqlite3_changes(requiredConnection) > 0
@@ -310,11 +234,118 @@ final class TokMonDatabase {
     return inserted
   }
 
+  private func _updateUsageRecord(_ record: TokMonUsageRecord) throws {
+    let statement = try prepare("""
+      UPDATE usage_records
+      SET model = ?,
+          input_tokens = ?,
+          output_tokens = ?,
+          cache_creation = ?,
+          cache_read = ?,
+          reasoning_tokens = ?,
+          created_at = ?,
+          cache_hit_supported = ?,
+          session_file_suffix = ?
+      WHERE source = ? AND session_id = ? AND message_id = ?
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    try bind(record.model, at: 1, in: statement)
+    try bind(record.inputTokens, at: 2, in: statement)
+    try bind(record.outputTokens, at: 3, in: statement)
+    try bind(record.cacheCreation, at: 4, in: statement)
+    try bind(record.cacheRead, at: 5, in: statement)
+    try bind(record.reasoningTokens, at: 6, in: statement)
+    try bind(record.createdAt, at: 7, in: statement)
+    try bind(record.cacheHitSupported ? 1 : 0, at: 8, in: statement)
+    try bind(sessionFileSuffix(for: record.sessionId), at: 9, in: statement)
+    try bind(record.source, at: 10, in: statement)
+    try bind(record.sessionId, at: 11, in: statement)
+    try bind(record.messageId, at: 12, in: statement)
+    try stepDone(statement)
+  }
+
+  private func _existingUsageRecord(source: String, sessionId: String, messageId: String) throws -> TokMonUsageRecord? {
+    let statement = try prepare("""
+      SELECT model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported
+      FROM usage_records
+      WHERE source = ? AND session_id = ? AND message_id = ?
+      LIMIT 1
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    try bind(source, at: 1, in: statement)
+    try bind(sessionId, at: 2, in: statement)
+    try bind(messageId, at: 3, in: statement)
+
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+      return nil
+    }
+
+    return TokMonUsageRecord(
+      source: source,
+      sessionId: sessionId,
+      model: stringColumn(statement, index: 0) ?? "unknown",
+      inputTokens: Int(sqlite3_column_int64(statement, 1)),
+      outputTokens: Int(sqlite3_column_int64(statement, 2)),
+      cacheCreation: Int(sqlite3_column_int64(statement, 3)),
+      cacheRead: Int(sqlite3_column_int64(statement, 4)),
+      reasoningTokens: Int(sqlite3_column_int64(statement, 5)),
+      createdAt: stringColumn(statement, index: 6) ?? "",
+      cacheHitSupported: Int(sqlite3_column_int64(statement, 7)) != 0,
+      messageId: messageId
+    )
+  }
+
+  private func _deleteUsageRecordByMessageId(source: String, sessionId: String, messageId: String) throws {
+    let selectStatement = try prepare("""
+      SELECT model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported
+      FROM usage_records
+      WHERE source = ? AND session_id = ? AND message_id = ?
+      LIMIT 1
+    """)
+    defer { sqlite3_finalize(selectStatement) }
+    try bind(source, at: 1, in: selectStatement)
+    try bind(sessionId, at: 2, in: selectStatement)
+    try bind(messageId, at: 3, in: selectStatement)
+
+    var oldRecord: TokMonUsageRecord?
+    if sqlite3_step(selectStatement) == SQLITE_ROW {
+      oldRecord = TokMonUsageRecord(
+        source: source,
+        sessionId: sessionId,
+        model: stringColumn(selectStatement, index: 0) ?? "unknown",
+        inputTokens: Int(sqlite3_column_int64(selectStatement, 1)),
+        outputTokens: Int(sqlite3_column_int64(selectStatement, 2)),
+        cacheCreation: Int(sqlite3_column_int64(selectStatement, 3)),
+        cacheRead: Int(sqlite3_column_int64(selectStatement, 4)),
+        reasoningTokens: Int(sqlite3_column_int64(selectStatement, 5)),
+        createdAt: stringColumn(selectStatement, index: 6) ?? "",
+        cacheHitSupported: Int(sqlite3_column_int64(selectStatement, 7)) != 0,
+        messageId: messageId
+      )
+    }
+
+    let deleteStatement = try prepare("""
+      DELETE FROM usage_records
+      WHERE source = ? AND session_id = ? AND message_id = ?
+    """)
+    defer { sqlite3_finalize(deleteStatement) }
+    try bind(source, at: 1, in: deleteStatement)
+    try bind(sessionId, at: 2, in: deleteStatement)
+    try bind(messageId, at: 3, in: deleteStatement)
+    try stepDone(deleteStatement)
+
+    if let oldRecord {
+      try subtractUsageRollups(for: oldRecord)
+    }
+  }
+
   private func _upsertSessionMetadata(_ metadata: TokMonSessionMetadata) throws {
     let statement = try prepare("""
       INSERT INTO tokmon_session_metadata
-        (id, source, title, first_prompt, last_prompt, model, started_at, last_active_at, file_path, project_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, source, title, first_prompt, last_prompt, model, started_at, last_active_at, file_path, project_path, session_file_suffix)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source, id) DO UPDATE SET
         title = COALESCE(excluded.title, tokmon_session_metadata.title),
         first_prompt = CASE
@@ -342,6 +373,7 @@ final class TokMonDatabase {
           WHEN excluded.project_path IS NOT NULL THEN excluded.project_path
           ELSE tokmon_session_metadata.project_path
         END,
+        session_file_suffix = COALESCE(excluded.session_file_suffix, tokmon_session_metadata.session_file_suffix),
         updated_at = datetime('now')
     """)
     defer { sqlite3_finalize(statement) }
@@ -356,40 +388,19 @@ final class TokMonDatabase {
     try bind(metadata.lastActiveAt, at: 8, in: statement)
     try bind(metadata.filePath, at: 9, in: statement)
     try bind(metadata.projectPath, at: 10, in: statement)
+    try bind(sessionFileSuffix(for: metadata.id), at: 11, in: statement)
     try stepDone(statement)
   }
 
   private func _insertUsages(_ records: [TokMonUsageRecord]) throws -> Int {
     guard !records.isEmpty else { return 0 }
 
-    let statement = try prepare("""
-      INSERT OR IGNORE INTO usage_records
-        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """)
-    defer { sqlite3_finalize(statement) }
-
     try exec("BEGIN IMMEDIATE;")
-    var insertedRecords: [TokMonUsageRecord] = []
+    var count = 0
     do {
       for record in records {
-        try bind(record.source, at: 1, in: statement)
-        try bind(record.sessionId, at: 2, in: statement)
-        try bind(record.model, at: 3, in: statement)
-        try bind(record.inputTokens, at: 4, in: statement)
-        try bind(record.outputTokens, at: 5, in: statement)
-        try bind(record.cacheCreation, at: 6, in: statement)
-        try bind(record.cacheRead, at: 7, in: statement)
-        try bind(record.reasoningTokens, at: 8, in: statement)
-        try bind(record.createdAt, at: 9, in: statement)
-        try bind(record.cacheHitSupported ? 1 : 0, at: 10, in: statement)
-        try bind(sessionFileSuffix(for: record.sessionId), at: 11, in: statement)
-        try stepDone(statement)
-        sqlite3_reset(statement)
-        sqlite3_clear_bindings(statement)
-
-        if sqlite3_changes(requiredConnection) > 0 {
-          insertedRecords.append(record)
+        if try _insertUsage(record) {
+          count += 1
         }
       }
       try exec("COMMIT;")
@@ -397,11 +408,7 @@ final class TokMonDatabase {
       try? exec("ROLLBACK;")
       throw error
     }
-
-    for record in insertedRecords {
-      try upsertUsageRollups(for: record)
-    }
-    return insertedRecords.count
+    return count
   }
 
   private func _upsertSessionMetadatas(_ metadatas: [TokMonSessionMetadata]) throws {
@@ -629,7 +636,7 @@ final class TokMonDatabase {
 
   private func _allUsageRecords() throws -> [TokMonUsageRecord] {
     let statement = try prepare("""
-      SELECT source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported
+      SELECT source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, message_id
       FROM usage_records
       ORDER BY created_at ASC, id ASC
     """)
@@ -649,6 +656,7 @@ final class TokMonDatabase {
         reasoningTokens: Int(sqlite3_column_int64(statement, 7)),
         createdAt: stringColumn(statement, index: 8) ?? "",
         cacheHitSupported: Int(sqlite3_column_int64(statement, 9)) != 0,
+        messageId: stringColumn(statement, index: 10),
       ))
       result = sqlite3_step(statement)
     }
@@ -740,6 +748,7 @@ final class TokMonDatabase {
         cache_hit_supported INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         session_file_suffix TEXT,
+        message_id TEXT,
         UNIQUE(source, session_id, created_at, input_tokens, output_tokens)
       );
 
@@ -810,6 +819,11 @@ final class TokMonDatabase {
       column: "session_file_suffix",
       definition: "session_file_suffix TEXT",
     )
+    _ = try addColumnIfMissing(
+      table: "usage_records",
+      column: "message_id",
+      definition: "message_id TEXT",
+    )
     let addedMetadataSessionFileSuffix = try addColumnIfMissing(
       table: "tokmon_session_metadata",
       column: "session_file_suffix",
@@ -843,6 +857,9 @@ final class TokMonDatabase {
       CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model);
       CREATE INDEX IF NOT EXISTS idx_usage_source_created ON usage_records(source, created_at);
       CREATE INDEX IF NOT EXISTS idx_usage_model_valid ON usage_records(model) WHERE model != '' AND model != 'unknown' AND model != '<synthetic>';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_message_id
+        ON usage_records(source, session_id, message_id)
+        WHERE message_id IS NOT NULL AND message_id != '';
       CREATE INDEX IF NOT EXISTS idx_tokmon_session_metadata_file ON tokmon_session_metadata(file_path);
       CREATE INDEX IF NOT EXISTS idx_tokmon_session_metadata_suffix ON tokmon_session_metadata(source, session_file_suffix);
       CREATE INDEX IF NOT EXISTS idx_tokmon_usage_rollups_scope ON tokmon_usage_rollups(grain, period_start, source, model);

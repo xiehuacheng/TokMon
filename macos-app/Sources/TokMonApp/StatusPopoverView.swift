@@ -72,9 +72,11 @@ struct StatusPopoverView: View {
       syncSessionBubbleHitSurface()
     }
     .onChange(of: selectedPage, initial: true) { _, _ in
+      resetTransientUIState()
       syncSessionBubbleHitSurface()
     }
     .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
+      resetTransientUIState()
       syncSessionBubbleHitSurface()
     }
     .onAppear {
@@ -82,7 +84,13 @@ struct StatusPopoverView: View {
     }
     .onDisappear {
       runtime.statusPanelSessionBubbleY = nil
+      resetTransientUIState()
     }
+  }
+
+  private func resetTransientUIState() {
+    expandedRequestId = nil
+    isTotalTokensExpanded = false
   }
 
   @ViewBuilder
@@ -457,9 +465,9 @@ struct StatusPopoverView: View {
 
   private var updatedLine: String {
     guard let updatedAt = stats.snapshot.updatedAt else {
-      return "updated now"
+      return "now"
     }
-    return "Updated \(updatedAt.formatted(date: .omitted, time: .standard))"
+    return updatedAt.formatted(date: .omitted, time: .standard)
   }
 
   private func format(_ value: Int?) -> String {
@@ -495,21 +503,21 @@ struct StatusPopoverView: View {
   private func metricDelta(for seriesKey: TokMonSeriesKey) -> String {
     guard let current = stats.snapshot.summary,
           let previous = stats.snapshot.previousSummary else {
-      return "No previous period"
+      return "No prev"
     }
 
     let currentValue = summaryValue(current, for: seriesKey)
     let previousValue = summaryValue(previous, for: seriesKey)
     guard previousValue > 0 else {
-      return currentValue > 0 ? "New vs previous" : "No previous period"
+      return currentValue > 0 ? "New vs prev" : "No prev"
     }
 
     let change = (currentValue - previousValue) / previousValue
     if abs(change) < 0.005 {
-      return "No change vs previous"
+      return "No change vs prev"
     }
     let sign = change > 0 ? "+" : "-"
-    return "\(sign)\(Int((abs(change) * 100).rounded()))% vs previous"
+    return "\(sign)\(Int((abs(change) * 100).rounded()))% vs prev"
   }
 
   private func summaryValue(_ summary: TokMonSummary, for seriesKey: TokMonSeriesKey) -> Double {
@@ -562,23 +570,12 @@ struct StatusPopoverView: View {
           configuration: config
         )
 
-        let displayFrame = scDisplay.frame
-        let windowFrame = window.frame
-        let displayPixelHeight = Int(displayFrame.height * scale)
-
-        var windowPixelRect = CGRect(
-          x: (windowFrame.minX - displayFrame.minX) * scale,
-          y: (windowFrame.minY - displayFrame.minY) * scale,
-          width: windowFrame.width * scale,
-          height: windowFrame.height * scale
-        )
-        windowPixelRect.origin.y = CGFloat(displayPixelHeight) - windowPixelRect.maxY
-
-        let cropRect = CGRect(
-          x: windowPixelRect.minX + CGFloat(sessionBubbleWidth + sessionBubbleGutter) * scale,
-          y: windowPixelRect.minY,
-          width: CGFloat(statusPanelMainWidth + statusPanelShadowPadding * 2) * scale,
-          height: CGFloat(statusPanelHeight + statusPanelShadowPadding) * scale
+        let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let cropRect = statusPanelScreenshotCropRect(
+          windowFrame: window.frame,
+          displayFrame: scDisplay.frame,
+          scale: scale,
+          mainDisplayHeight: mainDisplayHeight
         )
 
         guard let croppedCGImage = cgImage.cropping(to: cropRect) else {

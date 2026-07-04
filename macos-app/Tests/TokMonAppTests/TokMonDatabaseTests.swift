@@ -3,6 +3,183 @@ import SQLite3
 import Testing
 @testable import TokMonApp
 
+@Test func databaseMergesClaudeUsageRecordsByMessageId() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let partial = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 1000,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-1",
+  )
+  let later = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheCreation: 200,
+    cacheRead: 50,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:01.000Z",
+    messageId: "msg-1",
+  )
+
+  #expect(try db.insertUsage(partial) == true)
+  #expect(try db.insertUsage(later) == true)
+
+  let records = try db.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 1000)
+  #expect(records[0].outputTokens == 500)
+  #expect(records[0].cacheCreation == 200)
+  #expect(records[0].cacheRead == 50)
+}
+
+@Test func databaseMergesClaudeUsageRecordsByTotalTokensWhenTimestampsAreEqual() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let partial = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 100,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-tie",
+  )
+  let later = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 50,
+    outputTokens: 100,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-tie",
+  )
+
+  #expect(try db.insertUsage(partial) == true)
+  #expect(try db.insertUsage(later) == true)
+
+  let records = try db.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 50)
+  #expect(records[0].outputTokens == 100)
+}
+
+@Test func databaseKeepsSameMessageIdAcrossSourcesAndSessions() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let claudeRecord = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-a",
+    model: "claude-test",
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-shared",
+  )
+  let codexRecord = TokMonUsageRecord(
+    source: "codex",
+    sessionId: "session-b",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-shared",
+  )
+
+  #expect(try db.insertUsage(claudeRecord) == true)
+  #expect(try db.insertUsage(codexRecord) == true)
+
+  #expect(try db.usageRecordCount() == 2)
+}
+
+@Test func databaseMaintainsRollupsWhenMergingClaudeUsageRecords() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let partial = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 1000,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-rollup",
+  )
+  let later = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheCreation: 200,
+    cacheRead: 50,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:01.000Z",
+    messageId: "msg-rollup",
+  )
+
+  #expect(try db.insertUsage(partial) == true)
+  #expect(try db.insertUsage(later) == true)
+
+  let summary = try TokMonQueryStore(database: db).summary(
+    filter: TokMonQueryFilter(
+      from: "2026-05-14 00:00:00",
+      to: "2026-05-15 00:00:00",
+      source: "claude-code",
+      model: nil
+    )
+  )
+  #expect(summary.total.totalRequests == 1)
+  #expect(summary.total.totalInput == 1000)
+  #expect(summary.total.totalOutput == 500)
+  #expect(summary.total.totalCacheCreation == 200)
+  #expect(summary.total.totalCacheRead == 50)
+}
+
+@Test func databaseReturnsFalseForIdenticalClaudeUsageMerge() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  let record = TokMonUsageRecord(
+    source: "claude-code",
+    sessionId: "session-1",
+    model: "claude-test",
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:00:00.000Z",
+    messageId: "msg-identical",
+  )
+
+  #expect(try db.insertUsage(record) == true)
+  #expect(try db.insertUsage(record) == false)
+  #expect(try db.usageRecordCount() == 1)
+}
+
 @Test func databaseCreatesUsageAndScanStateTables() throws {
   let dataDir = try makeTokMonTempDir()
   let db = try TokMonDatabase(appDataDir: dataDir)

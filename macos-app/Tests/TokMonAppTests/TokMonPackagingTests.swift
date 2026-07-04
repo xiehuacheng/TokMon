@@ -1362,7 +1362,7 @@ import Testing
 
   #expect(!main.contains("NSPopover()"))
   #expect(main.contains("TokMonStatusPanel("))
-  #expect(main.contains("styleMask: [.borderless]"))
+  #expect(main.contains("styleMask: [.borderless, .nonactivatingPanel]"))
   #expect(main.contains("panel.isOpaque = false"))
   #expect(main.contains("panel.backgroundColor = .clear"))
   #expect(main.contains("panel.hasShadow = false"))
@@ -1494,7 +1494,7 @@ import Testing
   #expect(view.contains(".onChange(of: selectedSessionBubbleY, initial: true)"))
   #expect(view.contains(".onChange(of: selectedPage, initial: true)"))
   #expect(view.contains(".onChange(of: stats.snapshot.selectedUsageSession, initial: true)"))
-  #expect(view.contains(".onDisappear {\n      runtime.statusPanelSessionBubbleY = nil\n    }"))
+  #expect(view.contains(".onDisappear {\n      runtime.statusPanelSessionBubbleY = nil\n      resetTransientUIState()\n    }"))
   #expect(view.contains("private func syncSessionBubbleHitSurface()"))
   #expect(view.contains("runtime.statusPanelSessionBubbleY = selectedPage == .sessions && stats.snapshot.selectedUsageSession != nil ? selectedSessionBubbleY : nil"))
 }
@@ -1511,10 +1511,9 @@ import Testing
   let main = try String(contentsOf: mainURL, encoding: .utf8)
 
   #expect(main.contains("panel.hidesOnDeactivate = false"))
-  #expect(main.contains("runtime.beginWindowPresentation()"))
-  #expect(main.contains("runtime.endWindowPresentation()"))
   #expect(main.contains("panel.makeKeyAndOrderFront(nil)"))
-  #expect(main.contains("DispatchQueue.main.async { [weak self, weak panel] in"))
+  #expect(!main.contains("runtime.beginWindowPresentation()"))
+  #expect(!main.contains("runtime.endWindowPresentation()"))
 }
 
 @Test func statusPanelContentKeepsTransparentHostingLayers() throws {

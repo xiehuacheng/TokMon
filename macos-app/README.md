@@ -61,6 +61,12 @@ TokMon 数据目录为：
 
 因此 `.app` 的 SQLite 数据库、扫描状态和本地配置不会写回源码目录。
 
+### 数据一致性
+
+- `usage_records` 表为 Claude Code assistant 记录保存 `message_id`，用于同一 `message.id` 下多个 streaming chunk 的去重。
+- 合并规则按最近优先：保留 `createdAt` 最新的一条；若时间相同，则保留 total tokens 更大的那条。
+- `TokMonScanner.scannerVersion` 在扫描或合并语义变化时递增；App 启动时若检测到存储版本低于当前版本，会自动重建数据库并重新全量扫描。
+
 ## 注意事项
 
 - 状态栏统计默认每 3 秒刷新一次，显示当前 source、范围和 interval 对应的统计。
