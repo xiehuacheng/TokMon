@@ -10,6 +10,7 @@ final class TokMonRuntime: ObservableObject {
   weak var statusPanel: NSPanel?
 
   private var settingsWindowController: TokMonSettingsWindowController?
+  private let engineActor: TokMonEngineActor?
   private var started = false
   private var sourceWatcher: TokMonSourceWatcher?
   private var fileWatcher: TokMonFileWatcher?
@@ -50,6 +51,7 @@ final class TokMonRuntime: ObservableObject {
         }
       )
       stats = statsStore
+      self.engineActor = engineActor
       sourceWatcher = watcher
       fileWatcher = watcherForFileEvents
       settingsWindowController = controller
@@ -62,6 +64,7 @@ final class TokMonRuntime: ObservableObject {
     } catch {
       tokMonLog("TokMon native TokMon engine failed to initialize: \(error.localizedDescription)")
       stats = TokMonStatsStore(startupError: error.localizedDescription)
+      engineActor = nil
       sourceWatcher = nil
       fileWatcher = nil
       settingsWindowController = nil
@@ -72,12 +75,34 @@ final class TokMonRuntime: ObservableObject {
     guard !started else { return }
     started = true
     tokMonLog("TokMon runtime using native TokMon engine")
-    Task { [sourceWatcher] in
-      await sourceWatcher?.start()
-    }
     stats.startObserving()
-    Task { [stats] in
+    Task { [sourceWatcher, engineActor, stats] in
+      await Self.migrateScannerVersion(
+        engineActor: engineActor,
+        defaults: UserDefaults.standard,
+        currentVersion: TokMonScanner.scannerVersion
+      )
+      await sourceWatcher?.start()
       await stats.refreshWithScan()
+    }
+  }
+
+  nonisolated internal static func migrateScannerVersion(
+    engineActor: TokMonEngineActor?,
+    defaults: UserDefaults,
+    currentVersion: Int
+  ) async {
+    let storedVersion = defaults.object(forKey: "tokmonScannerVersion") as? Int
+    if let storedVersion, storedVersion < currentVersion, let engineActor {
+      do {
+        tokMonLog("TokMon migrating scanner version \(storedVersion) -> \(currentVersion), rebuilding database")
+        _ = try await engineActor.rebuildAndRescan()
+        defaults.set(currentVersion, forKey: "tokmonScannerVersion")
+      } catch {
+        tokMonLog("TokMon scanner version migration rebuild failed: \(error.localizedDescription)")
+      }
+    } else if storedVersion == nil {
+      defaults.set(currentVersion, forKey: "tokmonScannerVersion")
     }
   }
 

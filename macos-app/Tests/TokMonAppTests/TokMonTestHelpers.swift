@@ -1,5 +1,15 @@
 import Foundation
 
+func JSONLine(_ value: [String: Any]) throws -> String {
+  let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+  return String(decoding: data, as: UTF8.self) + "\n"
+}
+
+func writeJSONL(_ values: [[String: Any]], to url: URL) throws {
+  let content = try values.map(JSONLine).joined(separator: "\n") + "\n"
+  try content.write(to: url, atomically: true, encoding: .utf8)
+}
+
 func makeTokMonTempDir() throws -> URL {
   let url = FileManager.default.temporaryDirectory
     .appendingPathComponent("TokMonTokMonTests-\(UUID().uuidString)", isDirectory: true)

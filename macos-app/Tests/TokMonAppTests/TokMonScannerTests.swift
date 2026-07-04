@@ -961,6 +961,157 @@ import Testing
   #expect(records[0].cacheRead == 12032)
 }
 
+@Test func scannerMergesClaudeRecordsByTotalTokensWhenTimestampsAreEqual() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "id": "msg-tie",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 100,
+            "output_tokens": 0,
+          ],
+        ],
+      ],
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "id": "msg-tie",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 50,
+            "output_tokens": 100,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 50)
+  #expect(records[0].outputTokens == 100)
+}
+
+@Test func scannerDoesNotMergeClaudeAssistantRecordsWithoutMessageId() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 42,
+            "output_tokens": 7,
+          ],
+        ],
+      ],
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 42,
+            "output_tokens": 7,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 42)
+  #expect(records[0].outputTokens == 7)
+}
+
+@Test func scannerParsesClaudeNestedCacheCreation() throws {
+  let dataDir = try makeTokMonTempDir()
+  let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
+  try FileManager.default.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+  let logURL = projectsDir.appendingPathComponent("claude-session.jsonl")
+  try writeJSONL(
+    [
+      [
+        "type": "assistant",
+        "sessionId": "claude-session",
+        "timestamp": "2026-05-14T03:00:00.000Z",
+        "message": [
+          "id": "msg-nested-cache",
+          "model": "claude-test",
+          "usage": [
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_creation": [
+              "ephemeral_5m_input_tokens": 5381,
+              "ephemeral_1h_input_tokens": 42,
+            ],
+            "cache_read_input_tokens": 123,
+          ],
+        ],
+      ],
+    ],
+    to: logURL,
+  )
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "claude-code": TokMonSourceConfig(path: projectsDir.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records[0].inputTokens == 100)
+  #expect(records[0].outputTokens == 50)
+  #expect(records[0].cacheCreation == 5423)
+  #expect(records[0].cacheRead == 123)
+}
+
 @Test func scannerReplacesClaudePartialRecordOnIncrementalScan() throws {
   let dataDir = try makeTokMonTempDir()
   let projectsDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
@@ -1779,11 +1930,6 @@ private func codexTokenCountLine(
   ]
 }
 
-private func writeJSONL(_ values: [[String: Any]], to url: URL) throws {
-  let content = try values.map(JSONLine).joined(separator: "\n") + "\n"
-  try content.write(to: url, atomically: true, encoding: .utf8)
-}
-
 private func fileByteSize(_ url: URL) throws -> Int64 {
   let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
   return (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -1802,11 +1948,6 @@ private func scannerFilePath(_ url: URL) -> String {
     return "/private" + url.path
   }
   return url.path
-}
-
-private func JSONLine(_ value: [String: Any]) throws -> String {
-  let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
-  return String(decoding: data, as: UTF8.self) + "\n"
 }
 
 private func jsonString(_ value: [String: Any]) throws -> String {

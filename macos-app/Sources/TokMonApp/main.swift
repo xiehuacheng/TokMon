@@ -12,7 +12,6 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private var localClickMonitor: Any?
   private var cancellables = Set<AnyCancellable>()
   private var isClosingStatusPanel = false
-  private var activationObserver: NSObjectProtocol?
   private var appearanceObserver: NSObjectProtocol?
   private let statusPanelAnimationDuration: TimeInterval = 0.18
   private let statusPanelAnimationOffset: CGFloat = 10
@@ -72,55 +71,13 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     statusPanel = panel
     runtime.statusPanel = panel
     animateStatusPanelOpen(panel, targetFrame: panelFrame)
-    DispatchQueue.main.async { [weak self, weak panel] in
-      guard let self, let panel else { return }
-      self.runtime.beginWindowPresentation()
-      self.activateAndFocus(panel)
-      self.installOutsideClickMonitor()
-    }
-  }
-
-  private func activateAndFocus(_ panel: NSPanel) {
-    removeActivationObserver()
-    let app = NSApplication.shared
-
-    if app.isActive {
-      panel.makeKeyAndOrderFront(nil)
-      tokMonLog("TokMon activateAndFocus immediate: keyWindow=\(app.keyWindow?.title ?? "nil")")
-      return
-    }
-
-    activationObserver = NotificationCenter.default.addObserver(
-      forName: NSApplication.didBecomeActiveNotification,
-      object: app,
-      queue: .main
-    ) { [weak self, weak panel] _ in
-      MainActor.assumeIsolated {
-        guard let self, let panel, panel.isVisible else {
-          self?.removeActivationObserver()
-          return
-        }
-        panel.makeKeyAndOrderFront(nil)
-        tokMonLog("TokMon activateAndFocus onActive: keyWindow=\(app.keyWindow?.title ?? "nil")")
-        self.removeActivationObserver()
-      }
-    }
-
-    NSApplication.shared.activate(ignoringOtherApps: true)
-  }
-
-  private func removeActivationObserver() {
-    if let activationObserver {
-      NotificationCenter.default.removeObserver(activationObserver)
-      self.activationObserver = nil
-    }
+    installOutsideClickMonitor()
   }
 
   private func closeStatusPanel() {
     guard let panel = statusPanel, !isClosingStatusPanel else {
       return
     }
-    removeActivationObserver()
     runtime.stats.popoverDidDisappear()
     isClosingStatusPanel = true
     removeOutsideClickMonitor()
@@ -175,7 +132,6 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func finishClosingStatusPanel(_ panel: NSPanel) {
     panel.orderOut(nil)
-    runtime.endWindowPresentation()
     statusPanel?.delegate = nil
     if statusPanel === panel {
       statusPanel = nil
@@ -198,7 +154,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
     let panel = TokMonStatusPanel(
       contentRect: NSRect(origin: .zero, size: NSSize(width: statusPanelContentWidth, height: statusPanelHeight)),
-      styleMask: [.borderless],
+      styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false,
     )
@@ -220,7 +176,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     startFrame.origin.y -= statusPanelAnimationOffset
     panel.alphaValue = 0
     panel.setFrame(startFrame, display: false)
-    panel.orderFront(nil)
+    panel.makeKeyAndOrderFront(nil)
     NSAnimationContext.runAnimationGroup { context in
       context.duration = statusPanelAnimationDuration
       context.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -368,7 +324,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
 private final class TokMonStatusPanel: NSPanel {
   override var canBecomeKey: Bool { true }
-  override var canBecomeMain: Bool { true }
+  override var canBecomeMain: Bool { false }
 }
 
 let app = NSApplication.shared

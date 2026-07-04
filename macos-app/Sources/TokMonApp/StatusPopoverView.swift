@@ -72,9 +72,11 @@ struct StatusPopoverView: View {
       syncSessionBubbleHitSurface()
     }
     .onChange(of: selectedPage, initial: true) { _, _ in
+      resetTransientUIState()
       syncSessionBubbleHitSurface()
     }
     .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
+      resetTransientUIState()
       syncSessionBubbleHitSurface()
     }
     .onAppear {
@@ -82,7 +84,13 @@ struct StatusPopoverView: View {
     }
     .onDisappear {
       runtime.statusPanelSessionBubbleY = nil
+      resetTransientUIState()
     }
+  }
+
+  private func resetTransientUIState() {
+    expandedRequestId = nil
+    isTotalTokensExpanded = false
   }
 
   @ViewBuilder
@@ -562,23 +570,12 @@ struct StatusPopoverView: View {
           configuration: config
         )
 
-        let displayFrame = scDisplay.frame
-        let windowFrame = window.frame
-        let displayPixelHeight = Int(displayFrame.height * scale)
-
-        var windowPixelRect = CGRect(
-          x: (windowFrame.minX - displayFrame.minX) * scale,
-          y: (windowFrame.minY - displayFrame.minY) * scale,
-          width: windowFrame.width * scale,
-          height: windowFrame.height * scale
-        )
-        windowPixelRect.origin.y = CGFloat(displayPixelHeight) - windowPixelRect.maxY
-
-        let cropRect = CGRect(
-          x: windowPixelRect.minX + CGFloat(sessionBubbleWidth + sessionBubbleGutter) * scale,
-          y: windowPixelRect.minY,
-          width: CGFloat(statusPanelMainWidth + statusPanelShadowPadding * 2) * scale,
-          height: CGFloat(statusPanelHeight + statusPanelShadowPadding) * scale
+        let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let cropRect = statusPanelScreenshotCropRect(
+          windowFrame: window.frame,
+          displayFrame: scDisplay.frame,
+          scale: scale,
+          mainDisplayHeight: mainDisplayHeight
         )
 
         guard let croppedCGImage = cgImage.cropping(to: cropRect) else {

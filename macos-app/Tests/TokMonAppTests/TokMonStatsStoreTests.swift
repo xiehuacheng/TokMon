@@ -3,6 +3,71 @@ import Testing
 @testable import TokMonApp
 
 @MainActor
+@Test func statsStoreResetsPaginationAndSelectionOnPopoverDisappear() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
+  try configStore.saveUIState(TokMonUIState(
+    source: "",
+    from: "",
+    to: "",
+    rangeLabel: "today",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  for index in 0..<30 {
+    _ = try database.insertUsage(TokMonUsageRecord(
+      source: "codex",
+      sessionId: "session-\(index)",
+      model: "gpt-test",
+      inputTokens: 10,
+      outputTokens: 1,
+      cacheCreation: 0,
+      cacheRead: 0,
+      reasoningTokens: 0,
+      createdAt: "2026-05-14T01:\(String(format: "%02d", index)):00.000Z",
+    ))
+  }
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonStatsStore(
+    engine: engine,
+    nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
+  )
+
+  store.popoverDidAppear()
+  await store.refresh()
+  #expect(store.errorMessage == nil)
+  #expect(store.snapshot.recordsPage?.rows.count == 20)
+
+  store.loadMoreRecords()
+  await store.refresh()
+  #expect(store.errorMessage == nil)
+  #expect(store.snapshot.recordsPage?.rows.count == 30)
+
+  store.selectUsageSession(source: "codex", sessionId: "session-5")
+  await store.refresh()
+  #expect(store.errorMessage == nil)
+  #expect(store.snapshot.selectedUsageSession?.sessionId == "session-5")
+
+  store.popoverDidDisappear()
+  #expect(store.snapshot.selectedUsageSession == nil)
+  #expect(store.snapshot.selectedSessionRecords.isEmpty)
+
+  store.popoverDidAppear()
+  await store.refresh()
+  #expect(store.errorMessage == nil)
+  #expect(store.snapshot.recordsPage?.rows.count == 20)
+  #expect(store.snapshot.selectedUsageSession == nil)
+}
+
+@MainActor
 @Test func statsStoreRefreshesFromNativeTokMonEngine() async throws {
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)

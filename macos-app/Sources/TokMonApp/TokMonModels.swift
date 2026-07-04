@@ -190,6 +190,21 @@ struct TokMonUsageRecord: Equatable {
   var reasoningTokens: Int
   var createdAt: String
   var cacheHitSupported: Bool = true
+  var messageId: String?
+}
+
+extension TokMonUsageRecord {
+  /// Used to merge Claude streaming chunks that share a `messageId`.
+  /// Returns the record with the later `createdAt`; if equal, returns the one
+  /// with the higher total token count (input + output + cache + reasoning).
+  static func claudeRecordByRecency(_ lhs: TokMonUsageRecord, _ rhs: TokMonUsageRecord) -> TokMonUsageRecord {
+    if lhs.createdAt != rhs.createdAt {
+      return lhs.createdAt > rhs.createdAt ? lhs : rhs
+    }
+    let lhsTotal = lhs.inputTokens + lhs.outputTokens + lhs.cacheCreation + lhs.cacheRead + lhs.reasoningTokens
+    let rhsTotal = rhs.inputTokens + rhs.outputTokens + rhs.cacheCreation + rhs.cacheRead + rhs.reasoningTokens
+    return lhsTotal >= rhsTotal ? lhs : rhs
+  }
 }
 
 struct TokMonSessionMetadata: Equatable {

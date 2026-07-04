@@ -23,7 +23,7 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 ## 目录与模块边界
 
 - `macos-app/Sources/TokMonApp/`：SwiftUI App，状态栏图标、popover、设置窗口、原生 TokMon 引擎。
-- `TokMonScanner.swift`：token usage 扫描，结果写 `usage_records`，增量 offset 写 `tokmon_scan_state`。
+- `TokMonScanner.swift`：token usage 扫描，结果写 `usage_records`（Claude Code assistant 记录含 `message_id`，用于同一 `message.id` 的 streaming chunk 去重），增量 offset 写 `tokmon_scan_state`。
 - `TokMonDatabase.swift`：SQLite schema、写入 helper、rollup 维护和重建。
 - `TokMonQueryStore.swift`：summary、trend、heatmap、records、sessions 查询。
 - `TokMonConfigStore.swift`：TokMon 配置和 UI state 读写。
@@ -34,7 +34,7 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 
 1. **Claude Code 自己就是被监控对象**。TokMon 会扫描 `~/.claude/projects/`。在本仓库工作时尽量不要往这些位置写“测试数据”或临时 session 文件，否则会污染 TokMon 用量。需要造数据时用一次性目录，完事清干净。
 
-2. **数据库操作优先走 `TokMonDatabase` 的 helper**。新增 schema 时同步更新重建逻辑和 Swift 测试，否则“重建数据库”会遗漏新表。
+2. **数据库操作优先走 `TokMonDatabase` 的 helper**。新增 schema 时同步更新重建逻辑和 Swift 测试，否则“重建数据库”会遗漏新表。当扫描/合并语义变化时，记得递增 `TokMonScanner.scannerVersion`；App 启动时发现存储版本低于当前版本会自动重建数据库并重新全量扫描。
 
 3. **环境变量**：
    - `TOKMON_PROJECT_ROOT`：Swift App 从其他目录启动时的仓库路径（见 `macos-app/Sources/TokMonApp/TokMonProjectLocator.swift`）。

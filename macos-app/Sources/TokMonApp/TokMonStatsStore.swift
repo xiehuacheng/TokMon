@@ -44,6 +44,8 @@ final class TokMonStatsStore: ObservableObject {
 
   private let nativeEngineActor: TokMonEngineActor?
   private var timerTask: Task<Void, Never>?
+  private let defaultRecordsLimit = 20
+  private let defaultUsageSessionsLimit = 50
   private var recordsLimit = 20
   private var usageSessionsLimit = 50
   private var selectedUsageSession: TokMonUsageSessionSelection?
@@ -118,6 +120,9 @@ final class TokMonStatsStore: ObservableObject {
 
   func popoverDidDisappear() {
     isPopoverVisible = false
+    recordsLimit = defaultRecordsLimit
+    usageSessionsLimit = defaultUsageSessionsLimit
+    clearSelectedUsageSession()
   }
 
   func stopObserving() {

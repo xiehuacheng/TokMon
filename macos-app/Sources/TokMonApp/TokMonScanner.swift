@@ -2,6 +2,10 @@ import Foundation
 import SQLite3
 
 final class TokMonScanner {
+  /// Bumped when scanning semantics change enough that existing usage_records
+  /// rows may be incorrect. A mismatch triggers a database rebuild on launch.
+  static let scannerVersion = 2
+
   private static let qwenCodeScanStateVersion = "qwen-code-telemetry-v1"
 
   private let database: TokMonDatabase
@@ -321,7 +325,6 @@ final class TokMonScanner {
     }
     let shouldRescanFromStart = fileSize < state.offset
       || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
-      || (fileSize == state.offset && state.lastUsageKey == nil)
     let range = shouldRescanFromStart
       ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
       : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset, lastMtime: state.lastMtime)
@@ -332,7 +335,6 @@ final class TokMonScanner {
       return 0
     }
 
-    let previousLastKey = state.lastUsageKey.flatMap { ClaudeUsageKey(jsonString: $0) }
     var pendingByMessageId: [String: TokMonUsageRecord] = [:]
     var orderedMessageIds: [String] = []
     var recordsWithoutMessageId: [TokMonUsageRecord] = []
@@ -365,22 +367,19 @@ final class TokMonScanner {
         firstPrompt = firstPrompt ?? prompt
         lastPrompt = prompt
       }
-      guard let parsed = parseClaudeUsageRecord(object, fallbackSessionId: fallbackSessionId) else {
+      guard let record = parseClaudeUsageRecord(object, fallbackSessionId: fallbackSessionId) else {
         continue
       }
-      model = parsed.usage.model
-      if parsed.messageId.isEmpty {
-        recordsWithoutMessageId.append(parsed.usage)
-      } else {
-        let messageId = parsed.messageId
+      model = record.model
+      if let messageId = record.messageId, !messageId.isEmpty {
         if let existing = pendingByMessageId[messageId] {
-          if isMoreCompleteRecord(parsed.usage, than: existing) {
-            pendingByMessageId[messageId] = parsed.usage
-          }
+          pendingByMessageId[messageId] = TokMonUsageRecord.claudeRecordByRecency(existing, record)
         } else {
-          pendingByMessageId[messageId] = parsed.usage
+          pendingByMessageId[messageId] = record
           orderedMessageIds.append(messageId)
         }
+      } else {
+        recordsWithoutMessageId.append(record)
       }
     }
 
@@ -389,22 +388,6 @@ final class TokMonScanner {
       if let record = pendingByMessageId[messageId] {
         recordsToInsert.append(record)
       }
-    }
-
-    if !shouldRescanFromStart,
-       let previousKey = previousLastKey,
-       let firstNewMessageId = orderedMessageIds.first,
-       firstNewMessageId == previousKey.messageId {
-      try database.deleteClaudeUsageRecord(
-        source: "claude-code",
-        sessionId: fallbackSessionId,
-        createdAt: previousKey.createdAt,
-        inputTokens: previousKey.inputTokens,
-        outputTokens: previousKey.outputTokens,
-        cacheCreation: previousKey.cacheCreation,
-        cacheRead: previousKey.cacheRead,
-        reasoningTokens: previousKey.reasoningTokens
-      )
     }
 
     var count = 0
@@ -1063,7 +1046,7 @@ final class TokMonScanner {
   private func parseClaudeUsageRecord(
     _ object: [String: Any],
     fallbackSessionId: String,
-  ) -> (messageId: String, usage: TokMonUsageRecord)? {
+  ) -> TokMonUsageRecord? {
     guard object["type"] as? String == "assistant" else {
       return nil
     }
@@ -1086,15 +1069,26 @@ final class TokMonScanner {
       model: stringValue(messageObject["model"]) ?? "unknown",
       inputTokens: intValue(usage["input_tokens"], fallback: intValue(usage["prompt_tokens"])),
       outputTokens: intValue(usage["output_tokens"], fallback: intValue(usage["completion_tokens"])),
-      cacheCreation: intValue(usage["cache_creation_input_tokens"]),
+      cacheCreation: claudeCacheCreation(from: usage),
       cacheRead: intValue(usage["cache_read_input_tokens"]),
       reasoningTokens: 0,
       createdAt: stringValue(object["timestamp"]) ?? isoTimestampFormatter.string(from: Date()),
+      messageId: stringValue(messageObject["id"])
     )
     guard hasClaudeTokenUsage(record) else {
       return nil
     }
-    return (stringValue(messageObject["id"]) ?? "", record)
+    return record
+  }
+
+  private func claudeCacheCreation(from usage: [String: Any]) -> Int {
+    let flat = intValue(usage["cache_creation_input_tokens"])
+    if flat > 0 { return flat }
+    guard let nested = usage["cache_creation"] as? [String: Any] else { return flat }
+    let ephemeral5m = intValue(nested["ephemeral_5m_input_tokens"])
+    let ephemeral1h = intValue(nested["ephemeral_1h_input_tokens"])
+    let nestedTotal = ephemeral5m + ephemeral1h
+    return nestedTotal > 0 ? nestedTotal : flat
   }
 
   private func claudeUserMessage(_ object: [String: Any]) -> String? {
@@ -1276,180 +1270,6 @@ final class TokMonScanner {
       return String(fileName[range])
     }
     return fileName
-  }
-
-  private func codexSessionMetadataSnapshot(
-    _ fileURL: URL,
-    fallbackSessionId: String,
-  ) -> (sessionId: String?, model: String?, firstPrompt: String?, lastPrompt: String?, startedAt: String?, lastActiveAt: String?, projectPath: String?) {
-    guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else {
-      return (fallbackSessionId, nil, nil, nil, nil, nil, nil)
-    }
-
-    var sessionId: String?
-    var model: String?
-    var firstPrompt: String?
-    var lastPrompt: String?
-    var startedAt: String?
-    var lastActiveAt: String?
-    var projectPath: String?
-
-    for line in text.components(separatedBy: "\n") {
-      guard let object = parseJSONObject(line) else {
-        continue
-      }
-      if let timestamp = stringValue(object["timestamp"]) {
-        startedAt = startedAt ?? timestamp
-        lastActiveAt = timestamp
-      }
-
-      if let type = object["type"] as? String, type == "session_meta" || type == "turn_context" {
-        let payload = parsePayload(object["payload"])
-        if type == "session_meta",
-           let id = normalizedPrompt(stringValue(payload?["id"])) {
-          sessionId = id
-        }
-        if let payloadModel = normalizedPrompt(stringValue(payload?["model"])) {
-          model = payloadModel
-        }
-        projectPath = projectPath ?? normalizedPrompt(stringValue(payload?["cwd"]))
-      }
-
-      if let message = codexUserMessage(object) {
-        firstPrompt = firstPrompt ?? message
-        lastPrompt = message
-      } else if firstPrompt == nil, let message = codexResponseUserMessage(object) {
-        firstPrompt = message
-      }
-    }
-
-    return (sessionId ?? fallbackSessionId, model, firstPrompt, lastPrompt ?? firstPrompt, startedAt, lastActiveAt, projectPath)
-  }
-
-  private func upsertCodexSessionMetadata(
-    sessionId: String,
-    sessionName: String?,
-    model: String?,
-    firstPrompt: String?,
-    lastPrompt: String?,
-    startedAt: String?,
-    lastActiveAt: String?,
-    filePath: String,
-    projectPath: String?,
-  ) throws {
-    try database.upsertSessionMetadata(TokMonSessionMetadata(
-      id: sessionId,
-      source: "codex",
-      title: sessionTitle(sessionName: sessionName, projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
-      firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt ?? firstPrompt,
-      model: model == "unknown" ? nil : model,
-      startedAt: startedAt,
-      lastActiveAt: lastActiveAt,
-      filePath: filePath,
-      projectPath: projectPath,
-    ))
-  }
-
-  private func upsertClaudeSessionMetadata(
-    sessionId: String,
-    model: String?,
-    firstPrompt: String?,
-    lastPrompt: String?,
-    startedAt: String?,
-    lastActiveAt: String?,
-    filePath: String,
-    projectPath: String?,
-  ) throws {
-    try database.upsertSessionMetadata(TokMonSessionMetadata(
-      id: sessionId,
-      source: "claude-code",
-      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
-      firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt ?? firstPrompt,
-      model: model == "unknown" ? nil : model,
-      startedAt: startedAt,
-      lastActiveAt: lastActiveAt,
-      filePath: filePath,
-      projectPath: projectPath,
-    ))
-  }
-
-  private func upsertQwenCodeSessionMetadata(
-    sessionId: String,
-    model: String?,
-    firstPrompt: String?,
-    lastPrompt: String?,
-    startedAt: String?,
-    lastActiveAt: String?,
-    filePath: String,
-    projectPath: String?,
-  ) throws {
-    try database.upsertSessionMetadata(TokMonSessionMetadata(
-      id: sessionId,
-      source: "qwen-code",
-      title: sessionTitle(projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
-      firstPrompt: firstPrompt,
-      lastPrompt: lastPrompt ?? firstPrompt,
-      model: model == "unknown" ? nil : model,
-      startedAt: startedAt,
-      lastActiveAt: lastActiveAt,
-      filePath: filePath,
-      projectPath: projectPath,
-    ))
-  }
-
-  private func upsertOpenCodeSessionMetadata(_ session: OpenCodeSessionSnapshot) throws {
-    try database.upsertSessionMetadata(TokMonSessionMetadata(
-      id: session.id,
-      source: "opencode",
-      title: sessionTitle(projectPath: session.projectPath, filePath: session.filePath, firstPrompt: session.firstPrompt),
-      firstPrompt: session.firstPrompt,
-      lastPrompt: session.firstPrompt,
-      model: session.model == "unknown" ? nil : session.model,
-      startedAt: session.startedAt,
-      lastActiveAt: session.lastActiveAt,
-      filePath: session.filePath,
-      projectPath: session.projectPath,
-    ))
-  }
-
-  private func claudeSessionMetadataSnapshot(
-    _ fileURL: URL,
-    fallbackSessionId: String,
-  ) -> (sessionId: String, model: String?, firstPrompt: String?, lastPrompt: String?, startedAt: String?, lastActiveAt: String?, projectPath: String?) {
-    guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else {
-      return (fallbackSessionId, nil, nil, nil, nil, nil, nil)
-    }
-
-    var model: String?
-    var firstPrompt: String?
-    var lastPrompt: String?
-    var startedAt: String?
-    var lastActiveAt: String?
-    var projectPath: String?
-
-    for line in text.components(separatedBy: "\n") {
-      guard let object = parseJSONObject(line) else {
-        continue
-      }
-      if let timestamp = stringValue(object["timestamp"]) {
-        startedAt = startedAt ?? timestamp
-        lastActiveAt = timestamp
-      }
-      projectPath = projectPath ?? normalizedPrompt(stringValue(object["cwd"]))
-      if let prompt = claudeUserMessage(object) {
-        firstPrompt = firstPrompt ?? prompt
-        lastPrompt = prompt
-      }
-      if object["type"] as? String == "assistant",
-         let message = object["message"] as? [String: Any],
-         let assistantModel = normalizedPrompt(stringValue(message["model"])) {
-        model = assistantModel
-      }
-    }
-
-    return (fallbackSessionId, model, firstPrompt, lastPrompt ?? firstPrompt, startedAt, lastActiveAt, projectPath)
   }
 
   private func sessionTitle(
@@ -1808,12 +1628,6 @@ final class TokMonScanner {
     ].joined(separator: ":")
   }
 
-  private func isMoreCompleteRecord(_ lhs: TokMonUsageRecord, than rhs: TokMonUsageRecord) -> Bool {
-    let lhsScore = lhs.outputTokens + lhs.cacheRead + lhs.cacheCreation + lhs.inputTokens
-    let rhsScore = rhs.outputTokens + rhs.cacheRead + rhs.cacheCreation + rhs.inputTokens
-    return lhsScore > rhsScore
-  }
-
   private func claudeUsageKey(_ usage: TokMonUsageRecord) -> String {
     [
       usage.sessionId,
@@ -2134,7 +1948,8 @@ private struct RelaxedObjectLiteralParser {
                 let code = Int(String(characters[index..<index + 4]), radix: 16) else {
             return nil
           }
-          result.append(Character(UnicodeScalar(code)!))
+          guard let scalar = UnicodeScalar(code) else { return nil }
+          result.append(Character(scalar))
           index += 4
         default:
           result.append(escaped)
