@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.5</string>
+	<string>0.2.6</string>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -33,15 +33,15 @@
 	<true/>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>TokMon needs permission to capture the popover window so it can be copied to the clipboard as an image.</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/xiehuacheng/TokMon/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Sec53LN0JTswXG+jHGMcEkIgaDX6VcW3N/GEayxWa+A=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUScheduledCheckInterval</key>
-	<integer>604800</integer>
-	<key>SUAutomaticallyUpdate</key>
-	<false/>
+	<integer>86400</integer>
 </dict>
 </plist>

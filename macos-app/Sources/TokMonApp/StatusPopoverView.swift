@@ -192,6 +192,8 @@ struct StatusPopoverView: View {
         runtime.openSettings()
       }
       HeaderIconButton(systemName: "arrow.up.circle", help: "Check for Updates") {
+        runtime.statusPanel?.orderOut(nil)
+        runtime.stats.popoverDidDisappear()
         runtime.updater.checkForUpdates()
       }
       HeaderIconButton(systemName: "power", help: "Quit TokMon") {
