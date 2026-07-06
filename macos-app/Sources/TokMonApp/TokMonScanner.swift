@@ -4,7 +4,7 @@ import SQLite3
 final class TokMonScanner {
   /// Bumped when scanning semantics change enough that existing usage_records
   /// rows may be incorrect. A mismatch triggers a database rebuild on launch.
-  static let scannerVersion = 2
+  static let scannerVersion = 3
 
   private static let qwenCodeScanStateVersion = "qwen-code-telemetry-v1"
 
@@ -140,6 +140,20 @@ final class TokMonScanner {
       }
     }
 
+    if let source = config.sources["kimi-code"] {
+      let sourcePath = expandedPath(source.path).path
+      if let expandedPaths {
+        let matchingPaths = expandedPaths.filter { $0.hasPrefix(sourcePath) || $0 == sourcePath }
+        if !matchingPaths.isEmpty {
+          count += try scanKimiCode(paths: matchingPaths)
+        } else if paths == nil || paths!.isEmpty {
+          count += try scanKimiCode(directory: expandedPath(source.path))
+        }
+      } else {
+        count += try scanKimiCode(directory: expandedPath(source.path))
+      }
+    }
+
     return count
   }
 
@@ -259,6 +273,25 @@ final class TokMonScanner {
         count += try scanFiles(in: url, fileURLs: nil) { fileURL in
           try scanQwenCodeFile(fileURL, fallbackSessionId: fileURL.deletingPathExtension().lastPathComponent)
         }
+      }
+    }
+    return count
+  }
+
+  private func scanKimiCode(directory: URL) throws -> Int {
+    try scanFiles(in: directory) { fileURL in
+      try scanKimiCodeFile(fileURL, fallbackSessionId: kimiCodeFallbackSessionId(for: fileURL))
+    }
+  }
+
+  private func scanKimiCode(paths: [String]) throws -> Int {
+    var count = 0
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      if isScannableLogFile(url) {
+        count += try scanKimiCodeFile(url, fallbackSessionId: kimiCodeFallbackSessionId(for: url))
+      } else if url.hasDirectoryPath {
+        count += try scanKimiCode(directory: url)
       }
     }
     return count
@@ -715,6 +748,114 @@ final class TokMonScanner {
       model: lastModel == "unknown" ? nil : lastModel,
       startedAt: startedAt,
       lastActiveAt: lastActiveAt,
+      filePath: filePath,
+      projectPath: projectPath,
+    )
+    try database.upsertSessionMetadatas([metadata])
+
+    return count
+  }
+
+  private func scanKimiCodeFile(_ fileURL: URL, fallbackSessionId: String) throws -> Int {
+    let filePath = fileURL.path
+    let attributes = fileAttributes(fileURL)
+    let fileSize = attributes.size
+    let fileMtime = attributes.mtime
+    let state = try database.scanState(filePath: filePath)
+    if let fileMtime,
+       state.offset == fileSize,
+       state.lastMtime == fileMtime {
+      return 0
+    }
+    let shouldRescanFromStart = fileSize < state.offset
+      || (fileSize == state.offset && (fileMtime == nil || state.lastMtime == nil || state.lastMtime != fileMtime))
+    let range = shouldRescanFromStart
+      ? AppendRange(offset: 0, length: fileSize, nextOffset: fileSize)
+      : appendRange(fileURL: fileURL, fileSize: fileSize, offset: state.offset, lastMtime: state.lastMtime)
+    guard let range else {
+      return 0
+    }
+    guard let lines = try? readLines(fileURL, range: range) else {
+      return 0
+    }
+
+    var records: [TokMonUsageRecord] = []
+    let resolvedSessionId = range.offset == 0 ? fallbackSessionId : (state.sessionId ?? fallbackSessionId)
+    var lastModel = range.offset == 0 ? "unknown" : (state.model ?? "unknown")
+    var lastUsageKey = range.offset == 0 ? nil : state.lastUsageKey
+    var firstPrompt: String?
+    var lastPrompt: String?
+    var startedAt: String?
+    var lastActiveAt: String?
+    var nextOffset = range.offset
+
+    for line in lines {
+      guard let object = parseJSONObject(line.text) else {
+        if line.isTerminated {
+          nextOffset = line.nextOffset
+          continue
+        }
+        break
+      }
+      nextOffset = line.nextOffset
+      if line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        continue
+      }
+      if let timestamp = kimiTimestampString(object) {
+        startedAt = startedAt ?? timestamp
+        lastActiveAt = timestamp
+      }
+      if let prompt = kimiUserMessage(object) {
+        firstPrompt = firstPrompt ?? prompt
+        lastPrompt = prompt
+      }
+      guard let record = parseKimiUsageRecord(
+        object,
+        fallbackSessionId: resolvedSessionId,
+        fallbackModel: lastModel,
+      ) else {
+        continue
+      }
+      lastModel = record.model
+      let usageKey = kimiUsageKey(record)
+      if usageKey == lastUsageKey {
+        continue
+      }
+      lastUsageKey = usageKey
+      records.append(record)
+    }
+
+    var count = 0
+    if !records.isEmpty {
+      count = try database.insertUsages(records)
+    }
+
+    try database.setScanState(
+      filePath: filePath,
+      state: TokMonScanState(
+        offset: nextOffset,
+        sessionId: resolvedSessionId,
+        model: lastModel,
+        lastUsageKey: lastUsageKey,
+        lastMtime: fileMtime,
+      ),
+    )
+
+    let sessionState = kimiCodeSessionState(for: fileURL)
+    let projectPath = kimiCodeProjectPath(for: resolvedSessionId, fileURL: fileURL)
+    let title = sessionState?.title ?? sessionState?.lastPrompt
+    let sessionStartedAt = sessionState?.createdAt ?? startedAt
+    let sessionLastActiveAt = sessionState?.updatedAt ?? lastActiveAt
+
+    let metadata = TokMonSessionMetadata(
+      id: resolvedSessionId,
+      source: "kimi-code",
+      title: sessionTitle(sessionName: title, projectPath: projectPath, filePath: filePath, firstPrompt: firstPrompt),
+      firstPrompt: firstPrompt,
+      lastPrompt: lastPrompt ?? firstPrompt,
+      model: lastModel == "unknown" ? nil : lastModel,
+      startedAt: sessionStartedAt,
+      lastActiveAt: sessionLastActiveAt,
       filePath: filePath,
       projectPath: projectPath,
     )
@@ -1626,6 +1767,172 @@ final class TokMonScanner {
       String(intValue(usage["cached_content_token_count"])),
       String(intValue(usage["thoughts_token_count"])),
     ].joined(separator: ":")
+  }
+
+  // MARK: - Kimi Code Helpers
+
+  private func parseKimiUsageRecord(
+    _ object: [String: Any],
+    fallbackSessionId: String,
+    fallbackModel: String,
+  ) -> TokMonUsageRecord? {
+    guard object["type"] as? String == "usage.record",
+          let usage = object["usage"] as? [String: Any] else {
+      return nil
+    }
+
+    let inputOther = intValue(usage["inputOther"])
+    let inputCacheCreation = intValue(usage["inputCacheCreation"])
+    let inputCacheRead = intValue(usage["inputCacheRead"])
+    let outputTokens = intValue(usage["output"])
+    let reasoningTokens = intValue(usage["reasoning"])
+    guard inputOther != 0 || inputCacheCreation != 0 || inputCacheRead != 0 || outputTokens != 0 || reasoningTokens != 0 else {
+      return nil
+    }
+
+    let model = normalizedPrompt(stringValue(object["model"])) ?? fallbackModel
+    let createdAt = kimiTimestampString(object) ?? isoTimestampFormatter.string(from: Date())
+    return TokMonUsageRecord(
+      source: "kimi-code",
+      sessionId: fallbackSessionId,
+      model: model,
+      inputTokens: inputOther + inputCacheCreation,
+      outputTokens: outputTokens,
+      cacheCreation: inputCacheCreation,
+      cacheRead: inputCacheRead,
+      reasoningTokens: reasoningTokens,
+      createdAt: createdAt,
+    )
+  }
+
+  private func kimiUserMessage(_ object: [String: Any]) -> String? {
+    if object["type"] as? String == "turn.prompt",
+       let input = object["input"] as? [[String: Any]] {
+      let text = input.compactMap { part -> String? in
+        guard stringValue(part["type"]) == "text" else { return nil }
+        return stringValue(part["text"])
+      }.joined(separator: "\n")
+      return normalizedPrompt(text)
+    }
+
+    if object["type"] as? String == "context.append_message",
+       let message = object["message"] as? [String: Any],
+       stringValue(message["role"]) == "user",
+       let content = message["content"] as? [[String: Any]] {
+      let text = content.compactMap { part -> String? in
+        guard stringValue(part["type"]) == "text" else { return nil }
+        return stringValue(part["text"])
+      }.joined(separator: "\n")
+      return normalizedKimiPrompt(text)
+    }
+
+    return nil
+  }
+
+  private func normalizedKimiPrompt(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty else {
+      return nil
+    }
+    if trimmed.hasPrefix("<") {
+      guard let endRange = trimmed.range(of: "</") else {
+        return nil
+      }
+      let afterTag = String(trimmed[endRange.upperBound...])
+      guard let closeRange = afterTag.range(of: ">") else {
+        return nil
+      }
+      let inner = String(afterTag[closeRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+      return inner.isEmpty ? nil : inner
+    }
+    return trimmed
+  }
+
+  private func kimiTimestampString(_ object: [String: Any]) -> String? {
+    let time = int64Value(object["time"])
+    guard time > 0 else {
+      return nil
+    }
+    return isoTimestamp(millisecondsSince1970: time)
+  }
+
+  private func kimiUsageKey(_ record: TokMonUsageRecord) -> String {
+    [
+      record.createdAt,
+      record.model,
+      String(record.inputTokens),
+      String(record.outputTokens),
+      String(record.cacheRead),
+      String(record.cacheCreation),
+      String(record.reasoningTokens),
+    ].joined(separator: ":")
+  }
+
+  private func kimiCodeFallbackSessionId(for fileURL: URL) -> String {
+    let components = fileURL.pathComponents
+    if let index = components.lastIndex(where: { $0.hasPrefix("session_") }) {
+      return components[index]
+    }
+    return fileURL.deletingPathExtension().lastPathComponent
+  }
+
+  private func kimiCodeSessionState(for fileURL: URL) -> (title: String?, lastPrompt: String?, createdAt: String?, updatedAt: String?)? {
+    let components = fileURL.pathComponents
+    guard let agentsIndex = components.lastIndex(of: "agents"), agentsIndex > 0 else {
+      return nil
+    }
+    let sessionDir = URL(fileURLWithPath: components[..<agentsIndex].joined(separator: "/"))
+    let stateURL = sessionDir.appendingPathComponent("state.json")
+    guard let data = try? Data(contentsOf: stateURL),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    return (
+      title: normalizedPrompt(stringValue(object["title"])),
+      lastPrompt: normalizedPrompt(stringValue(object["lastPrompt"])),
+      createdAt: stringValue(object["createdAt"]),
+      updatedAt: stringValue(object["updatedAt"])
+    )
+  }
+
+  private struct KimiSessionIndexCacheEntry {
+    let signature: String
+    let projectPath: String?
+  }
+
+  private var kimiCodeSessionIndexCache: [String: KimiSessionIndexCacheEntry] = [:]
+
+  private func kimiCodeProjectPath(for sessionId: String, fileURL: URL) -> String? {
+    let components = fileURL.pathComponents
+    guard let sessionsIndex = components.lastIndex(of: "sessions"), sessionsIndex > 0 else {
+      return nil
+    }
+    let kimiRoot = URL(fileURLWithPath: components[..<sessionsIndex].joined(separator: "/"))
+    let indexURL = kimiRoot.appendingPathComponent("session_index.jsonl")
+
+    let attributes = fileAttributes(indexURL)
+    let signature = "\(attributes.size):\(attributes.mtime ?? "missing")"
+
+    let cacheKey = indexURL.path
+    if let cached = kimiCodeSessionIndexCache[cacheKey], cached.signature == signature {
+      return cached.projectPath
+    }
+
+    guard let text = try? String(contentsOf: indexURL, encoding: .utf8) else {
+      kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: nil)
+      return nil
+    }
+    for line in text.components(separatedBy: "\n") {
+      guard let object = parseJSONObject(line),
+            normalizedPrompt(stringValue(object["sessionId"])) == sessionId,
+            let workDir = normalizedPrompt(stringValue(object["workDir"])) else {
+        continue
+      }
+      kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: workDir)
+      return workDir
+    }
+    kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: nil)
+    return nil
   }
 
   private func claudeUsageKey(_ usage: TokMonUsageRecord) -> String {

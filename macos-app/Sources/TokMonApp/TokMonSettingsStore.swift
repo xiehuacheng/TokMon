@@ -64,6 +64,7 @@ final class TokMonSettingsStore: ObservableObject {
 struct TokMonSettingsDraft: Equatable {
   var claudePath = TokMonConfig.default.sources["claude-code"]?.path ?? "~/.claude/projects"
   var codexPath = TokMonConfig.default.sources["codex"]?.path ?? "~/.codex/sessions"
+  var kimiCodePath = TokMonConfig.default.sources["kimi-code"]?.path ?? "~/.kimi-code"
   var openCodePath = TokMonConfig.default.sources["opencode"]?.path ?? "~/.local/share/opencode"
   var qwenCodePath = TokMonConfig.default.sources["qwen-code"]?.path ?? "~/.qwen/projects"
   var source = TokMonUIState.default.source

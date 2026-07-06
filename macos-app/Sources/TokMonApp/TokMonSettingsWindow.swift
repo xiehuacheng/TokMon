@@ -11,6 +11,7 @@ struct TokMonSettingsWindow: View {
     ("", "All Sources"),
     ("claude-code", "Claude Code"),
     ("codex", "Codex"),
+    ("kimi-code", "Kimi Code"),
     ("opencode", "OpenCode"),
     ("qwen-code", "Qwen Code"),
   ]
@@ -53,6 +54,10 @@ struct TokMonSettingsWindow: View {
               }
               FieldRow("Codex") {
                 TextField("~/.codex/sessions", text: $store.draft.codexPath)
+                  .settingsTextField(width: 430)
+              }
+              FieldRow("Kimi Code") {
+                TextField("~/.kimi-code", text: $store.draft.kimiCodePath)
                   .settingsTextField(width: 430)
               }
               FieldRow("OpenCode") {

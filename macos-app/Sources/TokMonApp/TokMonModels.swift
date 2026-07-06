@@ -13,6 +13,7 @@ struct TokMonConfig: Codable, Equatable {
     sources: [
       "claude-code": TokMonSourceConfig(path: "~/.claude/projects"),
       "codex": TokMonSourceConfig(path: "~/.codex"),
+      "kimi-code": TokMonSourceConfig(path: "~/.kimi-code"),
       "opencode": TokMonSourceConfig(path: "~/.local/share/opencode"),
       "qwen-code": TokMonSourceConfig(path: "~/.qwen/projects"),
     ],
@@ -977,6 +978,8 @@ struct TokMonDashboardState: Decodable {
       "Claude Code"
     case "codex":
       "Codex"
+    case "kimi-code":
+      "Kimi Code"
     case "opencode":
       "OpenCode"
     case "qwen-code":

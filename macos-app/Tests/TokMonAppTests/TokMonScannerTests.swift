@@ -1861,6 +1861,223 @@ import Testing
   #expect(record.reasoningTokens == 13)
 }
 
+@Test func scannerImportsKimiCodeUsageFromWireLogs() throws {
+  let dataDir = try makeTokMonTempDir()
+  let kimiRoot = dataDir.appendingPathComponent(".kimi-code", isDirectory: true)
+  let sessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_test", isDirectory: true)
+    .appendingPathComponent("session_abc123", isDirectory: true)
+  let agentsDir = sessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+  let logURL = agentsDir.appendingPathComponent("wire.jsonl")
+
+  try """
+  {"sessionId":"session_abc123","sessionDir":"\(sessionsDir.path)","workDir":"/Users/orange/Desktop/Project/Test"}
+  """.write(to: kimiRoot.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+  try """
+  {"createdAt":"2026-05-14T01:00:00.000Z","updatedAt":"2026-05-14T01:01:00.000Z","title":"Test session","lastPrompt":"Plan the test"}
+  """.write(to: sessionsDir.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+
+  try writeJSONL(
+    [
+      [
+        "type": "turn.prompt",
+        "input": [
+          ["type": "text", "text": "Plan the test"],
+        ],
+        "time": 1_778_720_400_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_410_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 100,
+        output: 50,
+        inputCacheRead: 200,
+        inputCacheCreation: 10,
+      ),
+    ],
+    to: logURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "kimi-code": TokMonSourceConfig(path: kimiRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.source == "kimi-code")
+  #expect(record.sessionId == "session_abc123")
+  #expect(record.model == "kimi-code/kimi-for-coding")
+  #expect(record.inputTokens == 110)
+  #expect(record.outputTokens == 50)
+  #expect(record.cacheRead == 200)
+  #expect(record.cacheCreation == 10)
+  #expect(record.createdAt == "2026-05-14T01:00:10.000Z")
+
+  let metadata = try #require(try database.sessionMetadata(source: "kimi-code", id: "session_abc123"))
+  #expect(metadata.title == "Test session - Plan the test")
+  #expect(metadata.firstPrompt == "Plan the test")
+  #expect(metadata.projectPath == "/Users/orange/Desktop/Project/Test")
+}
+
+@Test func scannerAppendsKimiCodeWireLogIncrementally() throws {
+  let dataDir = try makeTokMonTempDir()
+  let kimiRoot = dataDir.appendingPathComponent(".kimi-code", isDirectory: true)
+  let sessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_test", isDirectory: true)
+    .appendingPathComponent("session_incremental", isDirectory: true)
+  let agentsDir = sessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+  let logURL = agentsDir.appendingPathComponent("wire.jsonl")
+
+  try """
+  {"sessionId":"session_incremental","sessionDir":"\(sessionsDir.path)","workDir":"/Users/orange/Desktop/Project/Incremental"}
+  """.write(to: kimiRoot.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+  try """
+  {"createdAt":"2026-05-14T02:00:00.000Z","updatedAt":"2026-05-14T02:00:00.000Z","title":"Incremental session"}
+  """.write(to: sessionsDir.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+
+  try writeJSONL(
+    [
+      [
+        "type": "turn.prompt",
+        "input": [
+          ["type": "text", "text": "First prompt"],
+        ],
+        "time": 1_778_720_400_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_410_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      ),
+    ],
+    to: logURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "kimi-code": TokMonSourceConfig(path: kimiRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  try FileHandle.seekToEndAndWrite(
+    JSONLine(kimiUsageRecordLine(
+      time: 1_778_720_420_000,
+      model: "kimi-code/kimi-for-coding",
+      inputOther: 20,
+      output: 8,
+      inputCacheRead: 4,
+      inputCacheCreation: 2,
+    )),
+    to: logURL,
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 2)
+  #expect(records.map(\.inputTokens) == [10, 22])
+  #expect(records.map(\.outputTokens) == [5, 8])
+  #expect(records.map(\.cacheRead) == [0, 4])
+  #expect(records.map(\.cacheCreation) == [0, 2])
+}
+
+@Test func scannerExtractsKimiCodePromptFromContextAppendMessage() throws {
+  let dataDir = try makeTokMonTempDir()
+  let kimiRoot = dataDir.appendingPathComponent(".kimi-code", isDirectory: true)
+  let sessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_context", isDirectory: true)
+    .appendingPathComponent("session_ctx", isDirectory: true)
+  let agentsDir = sessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+  let logURL = agentsDir.appendingPathComponent("wire.jsonl")
+
+  try """
+  {"sessionId":"session_ctx","sessionDir":"\(sessionsDir.path)","workDir":"/Users/orange/Desktop/Project/Context"}
+  """.write(to: kimiRoot.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+
+  try writeJSONL(
+    [
+      [
+        "type": "context.append_message",
+        "message": [
+          "role": "user",
+          "content": [
+            ["type": "text", "text": "<git-context>\nWorking directory: /Users/orange/Desktop/Project/Context\n</git-context>\n\nSummarize the project"],
+          ],
+        ],
+        "time": 1_778_720_400_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_410_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 30,
+        output: 15,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      ),
+    ],
+    to: logURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "kimi-code": TokMonSourceConfig(path: kimiRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let metadata = try #require(try database.sessionMetadata(source: "kimi-code", id: "session_ctx"))
+  #expect(metadata.title == "Context - Summarize the project")
+  #expect(metadata.firstPrompt == "Summarize the project")
+}
+
+private func kimiUsageRecordLine(
+  time: Int64,
+  model: String,
+  inputOther: Int,
+  output: Int,
+  inputCacheRead: Int,
+  inputCacheCreation: Int,
+) -> [String: Any] {
+  [
+    "type": "usage.record",
+    "model": model,
+    "usage": [
+      "inputOther": inputOther,
+      "output": output,
+      "inputCacheRead": inputCacheRead,
+      "inputCacheCreation": inputCacheCreation,
+    ],
+    "usageScope": "turn",
+    "time": time,
+  ]
+}
+
 @Test func scannerContinuesAfterUnreadableJsonlFile() throws {
   let dataDir = try makeTokMonTempDir()
   let sessionsDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)

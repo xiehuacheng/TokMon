@@ -631,10 +631,12 @@ import Testing
 private func emptyTokMonConfig(dataDir: URL) throws -> TokMonConfig {
   let claudeDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
   let codexDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
+  let kimiCodeDir = dataDir.appendingPathComponent("kimi-code", isDirectory: true)
   let openCodeDir = dataDir.appendingPathComponent("opencode", isDirectory: true)
   let qwenCodeDir = dataDir.appendingPathComponent("qwen-projects", isDirectory: true)
   try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: kimiCodeDir, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: openCodeDir, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: qwenCodeDir, withIntermediateDirectories: true)
   return TokMonConfig(
@@ -642,6 +644,7 @@ private func emptyTokMonConfig(dataDir: URL) throws -> TokMonConfig {
     sources: [
       "claude-code": TokMonSourceConfig(path: claudeDir.path),
       "codex": TokMonSourceConfig(path: codexDir.path),
+      "kimi-code": TokMonSourceConfig(path: kimiCodeDir.path),
       "opencode": TokMonSourceConfig(path: openCodeDir.path),
       "qwen-code": TokMonSourceConfig(path: qwenCodeDir.path),
     ],

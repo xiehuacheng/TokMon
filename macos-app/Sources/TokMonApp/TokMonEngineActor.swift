@@ -14,6 +14,7 @@ actor TokMonEngineActor {
     return TokMonSettingsDraft(
       claudePath: config.sources["claude-code"]?.path ?? TokMonSettingsDraft().claudePath,
       codexPath: config.sources["codex"]?.path ?? TokMonSettingsDraft().codexPath,
+      kimiCodePath: config.sources["kimi-code"]?.path ?? TokMonSettingsDraft().kimiCodePath,
       openCodePath: config.sources["opencode"]?.path ?? TokMonSettingsDraft().openCodePath,
       qwenCodePath: config.sources["qwen-code"]?.path ?? TokMonSettingsDraft().qwenCodePath,
       source: uiState.source,
@@ -36,6 +37,7 @@ actor TokMonEngineActor {
     var config = try engine.configStore.loadConfig()
     config.sources["claude-code"] = TokMonSourceConfig(path: draft.claudePath)
     config.sources["codex"] = TokMonSourceConfig(path: draft.codexPath)
+    config.sources["kimi-code"] = TokMonSourceConfig(path: draft.kimiCodePath)
     config.sources["opencode"] = TokMonSourceConfig(path: draft.openCodePath)
     config.sources["qwen-code"] = TokMonSourceConfig(path: draft.qwenCodePath)
     try engine.configStore.saveConfig(config)

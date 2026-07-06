@@ -26,6 +26,9 @@ enum TokMonGlass {
   /// Warm amber-orange — distinct source color for OpenCode.
   static let opencodeAmber = Color(nsColor: NSColor(red: 0.780, green: 0.480, blue: 0.180, alpha: 1))
 
+  /// Violet purple — distinct source color for Kimi Code.
+  static let kimiPurple = Color(nsColor: NSColor(red: 0.550, green: 0.300, blue: 0.750, alpha: 1))
+
   /// Deep rose — errors, zero/negative deltas, and Qwen Code.
   static let danger = Color(nsColor: NSColor(red: 0.624, green: 0.071, blue: 0.224, alpha: 1))
 

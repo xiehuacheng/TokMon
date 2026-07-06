@@ -22,6 +22,7 @@ import Testing
   try await store.load()
   store.draft.claudePath = "~/custom-claude"
   store.draft.codexPath = "~/custom-codex"
+  store.draft.kimiCodePath = "~/custom-kimi"
   store.draft.openCodePath = "~/custom-opencode"
   store.draft.qwenCodePath = "~/custom-qwen"
   store.draft.source = "codex"
@@ -47,6 +48,7 @@ import Testing
   #expect(config.port == 3399)
   #expect(config.sources["claude-code"]?.path == "~/custom-claude")
   #expect(config.sources["codex"]?.path == "~/custom-codex")
+  #expect(config.sources["kimi-code"]?.path == "~/custom-kimi")
   #expect(config.sources["opencode"]?.path == "~/custom-opencode")
   #expect(config.sources["qwen-code"]?.path == "~/custom-qwen")
   #expect(config.sources["future-source"]?.path == "~/future")
@@ -105,10 +107,12 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   let claudeRoot = dataDir.appendingPathComponent("claude", isDirectory: true)
   let sourceRoot = dataDir.appendingPathComponent("codex", isDirectory: true)
+  let kimiCodeRoot = dataDir.appendingPathComponent("kimi", isDirectory: true)
   let openCodeRoot = dataDir.appendingPathComponent("opencode", isDirectory: true)
   let qwenCodeRoot = dataDir.appendingPathComponent("qwen", isDirectory: true)
   try FileManager.default.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: kimiCodeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: openCodeRoot, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: qwenCodeRoot, withIntermediateDirectories: true)
   try """
@@ -120,6 +124,7 @@ import Testing
     sources: [
       "claude-code": TokMonSourceConfig(path: claudeRoot.path),
       "codex": TokMonSourceConfig(path: sourceRoot.path),
+      "kimi-code": TokMonSourceConfig(path: kimiCodeRoot.path),
       "opencode": TokMonSourceConfig(path: openCodeRoot.path),
       "qwen-code": TokMonSourceConfig(path: qwenCodeRoot.path),
     ],

@@ -801,6 +801,8 @@ struct StatusPopoverView: View {
       "Claude Code"
     case "codex":
       "Codex"
+    case "kimi-code":
+      "Kimi Code"
     case "opencode":
       "OpenCode"
     case "qwen-code":
@@ -816,6 +818,8 @@ struct StatusPopoverView: View {
       TokMonGlass.accent
     case "codex":
       TokMonGlass.codexTeal
+    case "kimi-code":
+      TokMonGlass.kimiPurple
     case "opencode":
       TokMonGlass.opencodeAmber
     case "qwen-code":
