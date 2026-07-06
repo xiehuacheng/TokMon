@@ -43,7 +43,6 @@ final class TokMonStatsStore: ObservableObject {
   private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
-  private var timerTask: Task<Void, Never>?
   private let defaultRecordsLimit = 20
   private let defaultUsageSessionsLimit = 50
   private var recordsLimit = 20
@@ -84,24 +83,9 @@ final class TokMonStatsStore: ObservableObject {
     usesNativeEngine && !snapshot.usageSessions.isEmpty && snapshot.usageSessions.count >= usageSessionsLimit
   }
 
-  func startObserving() {
-    if timerTask == nil {
-      timerTask = Task { [weak self] in
-        while !Task.isCancelled {
-          guard let self else { return }
-          let interval = self.adaptiveRefreshInterval()
-          try? await Task.sleep(nanoseconds: interval)
-          guard !Task.isCancelled else { return }
-          await self.refresh()
-        }
-      }
-    }
-  }
-
-  private func adaptiveRefreshInterval() -> UInt64 {
-    guard isPopoverVisible else { return 30_000_000_000 }
-    return refreshDelay
-  }
+  /// Retained for API compatibility. TokMon is now event-driven, so there is
+  /// no periodic polling timer to start.
+  func startObserving() {}
 
   private func shouldRefresh() async -> Bool {
     guard let nativeEngineActor else { return false }
@@ -116,6 +100,7 @@ final class TokMonStatsStore: ObservableObject {
 
   func popoverDidAppear() {
     isPopoverVisible = true
+    requestRefresh()
   }
 
   func popoverDidDisappear() {
@@ -125,10 +110,9 @@ final class TokMonStatsStore: ObservableObject {
     clearSelectedUsageSession()
   }
 
-  func stopObserving() {
-    timerTask?.cancel()
-    timerTask = nil
-  }
+  /// Retained for API compatibility. TokMon is now event-driven, so there is
+  /// no periodic polling timer to stop.
+  func stopObserving() {}
 
   func refresh() async {
     guard await shouldRefresh() else { return }
@@ -136,7 +120,8 @@ final class TokMonStatsStore: ObservableObject {
   }
 
   func refreshWithScan() async {
-    guard await shouldRefresh() else { return }
+    guard let nativeEngineActor else { return }
+    lastRefreshedDataVersion = await nativeEngineActor.databaseDataVersion()
     await refresh(scan: true)
   }
 
@@ -246,11 +231,6 @@ final class TokMonStatsStore: ObservableObject {
     selectedUsageSession = nil
     snapshot.selectedUsageSession = nil
     snapshot.selectedSessionRecords = []
-  }
-
-  private var refreshDelay: UInt64 {
-    let milliseconds = max(snapshot.dashboardState?.refreshRate ?? 3000, 1000)
-    return UInt64(milliseconds) * 1_000_000
   }
 
   private func requestRefresh() {

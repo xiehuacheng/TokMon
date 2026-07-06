@@ -4,7 +4,7 @@ import SQLite3
 final class TokMonScanner {
   /// Bumped when scanning semantics change enough that existing usage_records
   /// rows may be incorrect. A mismatch triggers a database rebuild on launch.
-  static let scannerVersion = 3
+  static let scannerVersion = 5
 
   private static let qwenCodeScanStateVersion = "qwen-code-telemetry-v1"
 
@@ -280,7 +280,8 @@ final class TokMonScanner {
 
   private func scanKimiCode(directory: URL) throws -> Int {
     try scanFiles(in: directory) { fileURL in
-      try scanKimiCodeFile(fileURL, fallbackSessionId: kimiCodeFallbackSessionId(for: fileURL))
+      guard isKimiCodeWireLogFile(fileURL) else { return 0 }
+      return try scanKimiCodeFile(fileURL, fallbackSessionId: kimiCodeFallbackSessionId(for: fileURL))
     }
   }
 
@@ -288,13 +289,17 @@ final class TokMonScanner {
     var count = 0
     for path in paths {
       let url = URL(fileURLWithPath: path)
-      if isScannableLogFile(url) {
+      if isScannableLogFile(url), isKimiCodeWireLogFile(url) {
         count += try scanKimiCodeFile(url, fallbackSessionId: kimiCodeFallbackSessionId(for: url))
       } else if url.hasDirectoryPath {
         count += try scanKimiCode(directory: url)
       }
     }
     return count
+  }
+
+  private func isKimiCodeWireLogFile(_ fileURL: URL) -> Bool {
+    fileURL.lastPathComponent == "wire.jsonl" && fileURL.pathComponents.contains("agents")
   }
 
   // MARK: - File Enumeration
@@ -1897,7 +1902,7 @@ final class TokMonScanner {
 
   private struct KimiSessionIndexCacheEntry {
     let signature: String
-    let projectPath: String?
+    let projectPaths: [String: String]
   }
 
   private var kimiCodeSessionIndexCache: [String: KimiSessionIndexCacheEntry] = [:]
@@ -1915,24 +1920,22 @@ final class TokMonScanner {
 
     let cacheKey = indexURL.path
     if let cached = kimiCodeSessionIndexCache[cacheKey], cached.signature == signature {
-      return cached.projectPath
+      return cached.projectPaths[sessionId]
     }
 
-    guard let text = try? String(contentsOf: indexURL, encoding: .utf8) else {
-      kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: nil)
-      return nil
-    }
-    for line in text.components(separatedBy: "\n") {
-      guard let object = parseJSONObject(line),
-            normalizedPrompt(stringValue(object["sessionId"])) == sessionId,
-            let workDir = normalizedPrompt(stringValue(object["workDir"])) else {
-        continue
+    var projectPaths: [String: String] = [:]
+    if let text = try? String(contentsOf: indexURL, encoding: .utf8) {
+      for line in text.components(separatedBy: "\n") {
+        guard let object = parseJSONObject(line),
+              let cachedSessionId = normalizedPrompt(stringValue(object["sessionId"])),
+              let workDir = normalizedPrompt(stringValue(object["workDir"])) else {
+          continue
+        }
+        projectPaths[cachedSessionId] = workDir
       }
-      kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: workDir)
-      return workDir
     }
-    kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPath: nil)
-    return nil
+    kimiCodeSessionIndexCache[cacheKey] = KimiSessionIndexCacheEntry(signature: signature, projectPaths: projectPaths)
+    return projectPaths[sessionId]
   }
 
   private func claudeUsageKey(_ usage: TokMonUsageRecord) -> String {

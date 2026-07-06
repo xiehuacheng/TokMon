@@ -90,6 +90,7 @@ struct TokMonUIState: Codable, Equatable {
   var interval: String
   var activeSeries: String
   var menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly
+  /// Deprecated: TokMon refreshes are now event-driven. Kept for config compatibility.
   var refreshRate: Int
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]
@@ -884,6 +885,7 @@ struct TokMonDashboardState: Decodable {
   let rangeLabel: String?
   let rangeHours: Int?
   let rangeDays: Int?
+  /// Deprecated: TokMon refreshes are now event-driven. Kept for snapshot compatibility.
   let refreshRate: Int
   let activeSeries: String
   let menuBarDisplayMode: TokMonMenuBarDisplayMode

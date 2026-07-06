@@ -628,6 +628,143 @@ import Testing
 }
 
 
+@MainActor
+@Test func statsStoreStartObservingDoesNotSchedulePeriodicRefresh() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
+  try configStore.saveUIState(TokMonUIState(
+    source: "",
+    from: "",
+    to: "",
+    rangeLabel: "today",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "session-1",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 1,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:10:00.000Z",
+  ))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonStatsStore(
+    engine: engine,
+    nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
+  )
+
+  store.startObserving()
+  try await Task.sleep(for: .milliseconds(300))
+  #expect(store.snapshot.summary == nil)
+
+  await store.refresh()
+  #expect(store.snapshot.summary?.total.totalRequests == 1)
+}
+
+@MainActor
+@Test func statsStoreRefreshWithScanAlwaysRefreshesEvenIfDataVersionUnchanged() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
+  try configStore.saveUIState(TokMonUIState(
+    source: "",
+    from: "",
+    to: "",
+    rangeLabel: "today",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "session-1",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 1,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:10:00.000Z",
+  ))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let nowProvider = MutableDateProvider(makeLocalDate("2026-05-14 10:00:00"))
+  let store = TokMonStatsStore(
+    engine: engine,
+    nowProvider: { nowProvider.date },
+  )
+
+  await store.refresh()
+  let firstUpdatedAt = store.snapshot.updatedAt
+
+  nowProvider.date = makeLocalDate("2026-05-14 10:05:00")
+  await store.refreshWithScan()
+
+  #expect(store.snapshot.updatedAt == nowProvider.date)
+  #expect(store.snapshot.updatedAt != firstUpdatedAt)
+}
+
+@MainActor
+@Test func statsStoreRefreshesWhenPopoverAppears() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
+  try configStore.saveUIState(TokMonUIState(
+    source: "",
+    from: "",
+    to: "",
+    rangeLabel: "today",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "hour",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  _ = try database.insertUsage(TokMonUsageRecord(
+    source: "codex",
+    sessionId: "session-1",
+    model: "gpt-test",
+    inputTokens: 10,
+    outputTokens: 1,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    createdAt: "2026-05-14T01:10:00.000Z",
+  ))
+  let engine = TokMonEngine(configStore: configStore, database: database)
+  let store = TokMonStatsStore(
+    engine: engine,
+    nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
+  )
+
+  store.popoverDidAppear()
+  try await Task.sleep(for: .milliseconds(300))
+
+  #expect(store.snapshot.summary?.total.totalRequests == 1)
+  #expect(store.snapshot.updatedAt != nil)
+}
+
 private func emptyTokMonConfig(dataDir: URL) throws -> TokMonConfig {
   let claudeDir = dataDir.appendingPathComponent("claude-projects", isDirectory: true)
   let codexDir = dataDir.appendingPathComponent("codex-sessions", isDirectory: true)
@@ -649,4 +786,12 @@ private func emptyTokMonConfig(dataDir: URL) throws -> TokMonConfig {
       "qwen-code": TokMonSourceConfig(path: qwenCodeDir.path),
     ],
   )
+}
+
+private final class MutableDateProvider: @unchecked Sendable {
+  var date: Date
+
+  init(_ date: Date) {
+    self.date = date
+  }
 }

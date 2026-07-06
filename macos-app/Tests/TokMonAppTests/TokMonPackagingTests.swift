@@ -1057,12 +1057,13 @@ import Testing
   let store = try String(contentsOf: storeURL, encoding: .utf8)
   let main = try String(contentsOf: mainURL, encoding: .utf8)
 
-  let observingSetup = store.components(separatedBy: "func stopObserving()").first ?? store
-  #expect(!observingSetup.contains("requestRefresh()"))
+  // startObserving is now a no-op; the initial refresh comes from the runtime
+  // launch path, not from a timer scheduled at observation setup time.
+  #expect(store.contains("func startObserving() {}"))
   #expect(main.contains("await runtime.stats.refreshWithScan()"))
 }
 
-@Test func statsObservationScansAndRefreshesAllDataForTimerTicks() throws {
+@Test func statsObservationIsEventDrivenWithoutPeriodicTimer() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -1073,10 +1074,11 @@ import Testing
     .appendingPathComponent("TokMonStatsStore.swift")
   let store = try String(contentsOf: storeURL, encoding: .utf8)
 
-  let observingSetup = store.components(separatedBy: "func stopObserving()").first ?? store
-  #expect(observingSetup.contains("await self.refresh()"))
-  #expect(!observingSetup.contains("await self.refreshCurrentRange()"))
-  #expect(store.contains("func refreshCurrentRange() async"))
+  #expect(!store.contains("private var timerTask:"))
+  #expect(!store.contains("adaptiveRefreshInterval"))
+  #expect(!store.contains("refreshDelay"))
+  #expect(store.contains("func refresh() async"))
+  #expect(store.contains("func refreshWithScan() async"))
   #expect(store.contains("nativeEngineActor.refreshStats("))
 }
 

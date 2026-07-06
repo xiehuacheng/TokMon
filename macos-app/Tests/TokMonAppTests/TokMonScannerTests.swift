@@ -2056,6 +2056,167 @@ import Testing
   #expect(metadata.firstPrompt == "Summarize the project")
 }
 
+@Test func scannerSkipsNonWireKimiCodeJsonlFiles() throws {
+  let dataDir = try makeTokMonTempDir()
+  let kimiRoot = dataDir.appendingPathComponent(".kimi-code", isDirectory: true)
+  let sessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_test", isDirectory: true)
+    .appendingPathComponent("session_real", isDirectory: true)
+  let agentsDir = sessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+  let logURL = agentsDir.appendingPathComponent("wire.jsonl")
+
+  try """
+  {"sessionId":"session_real","sessionDir":"\(sessionsDir.path)","workDir":"/Users/orange/Desktop/Project/Real"}
+  """.write(to: kimiRoot.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+
+  let userHistoryDir = kimiRoot.appendingPathComponent("user-history", isDirectory: true)
+  try FileManager.default.createDirectory(at: userHistoryDir, withIntermediateDirectories: true)
+  try """
+  {"content":"/model"}
+  {"content":"/permission"}
+  """.write(to: userHistoryDir.appendingPathComponent("209a4e8eb7d305b9bf2979053bc25966.jsonl"), atomically: true, encoding: .utf8)
+
+  try """
+  {"createdAt":"2026-05-14T01:00:00.000Z","updatedAt":"2026-05-14T01:01:00.000Z","title":"Real session","lastPrompt":"Plan the test"}
+  """.write(to: sessionsDir.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+
+  try writeJSONL(
+    [
+      [
+        "type": "turn.prompt",
+        "input": [
+          ["type": "text", "text": "Plan the test"],
+        ],
+        "time": 1_778_720_400_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_410_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 100,
+        output: 50,
+        inputCacheRead: 200,
+        inputCacheCreation: 10,
+      ),
+    ],
+    to: logURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "kimi-code": TokMonSourceConfig(path: kimiRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 1)
+
+  let records = try database.allUsageRecords()
+  #expect(records.count == 1)
+  #expect(records.first?.sessionId == "session_real")
+
+  #expect(try database.sessionMetadata(source: "kimi-code", id: "session_real") != nil)
+  #expect(try database.sessionMetadata(source: "kimi-code", id: "session_index") == nil)
+  #expect(try database.sessionMetadata(source: "kimi-code", id: "session_index.jsonl") == nil)
+  #expect(try database.sessionMetadata(source: "kimi-code", id: "209a4e8eb7d305b9bf2979053bc25966") == nil)
+}
+
+@Test func scannerResolvesDistinctKimiCodeProjectPathsAcrossSessions() throws {
+  let dataDir = try makeTokMonTempDir()
+  let kimiRoot = dataDir.appendingPathComponent(".kimi-code", isDirectory: true)
+  let firstSessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_first", isDirectory: true)
+    .appendingPathComponent("session_first", isDirectory: true)
+  let firstAgentsDir = firstSessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: firstAgentsDir, withIntermediateDirectories: true)
+  let firstLogURL = firstAgentsDir.appendingPathComponent("wire.jsonl")
+
+  let secondSessionsDir = kimiRoot
+    .appendingPathComponent("sessions", isDirectory: true)
+    .appendingPathComponent("wd_second", isDirectory: true)
+    .appendingPathComponent("session_second", isDirectory: true)
+  let secondAgentsDir = secondSessionsDir.appendingPathComponent("agents/main", isDirectory: true)
+  try FileManager.default.createDirectory(at: secondAgentsDir, withIntermediateDirectories: true)
+  let secondLogURL = secondAgentsDir.appendingPathComponent("wire.jsonl")
+
+  try """
+  {"sessionId":"session_first","sessionDir":"\(firstSessionsDir.path)","workDir":"/Users/orange/Desktop/Project/First"}
+  {"sessionId":"session_second","sessionDir":"\(secondSessionsDir.path)","workDir":"/Users/orange/Desktop/Project/Second"}
+  """.write(to: kimiRoot.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
+
+  try """
+  {"createdAt":"2026-05-14T01:00:00.000Z","updatedAt":"2026-05-14T01:01:00.000Z","title":"First session"}
+  """.write(to: firstSessionsDir.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+  try """
+  {"createdAt":"2026-05-14T02:00:00.000Z","updatedAt":"2026-05-14T02:01:00.000Z","title":"Second session"}
+  """.write(to: secondSessionsDir.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+
+  try writeJSONL(
+    [
+      [
+        "type": "turn.prompt",
+        "input": [
+          ["type": "text", "text": "First prompt"],
+        ],
+        "time": 1_778_720_400_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_410_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      ),
+    ],
+    to: firstLogURL,
+  )
+
+  try writeJSONL(
+    [
+      [
+        "type": "turn.prompt",
+        "input": [
+          ["type": "text", "text": "Second prompt"],
+        ],
+        "time": 1_778_720_500_000,
+      ],
+      kimiUsageRecordLine(
+        time: 1_778_720_510_000,
+        model: "kimi-code/kimi-for-coding",
+        inputOther: 20,
+        output: 8,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      ),
+    ],
+    to: secondLogURL,
+  )
+
+  let database = try TokMonDatabase(appDataDir: dataDir)
+  let scanner = TokMonScanner(database: database)
+  let config = TokMonConfig(
+    port: 3388,
+    sources: [
+      "kimi-code": TokMonSourceConfig(path: kimiRoot.path),
+    ],
+  )
+
+  #expect(try scanner.scan(config: config) == 2)
+
+  let firstMetadata = try #require(try database.sessionMetadata(source: "kimi-code", id: "session_first"))
+  let secondMetadata = try #require(try database.sessionMetadata(source: "kimi-code", id: "session_second"))
+
+  #expect(firstMetadata.projectPath == "/Users/orange/Desktop/Project/First")
+  #expect(secondMetadata.projectPath == "/Users/orange/Desktop/Project/Second")
+  #expect(firstMetadata.title == "First session - First prompt")
+  #expect(secondMetadata.title == "Second session - Second prompt")
+}
+
 private func kimiUsageRecordLine(
   time: Int64,
   model: String,

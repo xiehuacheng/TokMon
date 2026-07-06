@@ -16,15 +16,6 @@ struct TokMonSettingsWindow: View {
     ("qwen-code", "Qwen Code"),
   ]
 
-  private let refreshRateOptions = [
-    (1000, "1s"),
-    (3000, "3s"),
-    (5000, "5s"),
-    (10000, "10s"),
-    (30000, "30s"),
-    (60000, "60s"),
-  ]
-
   var body: some View {
     ZStack {
       SettingsHitSurface()
@@ -75,16 +66,6 @@ struct TokMonSettingsWindow: View {
                 Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
                   ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
                     Text(mode.displayLabel).tag(mode)
-                  }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 220)
-              }
-              FieldRow("Refresh") {
-                Picker("Refresh Rate", selection: $store.draft.refreshRate) {
-                  ForEach(refreshRateOptions, id: \.0) { ms, label in
-                    Text(label).tag(ms)
                   }
                 }
                 .pickerStyle(.menu)
