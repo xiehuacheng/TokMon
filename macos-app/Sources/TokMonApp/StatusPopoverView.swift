@@ -123,6 +123,8 @@ struct StatusPopoverView: View {
       requestsPage
     case .sessions:
       sessionsPage
+    case .quota:
+      quotaPage
     }
   }
 
@@ -232,6 +234,11 @@ struct StatusPopoverView: View {
         onToggleTotalExpanded: toggleTotalTokensExpanded,
         onSelect: selectSeries,
       )
+      TokMonQuotaMiniCard(snapshot: stats.kimiQuotaSnapshot) {
+        withAnimation(TokMonMotion.softSnappySpring) {
+          selectedPage = .quota
+        }
+      }
       TokMonHudTrendCard(
         title: "Trend",
         valueLabel: selectedSeries.label,
@@ -340,6 +347,14 @@ struct StatusPopoverView: View {
     .onPreferenceChange(SessionRowFramePreferenceKey.self) { frames in
       sessionRowFrames = frames
     }
+  }
+
+  private var quotaPage: some View {
+    TokMonQuotaView(snapshot: stats.kimiQuotaSnapshot) {
+      Task { await stats.refreshKimiQuota() }
+    }
+    .padding(9)
+    .font(.system(size: 12, weight: .regular, design: .rounded))
   }
 
   @ViewBuilder
@@ -855,6 +870,7 @@ private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
   case overview
   case requests
   case sessions
+  case quota
 
   var id: String { rawValue }
 
@@ -866,6 +882,8 @@ private enum TokMonPopoverPage: String, CaseIterable, Identifiable {
       "Requests"
     case .sessions:
       "Sessions"
+    case .quota:
+      "Quota"
     }
   }
 }
@@ -2307,7 +2325,7 @@ private struct LoadMoreButton: View {
   }
 }
 
-private struct HudCardModifier: ViewModifier {
+struct HudCardModifier: ViewModifier {
   var background: Color = TokMonGlass.cardBackgroundOuter
   var isSelected = false
 
@@ -2336,11 +2354,13 @@ private struct HudCardModifier: ViewModifier {
   }
 }
 
-private extension View {
+extension View {
   func hudCard(background: Color = TokMonGlass.cardBackgroundOuter, isSelected: Bool = false) -> some View {
     modifier(HudCardModifier(background: background, isSelected: isSelected))
   }
+}
 
+private extension View {
   func requestActionButton() -> some View {
     foregroundStyle(.primary.opacity(0.86))
       .padding(.horizontal, 12)

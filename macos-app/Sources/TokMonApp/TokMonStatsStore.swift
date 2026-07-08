@@ -40,6 +40,7 @@ final class TokMonStatsStore: ObservableObject {
   @Published private(set) var snapshot = TokMonStatsSnapshot.empty
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var kimiQuotaSnapshot: KimiQuotaSnapshot?
   private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
@@ -50,6 +51,7 @@ final class TokMonStatsStore: ObservableObject {
   private var selectedUsageSession: TokMonUsageSessionSelection?
 
   private var isPopoverVisible = false
+  private var quotaRefreshTask: Task<Void, Never>?
   private var lastRefreshedDataVersion: UInt64 = 0
 
   init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
@@ -101,6 +103,7 @@ final class TokMonStatsStore: ObservableObject {
   func popoverDidAppear() {
     isPopoverVisible = true
     requestRefresh()
+    startQuotaRefreshTask()
   }
 
   func popoverDidDisappear() {
@@ -108,6 +111,7 @@ final class TokMonStatsStore: ObservableObject {
     recordsLimit = defaultRecordsLimit
     usageSessionsLimit = defaultUsageSessionsLimit
     clearSelectedUsageSession()
+    stopQuotaRefreshTask()
   }
 
   /// Retained for API compatibility. TokMon is now event-driven, so there is
@@ -260,6 +264,32 @@ final class TokMonStatsStore: ObservableObject {
         }
       }
     }
+  }
+
+  func refreshKimiQuota() async {
+    guard let nativeEngineActor else { return }
+    kimiQuotaSnapshot = await nativeEngineActor.refreshKimiQuota()
+  }
+
+  private func startQuotaRefreshTask() {
+    stopQuotaRefreshTask()
+    guard isPopoverVisible, let nativeEngineActor else { return }
+
+    quotaRefreshTask = Task { [weak self] in
+      await self?.refreshKimiQuota()
+      while !Task.isCancelled {
+        let interval = (try? await nativeEngineActor.loadKimiQuotaRefreshInterval()) ?? 5
+        guard interval > 0 else { break }
+        try? await Task.sleep(for: .seconds(interval * 60))
+        guard !Task.isCancelled else { break }
+        await self?.refreshKimiQuota()
+      }
+    }
+  }
+
+  private func stopQuotaRefreshTask() {
+    quotaRefreshTask?.cancel()
+    quotaRefreshTask = nil
   }
 }
 
