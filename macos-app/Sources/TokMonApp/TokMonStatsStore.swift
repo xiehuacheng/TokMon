@@ -275,14 +275,20 @@ final class TokMonStatsStore: ObservableObject {
     stopQuotaRefreshTask()
     guard isPopoverVisible, let nativeEngineActor else { return }
 
-    quotaRefreshTask = Task { [weak self] in
-      await self?.refreshKimiQuota()
+    quotaRefreshTask = Task { [weak self, weak nativeEngineActor] in
+      @MainActor
+      func refreshOnce() async -> Bool {
+        guard let self, nativeEngineActor != nil else { return false }
+        await self.refreshKimiQuota()
+        return true
+      }
+      guard await refreshOnce() else { return }
       while !Task.isCancelled {
+        guard let nativeEngineActor else { break }
         let interval = (try? await nativeEngineActor.loadKimiQuotaRefreshInterval()) ?? 5
         guard interval > 0 else { break }
         try? await Task.sleep(for: .seconds(interval * 60))
-        guard !Task.isCancelled else { break }
-        await self?.refreshKimiQuota()
+        guard !Task.isCancelled, await refreshOnce() else { break }
       }
     }
   }

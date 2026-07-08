@@ -353,7 +353,6 @@ struct StatusPopoverView: View {
     TokMonQuotaView(snapshot: stats.kimiQuotaSnapshot) {
       Task { await stats.refreshKimiQuota() }
     }
-    .padding(9)
     .font(.system(size: 12, weight: .regular, design: .rounded))
   }
 

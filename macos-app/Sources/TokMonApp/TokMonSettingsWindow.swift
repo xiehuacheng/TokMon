@@ -123,7 +123,7 @@ struct TokMonSettingsWindow: View {
                     Task { try? await store.clearKimiAPIKey() }
                   }
                   .tokMonGlassButton()
-                  .disabled(!store.draft.kimiCodeAPIKeyConfigured)
+                  .disabled(!store.draft.kimiCodeAPIKeyConfigured || store.isBusy)
                 }
               }
             }
