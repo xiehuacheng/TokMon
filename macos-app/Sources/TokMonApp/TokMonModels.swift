@@ -52,29 +52,40 @@ struct TokMonCostRates: Codable, Equatable {
   }
 }
 
-enum TokMonMenuBarDisplayMode: String, Codable, CaseIterable, Identifiable {
-  case iconOnly
-  case totalTokens
-  case estimatedCost
-  case requests
+struct TokMonMenuBarItems: Codable, Equatable, Sendable {
+  var totalTokens: Bool
+  var estimatedCost: Bool
+  var requests: Bool
+  var kimiQuota: Bool
 
-  var id: String { rawValue }
+  var isEmpty: Bool { !totalTokens && !estimatedCost && !requests && !kimiQuota }
 
-  var displayLabel: String {
-    switch self {
-    case .iconOnly:
-      "Icon Only"
-    case .totalTokens:
-      "Total Tokens"
-    case .estimatedCost:
-      "Est. Cost"
-    case .requests:
-      "Requests"
-    }
+  static let empty = TokMonMenuBarItems()
+
+  init(
+    totalTokens: Bool = false,
+    estimatedCost: Bool = false,
+    requests: Bool = false,
+    kimiQuota: Bool = false
+  ) {
+    self.totalTokens = totalTokens
+    self.estimatedCost = estimatedCost
+    self.requests = requests
+    self.kimiQuota = kimiQuota
   }
 
-  init(rawValueOrDefault value: String?) {
-    self = value.flatMap(Self.init(rawValue:)) ?? .iconOnly
+  init(legacyMode: String) {
+    self.init()
+    switch legacyMode {
+    case "totalTokens":
+      self.totalTokens = true
+    case "estimatedCost":
+      self.estimatedCost = true
+    case "requests":
+      self.requests = true
+    default:
+      break
+    }
   }
 }
 
@@ -117,7 +128,7 @@ struct TokMonUIState: Codable, Equatable {
   var rangeMode: String
   var interval: String
   var activeSeries: String
-  var menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly
+  var menuBarDisplayItems: TokMonMenuBarItems = .empty
   /// Deprecated: TokMon refreshes are now event-driven. Kept for config compatibility.
   var refreshRate: Int
   /// Refresh interval for the Kimi quota panel, in minutes. `0` means manual refresh.
@@ -136,7 +147,7 @@ struct TokMonUIState: Codable, Equatable {
     rangeMode: "round",
     interval: "day",
     activeSeries: "total",
-    menuBarDisplayMode: .iconOnly,
+    menuBarDisplayItems: .empty,
     refreshRate: 3000,
     kimiQuotaRefreshInterval: 5,
     costRates: .zero,
@@ -919,7 +930,7 @@ struct TokMonDashboardState: Decodable {
   /// Deprecated: TokMon refreshes are now event-driven. Kept for snapshot compatibility.
   let refreshRate: Int
   let activeSeries: String
-  let menuBarDisplayMode: TokMonMenuBarDisplayMode
+  let menuBarDisplayItems: TokMonMenuBarItems
   let estimatedCost: Double
   let costRates: TokMonCostRates
   let modelPricing: [String: TokMonCostRates]
@@ -937,6 +948,7 @@ struct TokMonDashboardState: Decodable {
     case rangeDays
     case refreshRate
     case activeSeries
+    case menuBarDisplayItems
     case menuBarDisplayMode
     case estimatedCost
     case costRates
@@ -956,7 +968,7 @@ struct TokMonDashboardState: Decodable {
     rangeDays: Int?,
     refreshRate: Int,
     activeSeries: String,
-    menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly,
+    menuBarDisplayItems: TokMonMenuBarItems = .empty,
     estimatedCost: Double,
     costRates: TokMonCostRates,
     modelPricing: [String: TokMonCostRates] = [:],
@@ -973,7 +985,7 @@ struct TokMonDashboardState: Decodable {
     self.rangeDays = rangeDays
     self.refreshRate = refreshRate
     self.activeSeries = activeSeries
-    self.menuBarDisplayMode = menuBarDisplayMode
+    self.menuBarDisplayItems = menuBarDisplayItems
     self.estimatedCost = estimatedCost
     self.costRates = costRates
     self.modelPricing = modelPricing
@@ -993,10 +1005,16 @@ struct TokMonDashboardState: Decodable {
     rangeDays = try container.decodeIfPresent(Int.self, forKey: .rangeDays)
     refreshRate = try container.decodeIfPresent(Int.self, forKey: .refreshRate) ?? 3000
     activeSeries = try container.decodeIfPresent(String.self, forKey: .activeSeries) ?? "total"
-    menuBarDisplayMode = try container.decodeIfPresent(
-      TokMonMenuBarDisplayMode.self,
-      forKey: .menuBarDisplayMode,
-    ) ?? .iconOnly
+    if let items = try container.decodeIfPresent(
+      TokMonMenuBarItems.self,
+      forKey: .menuBarDisplayItems
+    ) {
+      menuBarDisplayItems = items
+    } else if let legacyMode = try container.decodeIfPresent(String.self, forKey: .menuBarDisplayMode) {
+      menuBarDisplayItems = TokMonMenuBarItems(legacyMode: legacyMode)
+    } else {
+      menuBarDisplayItems = .empty
+    }
     estimatedCost = try container.decodeIfPresent(Double.self, forKey: .estimatedCost) ?? 0
     costRates = try container.decodeIfPresent(TokMonCostRates.self, forKey: .costRates) ?? .zero
     modelPricing = try container.decodeIfPresent([String: TokMonCostRates].self, forKey: .modelPricing) ?? [:]

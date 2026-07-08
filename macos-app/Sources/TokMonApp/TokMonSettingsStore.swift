@@ -86,7 +86,7 @@ struct TokMonSettingsDraft: Equatable {
   var liveMode = TokMonUIState.default.liveMode
   var interval = TokMonUIState.default.interval
   var activeSeries = TokMonUIState.default.activeSeries
-  var menuBarDisplayMode = TokMonUIState.default.menuBarDisplayMode
+  var menuBarDisplayItems = TokMonUIState.default.menuBarDisplayItems
   var refreshRate = TokMonUIState.default.refreshRate
   var inputRate = TokMonUIState.default.costRates.input
   var outputRate = TokMonUIState.default.costRates.output

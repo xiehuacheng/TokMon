@@ -2,21 +2,46 @@ import Foundation
 import Testing
 @testable import TokMonApp
 
-@Test func menuBarPresentationFormatsIconOnlyAsNoTitle() {
+@Test func menuBarPresentationFormatsEmptyItemsAsNoTitle() {
   let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
 
-  #expect(TokMonMenuBarPresentation.title(for: .iconOnly, snapshot: snapshot) == nil)
+  #expect(TokMonMenuBarPresentation.title(for: .empty, snapshot: snapshot) == nil)
 }
 
 @Test func menuBarPresentationFormatsCoreMetrics() {
   let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
 
-  #expect(TokMonMenuBarPresentation.title(for: .totalTokens, snapshot: snapshot) == "42.8K")
-  #expect(TokMonMenuBarPresentation.title(for: .requests, snapshot: snapshot) == "128")
-  #expect(TokMonMenuBarPresentation.title(for: .estimatedCost, snapshot: snapshot) == "$1.28")
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(totalTokens: true), snapshot: snapshot) == "42.8K")
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(requests: true), snapshot: snapshot) == "128")
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(estimatedCost: true), snapshot: snapshot) == "$1.28")
 }
 
-@Test func menuBarPresentationUsesPlaceholderWhenSummaryIsMissing() {
+@Test func menuBarPresentationConcatenatesMultipleItems() {
+  let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
+
+  let items = TokMonMenuBarItems(totalTokens: true, requests: true)
+  #expect(TokMonMenuBarPresentation.title(for: items, snapshot: snapshot) == "42.8K · 128")
+}
+
+@Test func menuBarPresentationShowsKimiQuota() {
+  var snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
+  snapshot.kimiQuotaSnapshot = KimiQuotaSnapshot(
+    weekly: KimiQuotaWindow(label: "Weekly", used: 50, limit: 100, remaining: 50, percentUsed: 50, resetAt: nil, countdown: nil),
+    fiveHour: nil,
+    fetchedAt: nil,
+    error: nil
+  )
+
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(kimiQuota: true), snapshot: snapshot) == "K50%")
+}
+
+@Test func menuBarPresentationShowsKimiQuotaPlaceholderWhenMissing() {
+  let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
+
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(kimiQuota: true), snapshot: snapshot) == "K-")
+}
+
+@Test func menuBarPresentationReturnsNilWhenSummaryIsMissing() {
   let snapshot = TokMonStatsSnapshot(
     scanStatus: nil,
     summary: nil,
@@ -32,9 +57,9 @@ import Testing
     updatedAt: nil,
   )
 
-  #expect(TokMonMenuBarPresentation.title(for: .totalTokens, snapshot: snapshot) == "-")
-  #expect(TokMonMenuBarPresentation.title(for: .estimatedCost, snapshot: snapshot) == "-")
-  #expect(TokMonMenuBarPresentation.title(for: .requests, snapshot: snapshot) == "-")
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(totalTokens: true), snapshot: snapshot) == nil)
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(estimatedCost: true), snapshot: snapshot) == nil)
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(requests: true), snapshot: snapshot) == nil)
 }
 
 private func makeMenuBarSnapshot(totalTokens: Int, requests: Int, cost: Double) -> TokMonStatsSnapshot {
@@ -74,7 +99,7 @@ private func makeMenuBarSnapshot(totalTokens: Int, requests: Int, cost: Double) 
     rangeDays: nil,
     refreshRate: 3000,
     activeSeries: "total",
-    menuBarDisplayMode: .estimatedCost,
+    menuBarDisplayItems: TokMonMenuBarItems(estimatedCost: true),
     estimatedCost: cost,
     costRates: rates,
     modelPricing: [:],

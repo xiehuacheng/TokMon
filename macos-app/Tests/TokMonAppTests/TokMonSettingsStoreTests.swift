@@ -30,7 +30,7 @@ import Testing
   store.draft.liveMode = false
   store.draft.interval = "hour"
   store.draft.activeSeries = "cost"
-  store.draft.menuBarDisplayMode = .requests
+  store.draft.menuBarDisplayItems.requests = true
   store.draft.refreshRate = 5000
   store.draft.inputRate = 3
   store.draft.outputRate = 4
@@ -60,7 +60,7 @@ import Testing
   #expect(uiState.rangeMode == "round")
   #expect(uiState.interval == "hour")
   #expect(uiState.activeSeries == "cost")
-  #expect(uiState.menuBarDisplayMode == .requests)
+  #expect(uiState.menuBarDisplayItems.requests)
   #expect(uiState.refreshRate == 5000)
   #expect(uiState.costRates == TokMonCostRates(input: 3, output: 4, cacheCreate: 5, cacheRead: 6))
   #expect(uiState.modelPricing["gpt-a"] == TokMonCostRates(input: 1, output: 2, cacheCreate: 3, cacheRead: 4))

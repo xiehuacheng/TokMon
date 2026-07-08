@@ -22,7 +22,7 @@ actor TokMonEngineActor {
       liveMode: true,
       interval: TokMonRangePreset(label: uiState.rangeLabel).interval,
       activeSeries: uiState.activeSeries,
-      menuBarDisplayMode: uiState.menuBarDisplayMode,
+      menuBarDisplayItems: uiState.menuBarDisplayItems,
       refreshRate: uiState.refreshRate,
       inputRate: uiState.costRates.input,
       outputRate: uiState.costRates.output,
@@ -280,7 +280,7 @@ actor TokMonEngineActor {
       rangeMode: "round",
       interval: preset.interval,
       activeSeries: draft.activeSeries,
-      menuBarDisplayMode: draft.menuBarDisplayMode,
+      menuBarDisplayItems: draft.menuBarDisplayItems,
       refreshRate: max(1000, draft.refreshRate),
       kimiQuotaRefreshInterval: max(0, draft.kimiQuotaRefreshInterval),
       costRates: TokMonCostRates(

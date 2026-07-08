@@ -129,7 +129,7 @@ import Testing
   #expect(main.contains("button?.imagePosition = title == nil ? .imageOnly : .imageLeft"))
 }
 
-@Test func settingsWindowIncludesMenuBarDisplayPicker() throws {
+@Test func settingsWindowIncludesMenuBarDisplayToggles() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -140,8 +140,10 @@ import Testing
   )
 
   #expect(settings.contains("SettingsSection(\"Menu Bar\")"))
-  #expect(settings.contains("Picker(\"Menu Bar Display\", selection: $store.draft.menuBarDisplayMode)"))
-  #expect(settings.contains("ForEach(TokMonMenuBarDisplayMode.allCases)"))
+  #expect(settings.contains("Toggle(\"Total Tokens\", isOn: $store.draft.menuBarDisplayItems.totalTokens)"))
+  #expect(settings.contains("Toggle(\"Est. Cost\", isOn: $store.draft.menuBarDisplayItems.estimatedCost)"))
+  #expect(settings.contains("Toggle(\"Requests\", isOn: $store.draft.menuBarDisplayItems.requests)"))
+  #expect(settings.contains("Toggle(\"Kimi Quota\", isOn: $store.draft.menuBarDisplayItems.kimiQuota)"))
 }
 
 @Test func userFacingTextUsesTokMonName() throws {

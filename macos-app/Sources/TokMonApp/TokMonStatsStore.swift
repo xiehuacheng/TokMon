@@ -13,8 +13,9 @@ struct TokMonStatsSnapshot: Sendable {
   var selectedSessionRecords: [TokMonRecordRow] = []
   var dashboardState: TokMonDashboardState?
   var updatedAt: Date?
+  var kimiQuotaSnapshot: KimiQuotaSnapshot? = nil
 
-  static let empty = TokMonStatsSnapshot()
+  static let empty = TokMonStatsSnapshot(kimiQuotaSnapshot: nil)
 }
 
 struct TokMonUsageSessionSelection: Equatable, Sendable {
@@ -159,6 +160,7 @@ final class TokMonStatsStore: ObservableObject {
             selectedSession: selectedUsageSession,
           )
         }
+        snapshot.kimiQuotaSnapshot = self.kimiQuotaSnapshot
       }
       errorMessage = nil
     } catch {
@@ -176,6 +178,7 @@ final class TokMonStatsStore: ObservableObject {
         selectedSessionRecords: snapshot.selectedSessionRecords,
         dashboardState: snapshot.dashboardState,
         updatedAt: snapshot.updatedAt,
+        kimiQuotaSnapshot: self.kimiQuotaSnapshot
       )
     }
   }
@@ -192,6 +195,7 @@ final class TokMonStatsStore: ObservableObject {
         preserving: snapshot,
         now: nowProvider(),
       )
+      snapshot.kimiQuotaSnapshot = self.kimiQuotaSnapshot
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -222,6 +226,7 @@ final class TokMonStatsStore: ObservableObject {
         preserving: snapshot,
         now: nowProvider(),
       )
+      snapshot.kimiQuotaSnapshot = self.kimiQuotaSnapshot
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -375,7 +380,7 @@ enum TokMonStatsSnapshotBuilder {
       rangeDays: preset.days,
       refreshRate: uiState.refreshRate,
       activeSeries: uiState.activeSeries,
-      menuBarDisplayMode: uiState.menuBarDisplayMode,
+      menuBarDisplayItems: uiState.menuBarDisplayItems,
       estimatedCost: 0,
       costRates: uiState.costRates,
       modelPricing: uiState.modelPricing,

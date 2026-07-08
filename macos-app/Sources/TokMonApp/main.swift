@@ -137,13 +137,13 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func updateStatusItem(snapshot: TokMonStatsSnapshot) {
-    let mode = snapshot.dashboardState?.menuBarDisplayMode ?? .iconOnly
-    let title = TokMonMenuBarPresentation.title(for: mode, snapshot: snapshot)
+    let items = snapshot.dashboardState?.menuBarDisplayItems ?? .empty
+    let title = TokMonMenuBarPresentation.title(for: items, snapshot: snapshot)
     let button = statusItem.button
 
     button?.title = title ?? ""
     button?.imagePosition = title == nil ? .imageOnly : .imageLeft
-    button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: mode, snapshot: snapshot)
+    button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: items, snapshot: snapshot)
     statusItem.length = NSStatusItem.variableLength
   }
 

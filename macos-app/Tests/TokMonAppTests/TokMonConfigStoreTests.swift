@@ -18,7 +18,7 @@ import Testing
   #expect(state.rangeDays == nil)
   #expect(state.rangeMode == "round")
   #expect(state.activeSeries == "total")
-  #expect(state.menuBarDisplayMode == .iconOnly)
+  #expect(state.menuBarDisplayItems == .empty)
 }
 
 @Test func configStoreDefaultsMissingNativeConfigAndUIStateFields() throws {
@@ -71,12 +71,12 @@ import Testing
   #expect(state.rangeDays == nil)
   #expect(state.costRates.input == 0)
   #expect(state.costRates.output == 9.5)
-  #expect(state.menuBarDisplayMode == .iconOnly)
+  #expect(state.menuBarDisplayItems == .empty)
   #expect(state.modelPricing["gpt-a"] == TokMonCostRates(input: 1.5, output: 2.5, cacheCreate: 3.5, cacheRead: 4.5))
   #expect(state.modelPricing["bad"] == TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0))
 }
 
-@Test func configStoreLoadsAndSavesMenuBarDisplayMode() throws {
+@Test func configStoreLoadsAndSavesMenuBarDisplayItems() throws {
   let dataDir = try makeTokMonTempDir()
   try """
   {
@@ -88,17 +88,19 @@ import Testing
   let store = TokMonConfigStore(dataDir: dataDir)
 
   var state = try store.loadUIState()
-  #expect(state.menuBarDisplayMode == .estimatedCost)
+  #expect(state.menuBarDisplayItems.estimatedCost)
+  #expect(!state.menuBarDisplayItems.totalTokens)
 
-  state.menuBarDisplayMode = .requests
+  state.menuBarDisplayItems.requests = true
   try store.saveUIState(state)
 
   let text = try String(contentsOf: dataDir.appendingPathComponent("tokmon-ui-state.json"), encoding: .utf8)
-  #expect(text.contains("\"menuBarDisplayMode\" : \"requests\""))
-  #expect(try store.loadUIState().menuBarDisplayMode == .requests)
+  #expect(text.contains("\"menuBarDisplayItems\""))
+  #expect(text.contains("\"requests\" : true"))
+  #expect(try store.loadUIState().menuBarDisplayItems.requests)
 }
 
-@Test func configStoreDefaultsUnknownMenuBarDisplayModeToIconOnly() throws {
+@Test func configStoreDefaultsUnknownMenuBarDisplayModeToEmpty() throws {
   let dataDir = try makeTokMonTempDir()
   try """
   {
@@ -108,7 +110,7 @@ import Testing
   """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
   let store = TokMonConfigStore(dataDir: dataDir)
 
-  #expect(try store.loadUIState().menuBarDisplayMode == .iconOnly)
+  #expect(try store.loadUIState().menuBarDisplayItems == .empty)
 }
 
 @Test func configStoreSavesPrettyJSONWithTrailingNewlineAndExpandsHomePath() throws {

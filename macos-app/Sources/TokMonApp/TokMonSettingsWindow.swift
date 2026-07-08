@@ -62,15 +62,14 @@ struct TokMonSettingsWindow: View {
             }
 
             SettingsSection("Menu Bar") {
-              FieldRow("Display") {
-                Picker("Menu Bar Display", selection: $store.draft.menuBarDisplayMode) {
-                  ForEach(TokMonMenuBarDisplayMode.allCases) { mode in
-                    Text(mode.displayLabel).tag(mode)
-                  }
+              FieldRow("Show") {
+                VStack(alignment: .leading, spacing: 6) {
+                  Toggle("Total Tokens", isOn: $store.draft.menuBarDisplayItems.totalTokens)
+                  Toggle("Est. Cost", isOn: $store.draft.menuBarDisplayItems.estimatedCost)
+                  Toggle("Requests", isOn: $store.draft.menuBarDisplayItems.requests)
+                  Toggle("Kimi Quota", isOn: $store.draft.menuBarDisplayItems.kimiQuota)
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .leading)
               }
             }
 

@@ -2,36 +2,46 @@ import Foundation
 
 enum TokMonMenuBarPresentation {
   static func title(
-    for mode: TokMonMenuBarDisplayMode,
+    for items: TokMonMenuBarItems,
     snapshot: TokMonStatsSnapshot,
   ) -> String? {
-    guard mode != .iconOnly else {
+    guard !items.isEmpty else {
       return nil
     }
     guard let summary = snapshot.summary else {
-      return "-"
+      return nil
     }
 
-    switch mode {
-    case .iconOnly:
-      return nil
-    case .totalTokens:
-      return formatCompact(Double(summary.total.totalTokens))
-    case .estimatedCost:
-      return formatCost(estimatedCost(for: summary, snapshot: snapshot))
-    case .requests:
-      return formatCompact(Double(summary.total.totalRequests))
+    var parts: [String] = []
+    if items.totalTokens {
+      parts.append(formatCompact(Double(summary.total.totalTokens)))
     }
+    if items.estimatedCost {
+      parts.append(formatCost(estimatedCost(for: summary, snapshot: snapshot)))
+    }
+    if items.requests {
+      parts.append(formatCompact(Double(summary.total.totalRequests)))
+    }
+    if items.kimiQuota {
+      if let weekly = snapshot.kimiQuotaSnapshot?.weekly {
+        parts.append("K\(Int(weekly.percentUsed))%")
+      } else {
+        parts.append("K-")
+      }
+    }
+
+    let result = parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    return result.isEmpty ? nil : result
   }
 
   static func accessibilityLabel(
-    for mode: TokMonMenuBarDisplayMode,
+    for items: TokMonMenuBarItems,
     snapshot: TokMonStatsSnapshot,
   ) -> String {
-    guard let title = title(for: mode, snapshot: snapshot), !title.isEmpty else {
+    guard let title = title(for: items, snapshot: snapshot), !title.isEmpty else {
       return "TokMon"
     }
-    return "TokMon \(mode.displayLabel) \(title)"
+    return "TokMon \(title)"
   }
 
   private static func estimatedCost(

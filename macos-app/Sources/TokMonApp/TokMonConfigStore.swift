@@ -99,14 +99,27 @@ final class TokMonConfigStore {
       rangeMode: "round",
       interval: preset.interval,
       activeSeries: stringValue(object["activeSeries"]) ?? defaults.activeSeries,
-      menuBarDisplayMode: TokMonMenuBarDisplayMode(
-        rawValueOrDefault: stringValue(object["menuBarDisplayMode"]),
-      ),
+      menuBarDisplayItems: normalizedMenuBarDisplayItems(from: object),
       refreshRate: intValue(object["refreshRate"]) ?? defaults.refreshRate,
       kimiQuotaRefreshInterval: intValue(object["kimiQuotaRefreshInterval"]) ?? defaults.kimiQuotaRefreshInterval,
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),
     )
+  }
+
+  private func normalizedMenuBarDisplayItems(from object: [String: Any]) -> TokMonMenuBarItems {
+    if let items = object["menuBarDisplayItems"] as? [String: Any] {
+      return TokMonMenuBarItems(
+        totalTokens: boolValue(items["totalTokens"]) ?? false,
+        estimatedCost: boolValue(items["estimatedCost"]) ?? false,
+        requests: boolValue(items["requests"]) ?? false,
+        kimiQuota: boolValue(items["kimiQuota"]) ?? false
+      )
+    }
+    if let legacyMode = stringValue(object["menuBarDisplayMode"]) {
+      return TokMonMenuBarItems(legacyMode: legacyMode)
+    }
+    return TokMonUIState.default.menuBarDisplayItems
   }
 
   private func normalizedCostRates(from rawValue: Any?) -> TokMonCostRates {
