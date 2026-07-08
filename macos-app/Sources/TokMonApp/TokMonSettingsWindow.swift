@@ -95,6 +95,38 @@ struct TokMonSettingsWindow: View {
                 }
               }
             }
+
+            SettingsSection("API Keys") {
+              FieldRow("Kimi Code") {
+                HStack(spacing: 8) {
+                  SecureField("sk-kimi-xxx", text: $store.draft.kimiCodeAPIKey)
+                    .settingsTextField(width: 300)
+                  Text(store.draft.kimiCodeAPIKeyConfigured ? "Configured" : "Not configured")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(store.draft.kimiCodeAPIKeyConfigured ? .secondary : TokMonGlass.danger)
+                }
+              }
+              FieldRow("Refresh") {
+                Picker("Refresh Interval", selection: $store.draft.kimiQuotaRefreshInterval) {
+                  Text("Manual").tag(0)
+                  Text("1 min").tag(1)
+                  Text("5 min").tag(5)
+                  Text("15 min").tag(15)
+                  Text("60 min").tag(60)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 320)
+              }
+              FieldRow("Actions") {
+                HStack(spacing: 8) {
+                  Button("Clear Key") {
+                    Task { try? await store.clearKimiAPIKey() }
+                  }
+                  .tokMonGlassButton()
+                  .disabled(!store.draft.kimiCodeAPIKeyConfigured)
+                }
+              }
+            }
           }
           .padding(.horizontal, 20)
           .padding(.bottom, 14)

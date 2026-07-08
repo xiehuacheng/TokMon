@@ -48,6 +48,15 @@ final class TokMonSettingsStore: ObservableObject {
     }
   }
 
+  func clearKimiAPIKey() async throws {
+    try await runBusyAction {
+      try await engineActor.deleteKimiAPIKey()
+      draft.kimiCodeAPIKey = ""
+      draft.kimiCodeAPIKeyConfigured = false
+      statusMessage = "Kimi API key cleared."
+    }
+  }
+
   private func runBusyAction(_ action: () async throws -> Void) async rethrows {
     isBusy = true
     defer { isBusy = false }
