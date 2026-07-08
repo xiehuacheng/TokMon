@@ -42,6 +42,7 @@ final class TokMonStatsStore: ObservableObject {
   @Published private(set) var isRefreshing = false
   @Published private(set) var errorMessage: String?
   @Published private(set) var kimiQuotaSnapshot: KimiQuotaSnapshot?
+  @Published private(set) var isRefreshingQuota = false
   private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
@@ -279,6 +280,8 @@ final class TokMonStatsStore: ObservableObject {
 
   func refreshKimiQuota() async {
     guard let nativeEngineActor else { return }
+    isRefreshingQuota = true
+    defer { isRefreshingQuota = false }
     kimiQuotaSnapshot = await nativeEngineActor.refreshKimiQuota()
   }
 

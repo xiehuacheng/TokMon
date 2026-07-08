@@ -354,6 +354,7 @@ struct StatusPopoverView: View {
   private var quotaPage: some View {
     TokMonQuotaView(
       snapshot: stats.kimiQuotaSnapshot,
+      isLoading: stats.isRefreshingQuota,
       onRefresh: { Task { await stats.refreshKimiQuota() } },
       onOpenSettings: { runtime.openSettings() }
     )

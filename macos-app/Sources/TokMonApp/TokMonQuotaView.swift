@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TokMonQuotaView: View {
   let snapshot: KimiQuotaSnapshot?
+  let isLoading: Bool
   let onRefresh: () -> Void
   let onOpenSettings: () -> Void
 
@@ -15,6 +16,7 @@ struct TokMonQuotaView: View {
           Image(systemName: "arrow.clockwise")
         }
         .buttonStyle(.plain)
+        .focusable(false)
       }
 
       if let error = snapshot?.error {
@@ -30,9 +32,15 @@ struct TokMonQuotaView: View {
       }
 
       if snapshot?.weekly == nil && snapshot?.fiveHour == nil {
-        Text("No quota data available.")
-          .font(.system(size: 12, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
+        if isLoading {
+          ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+          Text("No quota data available.")
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+        }
       }
 
       if let fetchedAt = snapshot?.fetchedAt {
@@ -92,6 +100,7 @@ struct TokMonQuotaView: View {
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded))
         .controlSize(.small)
+        .focusable(false)
       }
     } else {
       Text(errorMessage(error))

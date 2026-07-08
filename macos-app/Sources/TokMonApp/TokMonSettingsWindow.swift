@@ -98,30 +98,8 @@ struct TokMonSettingsWindow: View {
             SettingsSection("API Keys") {
               FieldRow("Kimi Code") {
                 VStack(alignment: .leading, spacing: 6) {
-                  HStack(alignment: .center, spacing: 8) {
-                    SecureField("sk-kimi-xxx", text: $store.draft.kimiCodeAPIKey)
-                      .settingsTextField(width: 340)
-                    Button {
-                      if let string = NSPasteboard.general.string(forType: .string) {
-                        store.draft.kimiCodeAPIKey = string.trimmingCharacters(in: .whitespacesAndNewlines)
-                      }
-                    } label: {
-                      Text("Paste")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background {
-                      RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay {
-                          RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(TokMonGlass.glassEdge, lineWidth: 1)
-                        }
-                    }
-                    .help("Paste API key from clipboard")
-                  }
+                  SecureField("sk-kimi-xxx", text: $store.draft.kimiCodeAPIKey)
+                    .settingsTextField(width: 430)
                   Text(store.draft.kimiCodeAPIKeyConfigured ? "Configured" : "Not configured")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(store.draft.kimiCodeAPIKeyConfigured ? .secondary : TokMonGlass.danger)
