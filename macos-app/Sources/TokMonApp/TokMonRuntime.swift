@@ -21,7 +21,7 @@ final class TokMonRuntime: ObservableObject {
     do {
       let engine = try Self.makeTokMonEngine()
       let engineActor = TokMonEngineActor(engine: engine)
-      let statsStore = TokMonStatsStore(engineActor: engineActor)
+      let statsStore = TokMonStatsStore(engineActor: engineActor, configStore: engine.configStore)
 
       let onScan: @Sendable ([String]) -> Void = { [weak statsStore, weak engineActor] paths in
         Task {

@@ -89,7 +89,7 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
   }
 }
 
-struct KimiQuotaWindow: Equatable, Sendable {
+struct KimiQuotaWindow: Equatable, Sendable, Codable {
   var label: String
   var used: Double
   var limit: Double
@@ -99,7 +99,7 @@ struct KimiQuotaWindow: Equatable, Sendable {
   var countdown: String?
 }
 
-struct KimiQuotaSnapshot: Equatable, Sendable {
+struct KimiQuotaSnapshot: Equatable, Sendable, Codable {
   var weekly: KimiQuotaWindow?
   var fiveHour: KimiQuotaWindow?
   var fetchedAt: Date?
@@ -108,7 +108,7 @@ struct KimiQuotaSnapshot: Equatable, Sendable {
   static let empty = KimiQuotaSnapshot()
 }
 
-enum KimiQuotaError: Error, Equatable, Sendable {
+enum KimiQuotaError: Error, Equatable, Sendable, Codable {
   case noAPIKey
   case invalidKey
   case endpointNotFound

@@ -37,7 +37,7 @@ struct TokMonQuotaView: View {
             .controlSize(.small)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-          Text("No quota data available.")
+          Text(snapshot?.error != nil ? "Could not load quota." : "No quota data available.")
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
         }

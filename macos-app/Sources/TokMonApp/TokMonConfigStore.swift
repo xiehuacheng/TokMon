@@ -36,6 +36,21 @@ final class TokMonConfigStore {
     try write(state, to: uiStateURL)
   }
 
+  func loadLastKimiQuotaSnapshot() -> KimiQuotaSnapshot? {
+    let url = lastKimiQuotaSnapshotURL
+    guard fileManager.fileExists(atPath: url.path) else {
+      return nil
+    }
+    guard let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    return try? JSONDecoder().decode(KimiQuotaSnapshot.self, from: data)
+  }
+
+  func saveLastKimiQuotaSnapshot(_ snapshot: KimiQuotaSnapshot) throws {
+    try write(snapshot, to: lastKimiQuotaSnapshotURL)
+  }
+
   func expandUserPath(_ path: String) -> String {
     guard path == "~" || path.hasPrefix("~/") else {
       return path
@@ -54,6 +69,10 @@ final class TokMonConfigStore {
 
   private var uiStateURL: URL {
     dataDir.appendingPathComponent("tokmon-ui-state.json")
+  }
+
+  private var lastKimiQuotaSnapshotURL: URL {
+    dataDir.appendingPathComponent("tokmon-kimi-quota.json")
   }
 
   private func normalizedConfig(from data: Data) -> TokMonConfig? {

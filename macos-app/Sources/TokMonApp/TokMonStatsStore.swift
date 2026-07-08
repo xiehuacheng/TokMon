@@ -46,6 +46,7 @@ final class TokMonStatsStore: ObservableObject {
   private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
+  private let configStore: TokMonConfigStore?
   private let defaultRecordsLimit = 20
   private let defaultUsageSessionsLimit = 50
   private var recordsLimit = 20
@@ -57,19 +58,25 @@ final class TokMonStatsStore: ObservableObject {
   private var quotaRefreshTask: Task<Void, Never>?
   private var lastRefreshedDataVersion: UInt64 = 0
 
-  init(engine: TokMonEngine? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+  init(engine: TokMonEngine? = nil, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engine.map { TokMonEngineActor(engine: $0) }
+    self.configStore = configStore
     self.nowProvider = nowProvider
+    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
   }
 
-  init(engineActor: TokMonEngineActor, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+  init(engineActor: TokMonEngineActor, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engineActor
+    self.configStore = configStore
     self.nowProvider = nowProvider
+    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
   }
 
-  init(startupError: String, nowProvider: @escaping @Sendable () -> Date = Date.init) {
+  init(startupError: String, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = nil
+    self.configStore = configStore
     self.nowProvider = nowProvider
+    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
     errorMessage = startupError
   }
 
@@ -282,7 +289,11 @@ final class TokMonStatsStore: ObservableObject {
     guard let nativeEngineActor else { return }
     isRefreshingQuota = true
     defer { isRefreshingQuota = false }
-    kimiQuotaSnapshot = await nativeEngineActor.refreshKimiQuota()
+    let newSnapshot = await nativeEngineActor.refreshKimiQuota()
+    kimiQuotaSnapshot = newSnapshot
+    if newSnapshot.error == nil, newSnapshot.weekly != nil || newSnapshot.fiveHour != nil {
+      try? configStore?.saveLastKimiQuotaSnapshot(newSnapshot)
+    }
   }
 
   private func syncQuotaRefreshTask() {
