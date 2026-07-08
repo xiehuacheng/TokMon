@@ -12,8 +12,9 @@ import Testing
     }
     """.data(using: .utf8)!
 
+    let fixed = Date(timeIntervalSince1970: 1_000_000)
     let store = TokMonKimiQuotaStore()
-    let snapshot = try await store.parseForTests(json: json)
+    let snapshot = try await store.parseForTests(json: json, fetchedAt: fixed)
 
     #expect(snapshot.weekly?.limit == 1000)
     #expect(snapshot.weekly?.used == 500)
@@ -34,8 +35,9 @@ import Testing
     }
     """.data(using: .utf8)!
 
+    let fixed = Date(timeIntervalSince1970: 1_000_000)
     let store = TokMonKimiQuotaStore()
-    let snapshot = try await store.parseForTests(json: json)
+    let snapshot = try await store.parseForTests(json: json, fetchedAt: fixed)
 
     #expect(snapshot.weekly?.limit == 100)
     #expect(snapshot.weekly?.used == 26)
@@ -51,8 +53,9 @@ import Testing
     }
     """.data(using: .utf8)!
 
+    let fixed = Date(timeIntervalSince1970: 1_000_000)
     let store = TokMonKimiQuotaStore()
-    let snapshot = try await store.parseForTests(json: json)
+    let snapshot = try await store.parseForTests(json: json, fetchedAt: fixed)
 
     #expect(snapshot.weekly?.used == 10)
     #expect(snapshot.weekly?.countdown == "2h 0m")

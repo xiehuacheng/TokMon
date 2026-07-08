@@ -97,7 +97,7 @@ struct KimiQuotaSnapshot: Equatable, Sendable {
   static let empty = KimiQuotaSnapshot()
 }
 
-enum KimiQuotaError: Error, Equatable {
+enum KimiQuotaError: Error, Equatable, Sendable {
   case noAPIKey
   case invalidKey
   case endpointNotFound
@@ -120,6 +120,7 @@ struct TokMonUIState: Codable, Equatable {
   var menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly
   /// Deprecated: TokMon refreshes are now event-driven. Kept for config compatibility.
   var refreshRate: Int
+  /// Refresh interval for the Kimi quota panel, in minutes. `0` means manual refresh.
   var kimiQuotaRefreshInterval: Int = 5
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]

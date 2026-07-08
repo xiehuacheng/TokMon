@@ -10,6 +10,9 @@ actor TokMonKimiQuotaStore {
   }
 
   func fetchQuota(apiKey: String) async -> KimiQuotaSnapshot {
+    guard !apiKey.isEmpty else {
+      return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
+    }
     do {
       let snapshot = try await performFetch(apiKey: apiKey)
       return snapshot
@@ -53,8 +56,8 @@ actor TokMonKimiQuotaStore {
     }
   }
 
-  func parseForTests(json: Data) throws -> KimiQuotaSnapshot {
-    try parseUsagePayload(json, fetchedAt: Date())
+  func parseForTests(json: Data, fetchedAt: Date = Date()) throws -> KimiQuotaSnapshot {
+    try parseUsagePayload(json, fetchedAt: fetchedAt)
   }
 }
 
@@ -109,6 +112,10 @@ private func parseUsagePayload(_ data: Data, fetchedAt: Date) throws -> KimiQuot
     }
   }
 
+  guard weekly != nil || fiveHour != nil else {
+    throw KimiQuotaError.decoding
+  }
+
   return KimiQuotaSnapshot(weekly: weekly, fiveHour: fiveHour, fetchedAt: fetchedAt, error: nil)
 }
 
@@ -131,7 +138,7 @@ private func makeWindow(from dict: [String: Any], label: String, now: Date) -> K
     return nil
   }
 
-  let resetAt = resetDate(from: dict)
+  let resetAt = resetDate(from: dict, now: now)
   let countdown = resetAt.map { countdownString(from: now, to: $0) }
 
   return KimiQuotaWindow(
@@ -145,12 +152,12 @@ private func makeWindow(from dict: [String: Any], label: String, now: Date) -> K
   )
 }
 
-private func resetDate(from dict: [String: Any]) -> Date? {
+private func resetDate(from dict: [String: Any], now: Date) -> Date? {
   if let resetTime = dict["resetTime"] as? String ?? dict["reset_at"] as? String ?? dict["reset_time"] as? String {
     return parseDate(resetTime)
   }
   if let resetIn = parseNumber(dict["reset_in"]) {
-    return Date().addingTimeInterval(resetIn)
+    return now.addingTimeInterval(resetIn)
   }
   return nil
 }
