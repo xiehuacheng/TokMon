@@ -78,6 +78,34 @@ enum TokMonMenuBarDisplayMode: String, Codable, CaseIterable, Identifiable {
   }
 }
 
+struct KimiQuotaWindow: Equatable, Sendable {
+  var label: String
+  var used: Double
+  var limit: Double
+  var remaining: Double
+  var percentUsed: Double
+  var resetAt: Date?
+  var countdown: String?
+}
+
+struct KimiQuotaSnapshot: Equatable, Sendable {
+  var weekly: KimiQuotaWindow?
+  var fiveHour: KimiQuotaWindow?
+  var fetchedAt: Date?
+  var error: KimiQuotaError?
+
+  static let empty = KimiQuotaSnapshot()
+}
+
+enum KimiQuotaError: Error, Equatable {
+  case noAPIKey
+  case invalidKey
+  case endpointNotFound
+  case network
+  case decoding
+  case rateLimited
+}
+
 struct TokMonUIState: Codable, Equatable {
   var source: String
   var from: String
@@ -92,6 +120,7 @@ struct TokMonUIState: Codable, Equatable {
   var menuBarDisplayMode: TokMonMenuBarDisplayMode = .iconOnly
   /// Deprecated: TokMon refreshes are now event-driven. Kept for config compatibility.
   var refreshRate: Int
+  var kimiQuotaRefreshInterval: Int = 5
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]
 
@@ -108,6 +137,7 @@ struct TokMonUIState: Codable, Equatable {
     activeSeries: "total",
     menuBarDisplayMode: .iconOnly,
     refreshRate: 3000,
+    kimiQuotaRefreshInterval: 5,
     costRates: .zero,
     modelPricing: [:],
   )
