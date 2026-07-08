@@ -29,6 +29,8 @@ struct TokMonQuotaMiniCard: View {
       .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     .buttonStyle(.plain)
+    .focusable(false)
+    .focusEffectDisabled()
     .hudCard()
   }
 

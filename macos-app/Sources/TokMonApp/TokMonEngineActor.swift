@@ -29,8 +29,6 @@ actor TokMonEngineActor {
       cacheCreateRate: uiState.costRates.cacheCreate,
       cacheReadRate: uiState.costRates.cacheRead,
       modelPricing: uiState.modelPricing,
-      kimiCodeAPIKey: "",
-      kimiCodeAPIKeyConfigured: TokMonKeychain.hasKimiAPIKey(),
       kimiQuotaRefreshInterval: uiState.kimiQuotaRefreshInterval,
       availableModels: models,
     )
@@ -44,9 +42,6 @@ actor TokMonEngineActor {
     config.sources["opencode"] = TokMonSourceConfig(path: draft.openCodePath)
     config.sources["qwen-code"] = TokMonSourceConfig(path: draft.qwenCodePath)
     try engine.configStore.saveConfig(config)
-    if !draft.kimiCodeAPIKey.isEmpty {
-      try TokMonKeychain.saveKimiAPIKey(draft.kimiCodeAPIKey)
-    }
     let existingState = try engine.configStore.loadUIState()
     try engine.configStore.saveUIState(uiState(from: draft, preserving: existingState))
   }
@@ -251,15 +246,90 @@ actor TokMonEngineActor {
     )
   }
 
-  func refreshKimiQuota() async -> KimiQuotaSnapshot {
-    guard let apiKey = TokMonKeychain.loadKimiAPIKey(), !apiKey.isEmpty else {
+  func migrateLegacyKimiAPIKeyIfNeeded() async throws {
+    guard TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount) else {
+      return
+    }
+    guard let legacyKey = TokMonKeychain.load(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount),
+          !legacyKey.isEmpty else {
+      try TokMonKeychain.delete(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount)
+      return
+    }
+    let newID = UUID().uuidString
+    try TokMonKeychain.saveKimiAPIKey(legacyKey, id: newID)
+    var uiState = try engine.configStore.loadUIState()
+    let account = KimiAPIKeyAccount(id: newID, label: "Kimi Key")
+    uiState.kimiAPIKeyAccounts.append(account)
+    if uiState.selectedKimiAPIKeyID == nil {
+      uiState.selectedKimiAPIKeyID = newID
+    }
+    try engine.configStore.saveUIState(uiState)
+    try TokMonKeychain.delete(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount)
+  }
+
+  func loadKimiAPIKeyAccounts() throws -> [KimiAPIKeyAccount] {
+    try engine.configStore.loadUIState().kimiAPIKeyAccounts
+  }
+
+  func addKimiAPIKey(_ key: String, label: String) async throws -> KimiAPIKeyAccount {
+    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.hasPrefix("sk-kimi-") else {
+      throw KimiQuotaError.invalidKey
+    }
+    let id = UUID().uuidString
+    try TokMonKeychain.saveKimiAPIKey(trimmed, id: id)
+    let account = KimiAPIKeyAccount(id: id, label: label.isEmpty ? "Kimi Key" : label)
+    var uiState = try engine.configStore.loadUIState()
+    uiState.kimiAPIKeyAccounts.append(account)
+    if uiState.selectedKimiAPIKeyID == nil {
+      uiState.selectedKimiAPIKeyID = id
+    }
+    try engine.configStore.saveUIState(uiState)
+    return account
+  }
+
+  func removeKimiAPIKey(id: String) async throws {
+    try TokMonKeychain.deleteKimiAPIKey(id: id)
+    var uiState = try engine.configStore.loadUIState()
+    uiState.kimiAPIKeyAccounts.removeAll { $0.id == id }
+    if uiState.selectedKimiAPIKeyID == id {
+      uiState.selectedKimiAPIKeyID = uiState.kimiAPIKeyAccounts.first?.id
+    }
+    try engine.configStore.saveUIState(uiState)
+  }
+
+  func renameKimiAPIKey(id: String, newLabel: String) async throws {
+    let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    var uiState = try engine.configStore.loadUIState()
+    if let index = uiState.kimiAPIKeyAccounts.firstIndex(where: { $0.id == id }) {
+      uiState.kimiAPIKeyAccounts[index].label = trimmed
+      try engine.configStore.saveUIState(uiState)
+    }
+  }
+
+  func refreshKimiQuota(forKeyID id: String) async -> KimiQuotaSnapshot {
+    guard let apiKey = TokMonKeychain.loadKimiAPIKey(id: id), !apiKey.isEmpty else {
       return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
     }
     return await engine.kimiQuotaStore.fetchQuota(apiKey: apiKey)
   }
 
-  func deleteKimiAPIKey() throws {
-    try TokMonKeychain.deleteKimiAPIKey()
+  func refreshAllKimiQuotas() async -> [String: KimiQuotaSnapshot] {
+    let accounts = (try? loadKimiAPIKeyAccounts()) ?? []
+    guard !accounts.isEmpty else { return [:] }
+    return await withTaskGroup(of: (String, KimiQuotaSnapshot).self) { group in
+      for account in accounts {
+        group.addTask {
+          (account.id, await self.refreshKimiQuota(forKeyID: account.id))
+        }
+      }
+      var result: [String: KimiQuotaSnapshot] = [:]
+      for await (id, snapshot) in group {
+        result[id] = snapshot
+      }
+      return result
+    }
   }
 
   func loadKimiQuotaRefreshInterval() throws -> Int {
@@ -290,6 +360,8 @@ actor TokMonEngineActor {
         cacheRead: max(0, draft.cacheReadRate),
       ),
       modelPricing: normalizedModelPricing(draft.modelPricing),
+      kimiAPIKeyAccounts: existingState.kimiAPIKeyAccounts,
+      selectedKimiAPIKeyID: existingState.selectedKimiAPIKeyID
     )
   }
 

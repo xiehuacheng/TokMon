@@ -353,10 +353,15 @@ struct StatusPopoverView: View {
 
   private var quotaPage: some View {
     TokMonQuotaView(
-      snapshot: stats.kimiQuotaSnapshot,
+      accounts: stats.kimiAPIKeyAccounts,
+      snapshots: stats.kimiQuotaSnapshots,
+      selectedAccountID: stats.selectedKimiAPIKeyID,
       isLoading: stats.isRefreshingQuota,
       onRefresh: { Task { await stats.refreshKimiQuota() } },
-      onOpenSettings: { runtime.openSettings() }
+      onSelectAccount: { stats.selectKimiAPIKey(id: $0) },
+      onAddKey: { key, label in Task { try? await stats.addKimiAPIKey(key, label: label) } },
+      onRemoveKey: { id in Task { try? await stats.removeKimiAPIKey(id: id) } },
+      onRenameKey: { id, newLabel in Task { try? await stats.renameKimiAPIKey(id: id, newLabel: newLabel) } }
     )
     .font(.system(size: 12, weight: .regular, design: .rounded))
   }
@@ -2364,7 +2369,7 @@ extension View {
   }
 }
 
-private extension View {
+extension View {
   func requestActionButton() -> some View {
     foregroundStyle(.primary.opacity(0.86))
       .padding(.horizontal, 12)

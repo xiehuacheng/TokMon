@@ -95,17 +95,8 @@ struct TokMonSettingsWindow: View {
               }
             }
 
-            SettingsSection("API Keys") {
-              FieldRow("Kimi Code") {
-                VStack(alignment: .leading, spacing: 6) {
-                  SecureField("sk-kimi-xxx", text: $store.draft.kimiCodeAPIKey)
-                    .settingsTextField(width: 430)
-                  Text(store.draft.kimiCodeAPIKeyConfigured ? "Configured" : "Not configured")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(store.draft.kimiCodeAPIKeyConfigured ? .secondary : TokMonGlass.danger)
-                }
-              }
-              FieldRow("Quota Refresh") {
+            SettingsSection("Kimi Quota") {
+              FieldRow("Refresh") {
                 Picker("Refresh Interval", selection: $store.draft.kimiQuotaRefreshInterval) {
                   Text("Manual").tag(0)
                   Text("1 min").tag(1)
@@ -116,15 +107,6 @@ struct TokMonSettingsWindow: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 320)
-              }
-              FieldRow("Actions") {
-                HStack(spacing: 8) {
-                  Button("Clear Key") {
-                    Task { try? await store.clearKimiAPIKey() }
-                  }
-                  .tokMonGlassButton()
-                  .disabled(!store.draft.kimiCodeAPIKeyConfigured || store.isBusy)
-                }
               }
             }
           }

@@ -4,6 +4,7 @@ enum TokMonMenuBarPresentation {
   static func title(
     for items: TokMonMenuBarItems,
     snapshot: TokMonStatsSnapshot,
+    kimiQuotaSnapshot: KimiQuotaSnapshot? = nil,
   ) -> String? {
     guard !items.isEmpty else {
       return nil
@@ -12,6 +13,7 @@ enum TokMonMenuBarPresentation {
       return nil
     }
 
+    let quota = kimiQuotaSnapshot ?? snapshot.kimiQuotaSnapshot
     var parts: [String] = []
     if items.totalTokens {
       parts.append(formatCompact(Double(summary.total.totalTokens)))
@@ -23,10 +25,8 @@ enum TokMonMenuBarPresentation {
       parts.append(formatCompact(Double(summary.total.totalRequests)))
     }
     if items.kimiQuota {
-      if let weekly = snapshot.kimiQuotaSnapshot?.weekly {
+      if let weekly = quota?.weekly {
         parts.append("K\(Int(weekly.percentUsed))%")
-      } else {
-        parts.append("K-")
       }
     }
 
@@ -37,8 +37,9 @@ enum TokMonMenuBarPresentation {
   static func accessibilityLabel(
     for items: TokMonMenuBarItems,
     snapshot: TokMonStatsSnapshot,
+    kimiQuotaSnapshot: KimiQuotaSnapshot? = nil,
   ) -> String {
-    guard let title = title(for: items, snapshot: snapshot), !title.isEmpty else {
+    guard let title = title(for: items, snapshot: snapshot, kimiQuotaSnapshot: kimiQuotaSnapshot), !title.isEmpty else {
       return "TokMon"
     }
     return "TokMon \(title)"

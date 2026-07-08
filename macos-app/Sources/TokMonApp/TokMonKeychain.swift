@@ -3,22 +3,41 @@ import Security
 
 enum TokMonKeychain {
   static let kimiService = "com.tokmon.kimi-code.api-key"
+  /// Legacy single-key account; kept for migration.
   static let kimiAccount = "kimi-code-api-key"
 
-  static func saveKimiAPIKey(_ key: String) throws {
-    try save(key, service: kimiService, account: kimiAccount)
+  static func saveKimiAPIKey(_ key: String, id: String) throws {
+    try save(key, service: kimiService, account: id)
   }
 
-  static func loadKimiAPIKey() -> String? {
-    load(service: kimiService, account: kimiAccount)
+  static func loadKimiAPIKey(id: String) -> String? {
+    load(service: kimiService, account: id)
   }
 
-  static func hasKimiAPIKey() -> Bool {
-    has(service: kimiService, account: kimiAccount)
+  static func deleteKimiAPIKey(id: String) throws {
+    try delete(service: kimiService, account: id)
   }
 
-  static func deleteKimiAPIKey() throws {
-    try delete(service: kimiService, account: kimiAccount)
+  static func hasKimiAPIKey(id: String) -> Bool {
+    has(service: kimiService, account: id)
+  }
+
+  static func allKimiAPIKeyAccountIDs() -> [String] {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kimiService,
+      kSecReturnAttributes as String: true,
+      kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    var result: AnyObject?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    guard status == errSecSuccess else {
+      return []
+    }
+    guard let items = result as? [[String: Any]] else {
+      return []
+    }
+    return items.compactMap { $0[kSecAttrAccount as String] as? String }
   }
 
   // MARK: - Internal primitives for testability

@@ -36,8 +36,8 @@ final class TokMonConfigStore {
     try write(state, to: uiStateURL)
   }
 
-  func loadLastKimiQuotaSnapshot() -> KimiQuotaSnapshot? {
-    let url = lastKimiQuotaSnapshotURL
+  func loadKimiQuotaSnapshot(keyID: String) -> KimiQuotaSnapshot? {
+    let url = kimiQuotaSnapshotURL(keyID: keyID)
     guard fileManager.fileExists(atPath: url.path) else {
       return nil
     }
@@ -47,8 +47,20 @@ final class TokMonConfigStore {
     return try? JSONDecoder().decode(KimiQuotaSnapshot.self, from: data)
   }
 
-  func saveLastKimiQuotaSnapshot(_ snapshot: KimiQuotaSnapshot) throws {
-    try write(snapshot, to: lastKimiQuotaSnapshotURL)
+  func saveKimiQuotaSnapshot(_ snapshot: KimiQuotaSnapshot, keyID: String) throws {
+    try write(snapshot, to: kimiQuotaSnapshotURL(keyID: keyID))
+  }
+
+  /// Legacy single-key cache; kept only for migration.
+  func loadLastKimiQuotaSnapshot() -> KimiQuotaSnapshot? {
+    let url = dataDir.appendingPathComponent("tokmon-kimi-quota.json")
+    guard fileManager.fileExists(atPath: url.path) else {
+      return nil
+    }
+    guard let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    return try? JSONDecoder().decode(KimiQuotaSnapshot.self, from: data)
   }
 
   func expandUserPath(_ path: String) -> String {
@@ -73,6 +85,10 @@ final class TokMonConfigStore {
 
   private var lastKimiQuotaSnapshotURL: URL {
     dataDir.appendingPathComponent("tokmon-kimi-quota.json")
+  }
+
+  private func kimiQuotaSnapshotURL(keyID: String) -> URL {
+    dataDir.appendingPathComponent("tokmon-kimi-quota-\(keyID).json")
   }
 
   private func normalizedConfig(from data: Data) -> TokMonConfig? {
@@ -123,6 +139,8 @@ final class TokMonConfigStore {
       kimiQuotaRefreshInterval: intValue(object["kimiQuotaRefreshInterval"]) ?? defaults.kimiQuotaRefreshInterval,
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),
+      kimiAPIKeyAccounts: normalizedKimiAPIKeyAccounts(from: object["kimiAPIKeyAccounts"]),
+      selectedKimiAPIKeyID: optionalStringValue(object["selectedKimiAPIKeyID"], default: nil)
     )
   }
 
@@ -164,6 +182,19 @@ final class TokMonConfigStore {
         return
       }
       result[item.key] = normalizedCostRates(from: item.value)
+    }
+  }
+
+  private func normalizedKimiAPIKeyAccounts(from rawValue: Any?) -> [KimiAPIKeyAccount] {
+    guard let array = rawValue as? [[String: Any]] else {
+      return []
+    }
+    return array.compactMap { item in
+      guard let id = item["id"] as? String, !id.isEmpty,
+            let label = item["label"] as? String else {
+        return nil
+      }
+      return KimiAPIKeyAccount(id: id, label: label)
     }
   }
 

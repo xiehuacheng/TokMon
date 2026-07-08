@@ -74,6 +74,8 @@ import Testing
   #expect(state.menuBarDisplayItems == .empty)
   #expect(state.modelPricing["gpt-a"] == TokMonCostRates(input: 1.5, output: 2.5, cacheCreate: 3.5, cacheRead: 4.5))
   #expect(state.modelPricing["bad"] == TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0))
+  #expect(state.kimiAPIKeyAccounts.isEmpty)
+  #expect(state.selectedKimiAPIKeyID == nil)
 }
 
 @Test func configStoreLoadsAndSavesMenuBarDisplayItems() throws {
@@ -143,4 +145,39 @@ import Testing
   #expect(try store.loadUIState() == state)
   #expect(store.expandUserPath("~/custom/sessions") == FileManager.default.homeDirectoryForCurrentUser.path + "/custom/sessions")
   #expect(store.expandUserPath("/tmp/~/sessions") == "/tmp/~/sessions")
+}
+
+@Test func configStoreLoadsAndSavesKimiAPIKeyAccounts() throws {
+  let dataDir = try makeTokMonTempDir()
+  let store = TokMonConfigStore(dataDir: dataDir)
+  var state = TokMonUIState.default
+  state.kimiAPIKeyAccounts = [
+    KimiAPIKeyAccount(id: "id-1", label: "Work"),
+    KimiAPIKeyAccount(id: "id-2", label: "Personal"),
+  ]
+  state.selectedKimiAPIKeyID = "id-1"
+
+  try store.saveUIState(state)
+  let loaded = try store.loadUIState()
+
+  #expect(loaded.kimiAPIKeyAccounts == state.kimiAPIKeyAccounts)
+  #expect(loaded.selectedKimiAPIKeyID == "id-1")
+}
+
+@Test func configStoreLoadsAndSavesPerKeyQuotaSnapshot() throws {
+  let dataDir = try makeTokMonTempDir()
+  let store = TokMonConfigStore(dataDir: dataDir)
+  let snapshot = KimiQuotaSnapshot(
+    weekly: KimiQuotaWindow(label: "Weekly", used: 30, limit: 100, remaining: 70, percentUsed: 30, resetAt: nil, countdown: nil),
+    fiveHour: nil,
+    fetchedAt: Date(timeIntervalSince1970: 1_000_000),
+    error: nil
+  )
+
+  try store.saveKimiQuotaSnapshot(snapshot, keyID: "id-1")
+  let loaded = store.loadKimiQuotaSnapshot(keyID: "id-1")
+
+  #expect(loaded?.weekly?.used == 30)
+  #expect(loaded?.fetchedAt == snapshot.fetchedAt)
+  #expect(store.loadKimiQuotaSnapshot(keyID: "id-2") == nil)
 }

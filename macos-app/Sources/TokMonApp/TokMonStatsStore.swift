@@ -43,6 +43,9 @@ final class TokMonStatsStore: ObservableObject {
   @Published private(set) var errorMessage: String?
   @Published private(set) var kimiQuotaSnapshot: KimiQuotaSnapshot?
   @Published private(set) var isRefreshingQuota = false
+  @Published private(set) var kimiAPIKeyAccounts: [KimiAPIKeyAccount] = []
+  @Published private(set) var selectedKimiAPIKeyID: String? = nil
+  @Published private(set) var kimiQuotaSnapshots: [String: KimiQuotaSnapshot] = [:]
   private var isUpdatingDashboardRange = false
 
   private let nativeEngineActor: TokMonEngineActor?
@@ -62,25 +65,65 @@ final class TokMonStatsStore: ObservableObject {
     nativeEngineActor = engine.map { TokMonEngineActor(engine: $0) }
     self.configStore = configStore
     self.nowProvider = nowProvider
-    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
+    loadKimiState()
+    Task { @MainActor [weak self] in
+      try? await self?.nativeEngineActor?.migrateLegacyKimiAPIKeyIfNeeded()
+      self?.loadKimiState()
+    }
   }
 
   init(engineActor: TokMonEngineActor, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = engineActor
     self.configStore = configStore
     self.nowProvider = nowProvider
-    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
+    loadKimiState()
+    Task { @MainActor [weak self] in
+      try? await self?.nativeEngineActor?.migrateLegacyKimiAPIKeyIfNeeded()
+      self?.loadKimiState()
+    }
   }
 
   init(startupError: String, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
     nativeEngineActor = nil
     self.configStore = configStore
     self.nowProvider = nowProvider
-    self.kimiQuotaSnapshot = configStore?.loadLastKimiQuotaSnapshot()
+    loadKimiState()
     errorMessage = startupError
   }
 
   private let nowProvider: @Sendable () -> Date
+
+  private func loadKimiState() {
+    guard let configStore else { return }
+    let uiState = (try? configStore.loadUIState()) ?? TokMonUIState.default
+    self.kimiAPIKeyAccounts = uiState.kimiAPIKeyAccounts
+    self.selectedKimiAPIKeyID = uiState.selectedKimiAPIKeyID
+    var snapshots: [String: KimiQuotaSnapshot] = [:]
+    for account in uiState.kimiAPIKeyAccounts {
+      snapshots[account.id] = configStore.loadKimiQuotaSnapshot(keyID: account.id)
+    }
+    self.kimiQuotaSnapshots = snapshots
+    publishKimiQuotaSnapshot()
+  }
+
+  private func publishKimiQuotaSnapshot() {
+    let snapshot: KimiQuotaSnapshot
+    if let selectedID = selectedKimiAPIKeyID, let cached = kimiQuotaSnapshots[selectedID] {
+      snapshot = cached
+    } else {
+      snapshot = KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
+    }
+    if self.kimiQuotaSnapshot != snapshot {
+      self.kimiQuotaSnapshot = snapshot
+    }
+  }
+
+  private func saveSelectedKimiAPIKeyID(_ id: String?) {
+    guard let configStore else { return }
+    var uiState = (try? configStore.loadUIState()) ?? TokMonUIState.default
+    uiState.selectedKimiAPIKeyID = id
+    try? configStore.saveUIState(uiState)
+  }
 
   var usesNativeEngine: Bool {
     nativeEngineActor != nil
@@ -285,15 +328,52 @@ final class TokMonStatsStore: ObservableObject {
     }
   }
 
-  func refreshKimiQuota() async {
+  func selectKimiAPIKey(id: String?) {
+    selectedKimiAPIKeyID = id
+    saveSelectedKimiAPIKeyID(id)
+    publishKimiQuotaSnapshot()
+    if let id, kimiQuotaSnapshots[id] == nil {
+      Task { @MainActor [weak self] in
+        await self?.refreshKimiQuota()
+      }
+    }
+  }
+
+  func addKimiAPIKey(_ key: String, label: String) async throws {
     guard let nativeEngineActor else { return }
+    _ = try await nativeEngineActor.addKimiAPIKey(key, label: label)
+    loadKimiState()
+    await refreshKimiQuota()
+  }
+
+  func removeKimiAPIKey(id: String) async throws {
+    guard let nativeEngineActor else { return }
+    try await nativeEngineActor.removeKimiAPIKey(id: id)
+    kimiQuotaSnapshots.removeValue(forKey: id)
+    loadKimiState()
+  }
+
+  func renameKimiAPIKey(id: String, newLabel: String) async throws {
+    guard let nativeEngineActor else { return }
+    try await nativeEngineActor.renameKimiAPIKey(id: id, newLabel: newLabel)
+    loadKimiState()
+  }
+
+  func refreshKimiQuota() async {
+    guard let nativeEngineActor, !kimiAPIKeyAccounts.isEmpty else {
+      publishKimiQuotaSnapshot()
+      return
+    }
     isRefreshingQuota = true
     defer { isRefreshingQuota = false }
-    let newSnapshot = await nativeEngineActor.refreshKimiQuota()
-    kimiQuotaSnapshot = newSnapshot
-    if newSnapshot.error == nil, newSnapshot.weekly != nil || newSnapshot.fiveHour != nil {
-      try? configStore?.saveLastKimiQuotaSnapshot(newSnapshot)
+    let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas()
+    for (id, snapshot) in newSnapshots {
+      kimiQuotaSnapshots[id] = snapshot
+      if snapshot.error == nil, snapshot.weekly != nil || snapshot.fiveHour != nil {
+        try? configStore?.saveKimiQuotaSnapshot(snapshot, keyID: id)
+      }
     }
+    publishKimiQuotaSnapshot()
   }
 
   private func syncQuotaRefreshTask() {

@@ -109,6 +109,14 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
         self?.updateStatusItem(snapshot: snapshot)
       }
       .store(in: &cancellables)
+
+    runtime.stats.$kimiQuotaSnapshot
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] _ in
+        guard let self else { return }
+        self.updateStatusItem(snapshot: self.runtime.stats.snapshot)
+      }
+      .store(in: &cancellables)
   }
 
   private func refreshStatusItemImage() {
@@ -138,12 +146,13 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
 
   private func updateStatusItem(snapshot: TokMonStatsSnapshot) {
     let items = snapshot.dashboardState?.menuBarDisplayItems ?? .empty
-    let title = TokMonMenuBarPresentation.title(for: items, snapshot: snapshot)
+    let quotaSnapshot = runtime.stats.kimiQuotaSnapshot
+    let title = TokMonMenuBarPresentation.title(for: items, snapshot: snapshot, kimiQuotaSnapshot: quotaSnapshot)
     let button = statusItem.button
 
     button?.title = title ?? ""
     button?.imagePosition = title == nil ? .imageOnly : .imageLeft
-    button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: items, snapshot: snapshot)
+    button?.toolTip = TokMonMenuBarPresentation.accessibilityLabel(for: items, snapshot: snapshot, kimiQuotaSnapshot: quotaSnapshot)
     statusItem.length = NSStatusItem.variableLength
   }
 

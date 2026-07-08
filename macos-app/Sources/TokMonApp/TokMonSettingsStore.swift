@@ -28,14 +28,9 @@ final class TokMonSettingsStore: ObservableObject {
   }
 
   func save() async throws {
-    let wasConfiguringKey = !draft.kimiCodeAPIKey.isEmpty
     try await runBusyAction {
       try await engineActor.saveSettings(draft: draft)
       statusMessage = "Settings saved."
-    }
-    if wasConfiguringKey {
-      draft.kimiCodeAPIKey = ""
-      draft.kimiCodeAPIKeyConfigured = true
     }
   }
 
@@ -50,15 +45,6 @@ final class TokMonSettingsStore: ObservableObject {
     try await runBusyAction {
       let inserted = try await engineActor.rebuildAndRescan()
       statusMessage = inserted == 1 ? "Rebuilt database and scanned 1 record." : "Rebuilt database and scanned \(inserted) records."
-    }
-  }
-
-  func clearKimiAPIKey() async throws {
-    try await runBusyAction {
-      try await engineActor.deleteKimiAPIKey()
-      draft.kimiCodeAPIKey = ""
-      draft.kimiCodeAPIKeyConfigured = false
-      statusMessage = "Kimi API key cleared."
     }
   }
 
@@ -93,8 +79,6 @@ struct TokMonSettingsDraft: Equatable {
   var cacheCreateRate = TokMonUIState.default.costRates.cacheCreate
   var cacheReadRate = TokMonUIState.default.costRates.cacheRead
   var modelPricing = TokMonUIState.default.modelPricing
-  var kimiCodeAPIKey: String = ""
-  var kimiCodeAPIKeyConfigured: Bool = false
   var kimiQuotaRefreshInterval: Int = TokMonUIState.default.kimiQuotaRefreshInterval
   var availableModels: [TokMonModelOption] = []
 }

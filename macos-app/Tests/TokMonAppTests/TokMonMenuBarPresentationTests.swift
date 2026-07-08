@@ -35,10 +35,10 @@ import Testing
   #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(kimiQuota: true), snapshot: snapshot) == "K50%")
 }
 
-@Test func menuBarPresentationShowsKimiQuotaPlaceholderWhenMissing() {
+@Test func menuBarPresentationOmitsKimiQuotaWhenMissing() {
   let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
 
-  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(kimiQuota: true), snapshot: snapshot) == "K-")
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(kimiQuota: true), snapshot: snapshot) == nil)
 }
 
 @Test func menuBarPresentationReturnsNilWhenSummaryIsMissing() {

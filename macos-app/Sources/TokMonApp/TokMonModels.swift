@@ -117,6 +117,16 @@ enum KimiQuotaError: Error, Equatable, Sendable, Codable {
   case rateLimited
 }
 
+struct KimiAPIKeyAccount: Equatable, Sendable, Codable, Identifiable {
+  var id: String
+  var label: String
+
+  init(id: String = UUID().uuidString, label: String) {
+    self.id = id
+    self.label = label
+  }
+}
+
 struct TokMonUIState: Codable, Equatable {
   var source: String
   var from: String
@@ -135,6 +145,8 @@ struct TokMonUIState: Codable, Equatable {
   var kimiQuotaRefreshInterval: Int = 5
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]
+  var kimiAPIKeyAccounts: [KimiAPIKeyAccount] = []
+  var selectedKimiAPIKeyID: String? = nil
 
   static let `default` = TokMonUIState(
     source: "",

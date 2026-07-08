@@ -244,4 +244,39 @@ import Testing
     let reloaded = try await actor.loadSettingsDraft()
     #expect(reloaded.kimiQuotaRefreshInterval == 15)
   }
+
+  @Test func engineActorAddsAndRemovesKimiAPIKeys() async throws {
+    let dataDir = try makeTokMonTempDir()
+    let configStore = TokMonConfigStore(dataDir: dataDir)
+    let database = try TokMonDatabase(appDataDir: dataDir)
+    let engine = TokMonEngine(configStore: configStore, database: database)
+    let actor = TokMonEngineActor(engine: engine)
+
+    let account = try await actor.addKimiAPIKey("sk-kimi-test-add", label: "Test Key")
+    defer {
+      Task { try? await actor.removeKimiAPIKey(id: account.id) }
+    }
+
+    let accounts = try await actor.loadKimiAPIKeyAccounts()
+    #expect(accounts.contains(where: { $0.id == account.id && $0.label == "Test Key" }))
+
+    let state = try configStore.loadUIState()
+    #expect(state.selectedKimiAPIKeyID == account.id)
+
+    try await actor.removeKimiAPIKey(id: account.id)
+    let remaining = try await actor.loadKimiAPIKeyAccounts()
+    #expect(!remaining.contains(where: { $0.id == account.id }))
+    #expect(try configStore.loadUIState().selectedKimiAPIKeyID == nil)
+  }
+
+  @Test func engineActorRejectsInvalidKimiAPIKey() async throws {
+    let dataDir = try makeTokMonTempDir()
+    let database = try TokMonDatabase(appDataDir: dataDir)
+    let engine = TokMonEngine(configStore: TokMonConfigStore(dataDir: dataDir), database: database)
+    let actor = TokMonEngineActor(engine: engine)
+
+    await #expect(throws: KimiQuotaError.invalidKey) {
+      try await actor.addKimiAPIKey("not-a-kimi-key", label: "Bad")
+    }
+  }
 }
