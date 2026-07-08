@@ -228,3 +228,20 @@ import Testing
 
   #expect(try database.allUsageRecords().map(\.sessionId) == ["existing"])
 }
+
+@Suite struct TokMonSettingsStoreQuotaTests {
+  @Test func settingsDraftPreservesKimiQuotaInterval() async throws {
+    let dataDir = try makeTokMonTempDir()
+    let configStore = TokMonConfigStore(dataDir: dataDir)
+    let database = try TokMonDatabase(appDataDir: dataDir)
+    let engine = TokMonEngine(configStore: configStore, database: database)
+    let actor = TokMonEngineActor(engine: engine)
+
+    var draft = try await actor.loadSettingsDraft()
+    draft.kimiQuotaRefreshInterval = 15
+    try await actor.saveSettings(draft: draft)
+
+    let reloaded = try await actor.loadSettingsDraft()
+    #expect(reloaded.kimiQuotaRefreshInterval == 15)
+  }
+}

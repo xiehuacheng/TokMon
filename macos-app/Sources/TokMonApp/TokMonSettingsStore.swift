@@ -79,6 +79,9 @@ struct TokMonSettingsDraft: Equatable {
   var cacheCreateRate = TokMonUIState.default.costRates.cacheCreate
   var cacheReadRate = TokMonUIState.default.costRates.cacheRead
   var modelPricing = TokMonUIState.default.modelPricing
+  var kimiCodeAPIKey: String = ""
+  var kimiCodeAPIKeyConfigured: Bool = false
+  var kimiQuotaRefreshInterval: Int = TokMonUIState.default.kimiQuotaRefreshInterval
   var availableModels: [TokMonModelOption] = []
 }
 

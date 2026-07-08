@@ -103,6 +103,7 @@ final class TokMonConfigStore {
         rawValueOrDefault: stringValue(object["menuBarDisplayMode"]),
       ),
       refreshRate: intValue(object["refreshRate"]) ?? defaults.refreshRate,
+      kimiQuotaRefreshInterval: intValue(object["kimiQuotaRefreshInterval"]) ?? defaults.kimiQuotaRefreshInterval,
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),
     )

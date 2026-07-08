@@ -29,6 +29,9 @@ actor TokMonEngineActor {
       cacheCreateRate: uiState.costRates.cacheCreate,
       cacheReadRate: uiState.costRates.cacheRead,
       modelPricing: uiState.modelPricing,
+      kimiCodeAPIKey: "",
+      kimiCodeAPIKeyConfigured: TokMonKeychain.loadKimiAPIKey() != nil,
+      kimiQuotaRefreshInterval: uiState.kimiQuotaRefreshInterval,
       availableModels: models,
     )
   }
@@ -41,6 +44,9 @@ actor TokMonEngineActor {
     config.sources["opencode"] = TokMonSourceConfig(path: draft.openCodePath)
     config.sources["qwen-code"] = TokMonSourceConfig(path: draft.qwenCodePath)
     try engine.configStore.saveConfig(config)
+    if !draft.kimiCodeAPIKey.isEmpty {
+      try TokMonKeychain.saveKimiAPIKey(draft.kimiCodeAPIKey)
+    }
     let existingState = try engine.configStore.loadUIState()
     try engine.configStore.saveUIState(uiState(from: draft, preserving: existingState))
   }
@@ -245,6 +251,22 @@ actor TokMonEngineActor {
     )
   }
 
+  func refreshKimiQuota() async -> KimiQuotaSnapshot {
+    guard let apiKey = TokMonKeychain.loadKimiAPIKey(), !apiKey.isEmpty else {
+      return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
+    }
+    return await engine.kimiQuotaStore.fetchQuota(apiKey: apiKey)
+  }
+
+  func deleteKimiAPIKey() throws {
+    try TokMonKeychain.deleteKimiAPIKey()
+  }
+
+  func loadKimiQuotaRefreshInterval() throws -> Int {
+    let state = try engine.configStore.loadUIState()
+    return max(0, state.kimiQuotaRefreshInterval)
+  }
+
   private func uiState(from draft: TokMonSettingsDraft, preserving existingState: TokMonUIState) -> TokMonUIState {
     let preset = TokMonRangePreset(label: draft.rangeLabel)
     return TokMonUIState(
@@ -260,6 +282,7 @@ actor TokMonEngineActor {
       activeSeries: draft.activeSeries,
       menuBarDisplayMode: draft.menuBarDisplayMode,
       refreshRate: max(1000, draft.refreshRate),
+      kimiQuotaRefreshInterval: max(0, draft.kimiQuotaRefreshInterval),
       costRates: TokMonCostRates(
         input: max(0, draft.inputRate),
         output: max(0, draft.outputRate),
