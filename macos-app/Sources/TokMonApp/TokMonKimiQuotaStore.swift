@@ -4,7 +4,7 @@ actor TokMonKimiQuotaStore {
   private let baseURL: String
   private let urlSession: URLSession
 
-  init(baseURL: String = "https://api.kimi.com/coding/v1", urlSession: URLSession = .shared) {
+  init(baseURL: String = "https://api.kimi.com/coding/v1", urlSession: URLSession = URLSession(configuration: .ephemeral)) {
     self.baseURL = baseURL
     self.urlSession = urlSession
   }
@@ -24,8 +24,13 @@ actor TokMonKimiQuotaStore {
   }
 
   private func performFetch(apiKey: String) async throws -> KimiQuotaSnapshot {
-    let data = try await fetchData(apiKey: apiKey, path: "/usages")
-    return try parseUsagePayload(data, fetchedAt: Date())
+    do {
+      let data = try await fetchData(apiKey: apiKey, path: "/usages")
+      return try parseUsagePayload(data, fetchedAt: Date())
+    } catch KimiQuotaError.endpointNotFound {
+      let data = try await fetchData(apiKey: apiKey, path: "/usage")
+      return try parseUsagePayload(data, fetchedAt: Date())
+    }
   }
 
   private func fetchData(apiKey: String, path: String) async throws -> Data {

@@ -30,7 +30,7 @@ actor TokMonEngineActor {
       cacheReadRate: uiState.costRates.cacheRead,
       modelPricing: uiState.modelPricing,
       kimiCodeAPIKey: "",
-      kimiCodeAPIKeyConfigured: TokMonKeychain.loadKimiAPIKey() != nil,
+      kimiCodeAPIKeyConfigured: TokMonKeychain.hasKimiAPIKey(),
       kimiQuotaRefreshInterval: uiState.kimiQuotaRefreshInterval,
       availableModels: models,
     )

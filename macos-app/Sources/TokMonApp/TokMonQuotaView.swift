@@ -3,6 +3,7 @@ import SwiftUI
 struct TokMonQuotaView: View {
   let snapshot: KimiQuotaSnapshot?
   let onRefresh: () -> Void
+  let onOpenSettings: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -78,10 +79,30 @@ struct TokMonQuotaView: View {
     }
   }
 
+  @ViewBuilder
   private func errorView(_ error: KimiQuotaError) -> some View {
-    let message: String = switch error {
-    case .noAPIKey:
-      "Add your Kimi Code API key in Settings."
+    if error == .noAPIKey {
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Add your Kimi Code API key in Settings.")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .foregroundStyle(TokMonGlass.danger)
+          .lineLimit(2)
+        Button("Open Settings") {
+          onOpenSettings()
+        }
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .controlSize(.small)
+      }
+    } else {
+      Text(errorMessage(error))
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(TokMonGlass.danger)
+        .lineLimit(2)
+    }
+  }
+
+  private func errorMessage(_ error: KimiQuotaError) -> String {
+    switch error {
     case .invalidKey:
       "Invalid API key. Make sure it is a Kimi Code key (sk-kimi-xxx)."
     case .endpointNotFound:
@@ -90,11 +111,9 @@ struct TokMonQuotaView: View {
       "Rate limited. Please retry later."
     case .network, .decoding:
       "Could not load quota. Check your network."
+    case .noAPIKey:
+      "Add your Kimi Code API key in Settings."
     }
-    return Text(message)
-      .font(.system(size: 12, weight: .semibold, design: .rounded))
-      .foregroundStyle(TokMonGlass.danger)
-      .lineLimit(2)
   }
 
   private func color(for percent: Double) -> Color {

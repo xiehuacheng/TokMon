@@ -71,9 +71,10 @@ struct StatusPopoverView: View {
     .onChange(of: selectedSessionBubbleY, initial: true) { _, _ in
       syncSessionBubbleHitSurface()
     }
-    .onChange(of: selectedPage, initial: true) { _, _ in
+    .onChange(of: selectedPage, initial: true) { _, page in
       resetTransientUIState()
       syncSessionBubbleHitSurface()
+      stats.setQuotaPageVisible(page == .overview || page == .quota)
     }
     .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
       resetTransientUIState()
@@ -81,6 +82,7 @@ struct StatusPopoverView: View {
     }
     .onAppear {
       stats.popoverDidAppear()
+      stats.setQuotaPageVisible(selectedPage == .overview || selectedPage == .quota)
     }
     .onDisappear {
       runtime.statusPanelSessionBubbleY = nil
@@ -350,9 +352,11 @@ struct StatusPopoverView: View {
   }
 
   private var quotaPage: some View {
-    TokMonQuotaView(snapshot: stats.kimiQuotaSnapshot) {
-      Task { await stats.refreshKimiQuota() }
-    }
+    TokMonQuotaView(
+      snapshot: stats.kimiQuotaSnapshot,
+      onRefresh: { Task { await stats.refreshKimiQuota() } },
+      onOpenSettings: { runtime.openSettings() }
+    )
     .font(.system(size: 12, weight: .regular, design: .rounded))
   }
 

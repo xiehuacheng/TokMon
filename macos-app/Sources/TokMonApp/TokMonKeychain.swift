@@ -13,6 +13,10 @@ enum TokMonKeychain {
     load(service: kimiService, account: kimiAccount)
   }
 
+  static func hasKimiAPIKey() -> Bool {
+    has(service: kimiService, account: kimiAccount)
+  }
+
   static func deleteKimiAPIKey() throws {
     try delete(service: kimiService, account: kimiAccount)
   }
@@ -60,6 +64,18 @@ enum TokMonKeychain {
     return String(data: data, encoding: .utf8)
   }
 
+  static func has(service: String, account: String) -> Bool {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: false,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    let status = SecItemCopyMatching(query as CFDictionary, nil)
+    return status == errSecSuccess
+  }
+
   static func delete(service: String, account: String) throws {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
@@ -73,7 +89,16 @@ enum TokMonKeychain {
   }
 }
 
-enum KimiKeychainError: Error {
+enum KimiKeychainError: Error, LocalizedError {
   case invalidData
   case osStatus(OSStatus)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidData:
+      return "Unable to encode the API key for Keychain storage."
+    case .osStatus(let status):
+      return "Keychain operation failed (status \(status))."
+    }
+  }
 }

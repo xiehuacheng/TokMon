@@ -51,6 +51,7 @@ final class TokMonStatsStore: ObservableObject {
   private var selectedUsageSession: TokMonUsageSessionSelection?
 
   private var isPopoverVisible = false
+  private var isQuotaPageVisible = false
   private var quotaRefreshTask: Task<Void, Never>?
   private var lastRefreshedDataVersion: UInt64 = 0
 
@@ -103,7 +104,7 @@ final class TokMonStatsStore: ObservableObject {
   func popoverDidAppear() {
     isPopoverVisible = true
     requestRefresh()
-    startQuotaRefreshTask()
+    syncQuotaRefreshTask()
   }
 
   func popoverDidDisappear() {
@@ -111,7 +112,12 @@ final class TokMonStatsStore: ObservableObject {
     recordsLimit = defaultRecordsLimit
     usageSessionsLimit = defaultUsageSessionsLimit
     clearSelectedUsageSession()
-    stopQuotaRefreshTask()
+    syncQuotaRefreshTask()
+  }
+
+  func setQuotaPageVisible(_ visible: Bool) {
+    isQuotaPageVisible = visible
+    syncQuotaRefreshTask()
   }
 
   /// Retained for API compatibility. TokMon is now event-driven, so there is
@@ -271,9 +277,10 @@ final class TokMonStatsStore: ObservableObject {
     kimiQuotaSnapshot = await nativeEngineActor.refreshKimiQuota()
   }
 
-  private func startQuotaRefreshTask() {
-    stopQuotaRefreshTask()
-    guard isPopoverVisible, let nativeEngineActor else { return }
+  private func syncQuotaRefreshTask() {
+    quotaRefreshTask?.cancel()
+    quotaRefreshTask = nil
+    guard isPopoverVisible, isQuotaPageVisible, let nativeEngineActor else { return }
 
     quotaRefreshTask = Task { [weak self, weak nativeEngineActor] in
       @MainActor
@@ -291,11 +298,6 @@ final class TokMonStatsStore: ObservableObject {
         guard !Task.isCancelled, await refreshOnce() else { break }
       }
     }
-  }
-
-  private func stopQuotaRefreshTask() {
-    quotaRefreshTask?.cancel()
-    quotaRefreshTask = nil
   }
 }
 

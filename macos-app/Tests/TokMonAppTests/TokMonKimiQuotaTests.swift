@@ -2,7 +2,37 @@ import Foundation
 import Testing
 @testable import TokMonApp
 
-@Suite struct TokMonKimiQuotaTests {
+private final class StubURLProtocol: URLProtocol {
+  nonisolated(unsafe) static var responses: [URL: (statusCode: Int, data: Data)] = [:]
+
+  override class func canInit(with request: URLRequest) -> Bool {
+    true
+  }
+
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    request
+  }
+
+  override func startLoading() {
+    guard let url = request.url, let stub = StubURLProtocol.responses[url] else {
+      client?.urlProtocol(self, didFailWithError: NSError(domain: "StubURLProtocol", code: -1))
+      return
+    }
+    let response = HTTPURLResponse(
+      url: url,
+      statusCode: stub.statusCode,
+      httpVersion: "HTTP/1.1",
+      headerFields: ["Content-Type": "application/json"]
+    )!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: stub.data)
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
+}
+
+@Suite(.serialized) struct TokMonKimiQuotaTests {
   @Test func parseShapeAWeeklyOnly() async throws {
     let json = """
     {
@@ -59,5 +89,54 @@ import Testing
 
     #expect(snapshot.weekly?.used == 10)
     #expect(snapshot.weekly?.countdown == "2h 0m")
+  }
+
+  @Test func fallsBackFromUsagesToUsageOn404() async throws {
+    let usagesURL = URL(string: "https://api.kimi.com/coding/v1/usages")!
+    let usageURL = URL(string: "https://api.kimi.com/coding/v1/usage")!
+    let usageJSON = """
+    {
+      "usage": { "limit": 100, "used": 10 }
+    }
+    """.data(using: .utf8)!
+
+    StubURLProtocol.responses = [
+      usagesURL: (statusCode: 404, data: Data()),
+      usageURL: (statusCode: 200, data: usageJSON),
+    ]
+    defer { StubURLProtocol.responses = [:] }
+
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    let store = TokMonKimiQuotaStore(urlSession: session)
+    let snapshot = await store.fetchQuota(apiKey: "sk-kimi-test")
+
+    #expect(snapshot.error == nil)
+    #expect(snapshot.weekly?.limit == 100)
+    #expect(snapshot.weekly?.used == 10)
+  }
+
+  @Test func mapsHTTPStatusCodesToErrors() async throws {
+    let usagesURL = URL(string: "https://api.kimi.com/coding/v1/usages")!
+    let cases: [(Int, KimiQuotaError)] = [
+      (401, .invalidKey),
+      (403, .invalidKey),
+      (429, .rateLimited),
+      (500, .network),
+    ]
+
+    for (status, expected) in cases {
+      StubURLProtocol.responses = [usagesURL: (statusCode: status, data: Data())]
+      defer { StubURLProtocol.responses = [:] }
+
+      let config = URLSessionConfiguration.ephemeral
+      config.protocolClasses = [StubURLProtocol.self]
+      let session = URLSession(configuration: config)
+      let store = TokMonKimiQuotaStore(urlSession: session)
+      let snapshot = await store.fetchQuota(apiKey: "sk-kimi-test")
+
+      #expect(snapshot.error == expected, "Expected \(expected) for status \(status), got \(String(describing: snapshot.error))")
+    }
   }
 }

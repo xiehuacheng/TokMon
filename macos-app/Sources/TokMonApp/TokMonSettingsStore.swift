@@ -28,9 +28,14 @@ final class TokMonSettingsStore: ObservableObject {
   }
 
   func save() async throws {
+    let wasConfiguringKey = !draft.kimiCodeAPIKey.isEmpty
     try await runBusyAction {
       try await engineActor.saveSettings(draft: draft)
       statusMessage = "Settings saved."
+    }
+    if wasConfiguringKey {
+      draft.kimiCodeAPIKey = ""
+      draft.kimiCodeAPIKeyConfigured = true
     }
   }
 
