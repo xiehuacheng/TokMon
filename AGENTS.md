@@ -14,7 +14,38 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 - `swift build`（在 `macos-app/` 下）：验证 Swift 编译。
 - `swift test`（在 `macos-app/` 下）：运行原生 TokMon 测试。
 - `bash macos-app/scripts/build-app.sh`：打包 `macos-app/release/TokMon.app`，面向用户的交付入口。
+- `bash macos-app/scripts/build-dmg.sh`：生成签名 DMG 与 Sparkle `appcast.xml`。
 - `git diff --check`：提交前检查空白和补丁格式。
+
+## 发布流程
+
+发布新版本时按以下步骤执行，确保 DMG 与 `appcast.xml` 同时上传：
+
+1. **完成所有改动并通过验证**：
+   - `cd macos-app && swift test`
+   - `cd /项目根目录 && git diff --check`
+   - `bash macos-app/scripts/build-app.sh`
+   - `bash macos-app/scripts/build-dmg.sh`
+2. **更新版本号**：修改 `macos-app/Packaging/Info.plist`：
+   - `CFBundleShortVersionString`：语义版本号，例如 `0.2.11`
+   - `CFBundleVersion`：整数构建号，例如 `14`
+3. **重新打包**（版本号变更后必须重新执行）：
+   - `bash macos-app/scripts/build-app.sh`
+   - `bash macos-app/scripts/build-dmg.sh`
+4. **清理旧版 DMG**（避免 `macos-app/release/` 出现重复安装包）。
+5. **提交并打 tag**：
+   - `git add -A`
+   - `git commit -m "Release TokMon X.Y.Z"`
+   - `git tag -a vX.Y.Z -m "TokMon X.Y.Z"`
+6. **推送**：
+   - `git push origin main`
+   - `git push origin vX.Y.Z`
+7. **创建 GitHub Release**：
+   - Release title：`TokMon X.Y.Z`
+   - Tag：`vX.Y.Z`
+   - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
+   - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
+   - 在发布说明中写明 DMG 的 SHA-256。
 
 ## 代码风格与命名约定
 

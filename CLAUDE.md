@@ -44,9 +44,11 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 
 4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图；涉及 popover 位置、窗口层级、多显示器或 Kimi Quota 面板的改动，请在主显示器和副显示器上都验证。
 
-5. **权限相关改动**：涉及屏幕捕获、辅助功能等 macOS 权限时，同步更新 `Packaging/Info.plist` 中对应的 `UsageDescription`，并在打包后验证权限弹窗与行为。
+5. **发布流程**：详见 `AGENTS.md`。要点：更新 `macos-app/Packaging/Info.plist` 的 `CFBundleShortVersionString` 与 `CFBundleVersion` → 重新跑 `build-app.sh` 与 `build-dmg.sh` → 提交 `Release TokMon X.Y.Z` → 打并推送 `vX.Y.Z` tag → 创建 GitHub Release 时**同时上传 `TokMon-X.Y.Z.dmg` 和 `appcast.xml`**，并在说明中给出 DMG SHA-256。
 
-6. **不要自己 `git commit` / `git push`**，除非用户明确要求。本仓库的提交风格是简短祈使句，例如 `Clean native runtime`、`Fix token scan state`。
+6. **权限相关改动**：涉及屏幕捕获、辅助功能等 macOS 权限时，同步更新 `Packaging/Info.plist` 中对应的 `UsageDescription`，并在打包后验证权限弹窗与行为。
+
+7. **不要自己 `git commit` / `git push`**，除非用户明确要求。本仓库的提交风格是简短祈使句，例如 `Clean native runtime`、`Fix token scan state`。
 
 ## 文档入口
 
