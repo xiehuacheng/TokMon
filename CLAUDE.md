@@ -58,12 +58,12 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 5. **提交并打 tag**：
    - `git add -A`
    - `git commit -m "Release TokMon X.Y.Z"`
-   - `git tag -a vX.Y.Z -m "TokMon X.Y.Z"`
+   - `git tag -a vX.Y.Z -m "TokMon vX.Y.Z"`
 6. **推送**：
    - `git push origin main`
    - `git push origin vX.Y.Z`
 7. **创建 GitHub Release**：
-   - Release title：`TokMon X.Y.Z`
+   - Release title：`TokMon vX.Y.Z`
    - Tag：`vX.Y.Z`
    - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
    - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
