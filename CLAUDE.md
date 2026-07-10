@@ -44,7 +44,35 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 
 4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图；涉及 popover 位置、窗口层级、多显示器或 Kimi Quota 面板的改动，请在主显示器和副显示器上都验证。
 
-5. **发布流程**：详见 `AGENTS.md`。要点：更新 `macos-app/Packaging/Info.plist` 的 `CFBundleShortVersionString` 与 `CFBundleVersion` → 重新跑 `build-app.sh` 与 `build-dmg.sh` → 提交 `Release TokMon X.Y.Z` → 打并推送 `vX.Y.Z` tag → 创建 GitHub Release 时**同时上传 `TokMon-X.Y.Z.dmg` 和 `appcast.xml`**，并在说明中给出 DMG SHA-256。
+5. **发布流程**（与 `AGENTS.md` 保持一致）：
+
+   发布新版本时按以下步骤执行，确保 DMG 与 `appcast.xml` 同时上传：
+
+   1. **完成所有改动并通过验证**：
+      - `cd macos-app && swift test`
+      - `cd /项目根目录 && git diff --check`
+      - `bash macos-app/scripts/build-app.sh`
+      - `bash macos-app/scripts/build-dmg.sh`
+   2. **更新版本号**：修改 `macos-app/Packaging/Info.plist`：
+      - `CFBundleShortVersionString`：语义版本号，例如 `0.2.11`
+      - `CFBundleVersion`：整数构建号，例如 `14`
+   3. **重新打包**（版本号变更后必须重新执行）：
+      - `bash macos-app/scripts/build-app.sh`
+      - `bash macos-app/scripts/build-dmg.sh`
+   4. **清理旧版 DMG**（避免 `macos-app/release/` 出现重复安装包）。
+   5. **提交并打 tag**：
+      - `git add -A`
+      - `git commit -m "Release TokMon X.Y.Z"`
+      - `git tag -a vX.Y.Z -m "TokMon X.Y.Z"`
+   6. **推送**：
+      - `git push origin main`
+      - `git push origin vX.Y.Z`
+   7. **创建 GitHub Release**：
+      - Release title：`TokMon X.Y.Z`
+      - Tag：`vX.Y.Z`
+      - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
+      - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
+      - 在发布说明中写明 DMG 的 SHA-256。
 
 6. **权限相关改动**：涉及屏幕捕获、辅助功能等 macOS 权限时，同步更新 `Packaging/Info.plist` 中对应的 `UsageDescription`，并在打包后验证权限弹窗与行为。
 
