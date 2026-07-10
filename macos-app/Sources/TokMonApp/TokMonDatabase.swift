@@ -192,7 +192,10 @@ final class TokMonDatabase {
     return false
   }
 
-  private func _insertUsage(_ record: TokMonUsageRecord) throws -> Bool {
+  private func _insertUsage(
+    _ record: TokMonUsageRecord,
+    reusingInsertStatement reusableStatement: OpaquePointer? = nil
+  ) throws -> Bool {
     if let messageId = record.messageId, !messageId.isEmpty,
        let existing = try _existingUsageRecord(source: record.source, sessionId: record.sessionId, messageId: messageId) {
       let merged = TokMonUsageRecord.claudeRecordByRecency(existing, record)
@@ -202,16 +205,33 @@ final class TokMonDatabase {
       try upsertUsageRollups(for: merged)
       return true
     }
-    return try _insertNewUsage(record)
+    return try _insertNewUsage(record, reusingInsertStatement: reusableStatement)
   }
 
-  private func _insertNewUsage(_ record: TokMonUsageRecord) throws -> Bool {
-    let statement = try prepare("""
-      INSERT OR IGNORE INTO usage_records
-        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix, message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """)
-    defer { sqlite3_finalize(statement) }
+  private func _insertNewUsage(
+    _ record: TokMonUsageRecord,
+    reusingInsertStatement reusableStatement: OpaquePointer? = nil
+  ) throws -> Bool {
+    let statement: OpaquePointer?
+    let shouldFinalize: Bool
+    if let reusableStatement {
+      statement = reusableStatement
+      shouldFinalize = false
+      sqlite3_reset(statement)
+      sqlite3_clear_bindings(statement)
+    } else {
+      statement = try prepare("""
+        INSERT OR IGNORE INTO usage_records
+          (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix, message_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """)
+      shouldFinalize = true
+    }
+    defer {
+      if shouldFinalize {
+        sqlite3_finalize(statement)
+      }
+    }
 
     try bind(record.source, at: 1, in: statement)
     try bind(record.sessionId, at: 2, in: statement)
@@ -297,50 +317,6 @@ final class TokMonDatabase {
     )
   }
 
-  private func _deleteUsageRecordByMessageId(source: String, sessionId: String, messageId: String) throws {
-    let selectStatement = try prepare("""
-      SELECT model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported
-      FROM usage_records
-      WHERE source = ? AND session_id = ? AND message_id = ?
-      LIMIT 1
-    """)
-    defer { sqlite3_finalize(selectStatement) }
-    try bind(source, at: 1, in: selectStatement)
-    try bind(sessionId, at: 2, in: selectStatement)
-    try bind(messageId, at: 3, in: selectStatement)
-
-    var oldRecord: TokMonUsageRecord?
-    if sqlite3_step(selectStatement) == SQLITE_ROW {
-      oldRecord = TokMonUsageRecord(
-        source: source,
-        sessionId: sessionId,
-        model: stringColumn(selectStatement, index: 0) ?? "unknown",
-        inputTokens: Int(sqlite3_column_int64(selectStatement, 1)),
-        outputTokens: Int(sqlite3_column_int64(selectStatement, 2)),
-        cacheCreation: Int(sqlite3_column_int64(selectStatement, 3)),
-        cacheRead: Int(sqlite3_column_int64(selectStatement, 4)),
-        reasoningTokens: Int(sqlite3_column_int64(selectStatement, 5)),
-        createdAt: stringColumn(selectStatement, index: 6) ?? "",
-        cacheHitSupported: Int(sqlite3_column_int64(selectStatement, 7)) != 0,
-        messageId: messageId
-      )
-    }
-
-    let deleteStatement = try prepare("""
-      DELETE FROM usage_records
-      WHERE source = ? AND session_id = ? AND message_id = ?
-    """)
-    defer { sqlite3_finalize(deleteStatement) }
-    try bind(source, at: 1, in: deleteStatement)
-    try bind(sessionId, at: 2, in: deleteStatement)
-    try bind(messageId, at: 3, in: deleteStatement)
-    try stepDone(deleteStatement)
-
-    if let oldRecord {
-      try subtractUsageRollups(for: oldRecord)
-    }
-  }
-
   private func _upsertSessionMetadata(_ metadata: TokMonSessionMetadata) throws {
     let statement = try prepare("""
       INSERT INTO tokmon_session_metadata
@@ -395,11 +371,18 @@ final class TokMonDatabase {
   private func _insertUsages(_ records: [TokMonUsageRecord]) throws -> Int {
     guard !records.isEmpty else { return 0 }
 
+    let insertStatement = try prepare("""
+      INSERT OR IGNORE INTO usage_records
+        (source, session_id, model, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, created_at, cache_hit_supported, session_file_suffix, message_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """)
+    defer { sqlite3_finalize(insertStatement) }
+
     try exec("BEGIN IMMEDIATE;")
     var count = 0
     do {
       for record in records {
-        if try _insertUsage(record) {
+        if try _insertUsage(record, reusingInsertStatement: insertStatement) {
           count += 1
         }
       }
@@ -871,23 +854,25 @@ final class TokMonDatabase {
 
   private func subtractUsageRollups(for record: TokMonUsageRecord) throws {
     let periods = try rollupPeriods(for: record.createdAt)
-    for period in periods {
-      let statement = try prepare("""
-        INSERT INTO tokmon_usage_rollups
-          (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(grain, period_start, source, model) DO UPDATE SET
-          requests = tokmon_usage_rollups.requests - 1,
-          input_tokens = tokmon_usage_rollups.input_tokens - excluded.input_tokens,
-          output_tokens = tokmon_usage_rollups.output_tokens - excluded.output_tokens,
-          cache_creation = tokmon_usage_rollups.cache_creation - excluded.cache_creation,
-          cache_read = tokmon_usage_rollups.cache_read - excluded.cache_read,
-          reasoning_tokens = tokmon_usage_rollups.reasoning_tokens - excluded.reasoning_tokens,
-          cache_hit_input_tokens = tokmon_usage_rollups.cache_hit_input_tokens - excluded.cache_hit_input_tokens,
-          cache_hit_cache_read = tokmon_usage_rollups.cache_hit_cache_read - excluded.cache_hit_cache_read
-      """)
-      defer { sqlite3_finalize(statement) }
+    guard !periods.isEmpty else { return }
 
+    let statement = try prepare("""
+      INSERT INTO tokmon_usage_rollups
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(grain, period_start, source, model) DO UPDATE SET
+        requests = tokmon_usage_rollups.requests - 1,
+        input_tokens = tokmon_usage_rollups.input_tokens - excluded.input_tokens,
+        output_tokens = tokmon_usage_rollups.output_tokens - excluded.output_tokens,
+        cache_creation = tokmon_usage_rollups.cache_creation - excluded.cache_creation,
+        cache_read = tokmon_usage_rollups.cache_read - excluded.cache_read,
+        reasoning_tokens = tokmon_usage_rollups.reasoning_tokens - excluded.reasoning_tokens,
+        cache_hit_input_tokens = tokmon_usage_rollups.cache_hit_input_tokens - excluded.cache_hit_input_tokens,
+        cache_hit_cache_read = tokmon_usage_rollups.cache_hit_cache_read - excluded.cache_hit_cache_read
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    for period in periods {
       try bind(period.grain, at: 1, in: statement)
       try bind(period.start, at: 2, in: statement)
       try bind(record.source, at: 3, in: statement)
@@ -900,28 +885,32 @@ final class TokMonDatabase {
       try bind(record.cacheHitSupported ? record.inputTokens : 0, at: 10, in: statement)
       try bind(record.cacheHitSupported ? record.cacheRead : 0, at: 11, in: statement)
       try stepDone(statement)
+      sqlite3_reset(statement)
+      sqlite3_clear_bindings(statement)
     }
   }
 
   private func upsertUsageRollups(for record: TokMonUsageRecord) throws {
     let periods = try rollupPeriods(for: record.createdAt)
-    for period in periods {
-      let statement = try prepare("""
-        INSERT INTO tokmon_usage_rollups
-          (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(grain, period_start, source, model) DO UPDATE SET
-          requests = tokmon_usage_rollups.requests + 1,
-          input_tokens = tokmon_usage_rollups.input_tokens + excluded.input_tokens,
-          output_tokens = tokmon_usage_rollups.output_tokens + excluded.output_tokens,
-          cache_creation = tokmon_usage_rollups.cache_creation + excluded.cache_creation,
-          cache_read = tokmon_usage_rollups.cache_read + excluded.cache_read,
-          reasoning_tokens = tokmon_usage_rollups.reasoning_tokens + excluded.reasoning_tokens,
-          cache_hit_input_tokens = tokmon_usage_rollups.cache_hit_input_tokens + excluded.cache_hit_input_tokens,
-          cache_hit_cache_read = tokmon_usage_rollups.cache_hit_cache_read + excluded.cache_hit_cache_read
-      """)
-      defer { sqlite3_finalize(statement) }
+    guard !periods.isEmpty else { return }
 
+    let statement = try prepare("""
+      INSERT INTO tokmon_usage_rollups
+        (grain, period_start, source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(grain, period_start, source, model) DO UPDATE SET
+        requests = tokmon_usage_rollups.requests + 1,
+        input_tokens = tokmon_usage_rollups.input_tokens + excluded.input_tokens,
+        output_tokens = tokmon_usage_rollups.output_tokens + excluded.output_tokens,
+        cache_creation = tokmon_usage_rollups.cache_creation + excluded.cache_creation,
+        cache_read = tokmon_usage_rollups.cache_read + excluded.cache_read,
+        reasoning_tokens = tokmon_usage_rollups.reasoning_tokens + excluded.reasoning_tokens,
+        cache_hit_input_tokens = tokmon_usage_rollups.cache_hit_input_tokens + excluded.cache_hit_input_tokens,
+        cache_hit_cache_read = tokmon_usage_rollups.cache_hit_cache_read + excluded.cache_hit_cache_read
+    """)
+    defer { sqlite3_finalize(statement) }
+
+    for period in periods {
       try bind(period.grain, at: 1, in: statement)
       try bind(period.start, at: 2, in: statement)
       try bind(record.source, at: 3, in: statement)
@@ -934,6 +923,8 @@ final class TokMonDatabase {
       try bind(record.cacheHitSupported ? record.inputTokens : 0, at: 10, in: statement)
       try bind(record.cacheHitSupported ? record.cacheRead : 0, at: 11, in: statement)
       try stepDone(statement)
+      sqlite3_reset(statement)
+      sqlite3_clear_bindings(statement)
     }
   }
 
@@ -1275,20 +1266,6 @@ final class TokMonDatabase {
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw TokMonDatabaseError.sqlite(lastErrorMessage)
     }
-  }
-
-  private func integerValue(_ sql: String) throws -> Int {
-    let statement = try prepare(sql)
-    defer { sqlite3_finalize(statement) }
-
-    let result = sqlite3_step(statement)
-    guard result == SQLITE_ROW else {
-      guard result == SQLITE_DONE else {
-        throw TokMonDatabaseError.sqlite(lastErrorMessage)
-      }
-      return 0
-    }
-    return Int(sqlite3_column_int64(statement, 0))
   }
 
   private func bind(_ value: String, at index: Int32, in statement: OpaquePointer?) throws {

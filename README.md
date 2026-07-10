@@ -9,7 +9,7 @@ TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、
   <img src="docs/images/tokmon-popover-dark.png" alt="TokMon macOS status bar popover in dark mode" width="320">
 </p>
 
-状态栏看板展示 token 用量卡片、趋势图、活动热力图、请求明细和 session 统计；设置窗口提供路径、默认范围、模型价格、扫描和维护操作。
+状态栏看板展示 token 用量卡片、趋势图、活动热力图、请求明细、session 统计和 Kimi Quota 面板；设置窗口提供路径、默认范围、模型价格、菜单栏显示项、扫描和维护操作。
 
 ## 技术栈
 
@@ -20,13 +20,13 @@ TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、
 ## 功能概览
 
 - 支持 Total Tokens、Requests、Input、Output、Cache Created、Cache Hit、Est. Cost 指标切换
-- 支持趋势图、紧凑活动热力图、按模型 / 来源分布、请求日志分页和 session 明细
-- 支持 Yesterday、Today、This Week、This Month、This Year、All 快捷时间范围
+- 支持趋势图、紧凑活动热力图、按模型 / 来源分布、请求日志分页、session 明细和 Kimi Quota 面板
+- 支持 Today、This Week、This Month、All 快捷时间范围
 - session 标题统一使用项目文件夹名和第一句 prompt
 - 支持按模型配置价格，用于费用估算
 - 支持浅色与深色模式，主题色会自动适配以保证可读性
 - 状态栏图标与文字跟随系统深浅色及屏幕焦点状态自动调整颜色
-- 状态栏 popover 右上角提供刷新、复制截图、打开设置窗口和退出 App
+- 状态栏 popover 右上角提供刷新、复制截图、打开设置窗口、检查更新和退出 App
 
 ## 数据来源支持
 

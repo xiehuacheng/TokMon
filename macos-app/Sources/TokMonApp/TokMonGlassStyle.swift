@@ -142,11 +142,12 @@ private struct TokMonSelectionPillModifier: ViewModifier {
   }
 }
 
-private struct TokMonFallbackGlassButtonStyle: ButtonStyle {
+private struct TokMonFallbackGlassButtonBody: View {
+  let configuration: ButtonStyleConfiguration
   let prominent: Bool
   @State private var isHovered = false
 
-  func makeBody(configuration: Configuration) -> some View {
+  var body: some View {
     let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
     let tintOpacity = prominent
       ? (configuration.isPressed ? 0.30 : isHovered ? 0.24 : 0.18)
@@ -174,6 +175,14 @@ private struct TokMonFallbackGlassButtonStyle: ButtonStyle {
       .onHover { hovering in
         isHovered = hovering
       }
+  }
+}
+
+private struct TokMonFallbackGlassButtonStyle: ButtonStyle {
+  let prominent: Bool
+
+  func makeBody(configuration: Configuration) -> some View {
+    TokMonFallbackGlassButtonBody(configuration: configuration, prominent: prominent)
   }
 }
 

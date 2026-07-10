@@ -11,12 +11,13 @@ actor TokMonEngineActor {
     let config = try engine.configStore.loadConfig()
     let uiState = try engine.configStore.loadUIState()
     let models = try engine.queryStore.models()
+    let defaults = TokMonSettingsDraft()
     return TokMonSettingsDraft(
-      claudePath: config.sources["claude-code"]?.path ?? TokMonSettingsDraft().claudePath,
-      codexPath: config.sources["codex"]?.path ?? TokMonSettingsDraft().codexPath,
-      kimiCodePath: config.sources["kimi-code"]?.path ?? TokMonSettingsDraft().kimiCodePath,
-      openCodePath: config.sources["opencode"]?.path ?? TokMonSettingsDraft().openCodePath,
-      qwenCodePath: config.sources["qwen-code"]?.path ?? TokMonSettingsDraft().qwenCodePath,
+      claudePath: config.sources["claude-code"]?.path ?? defaults.claudePath,
+      codexPath: config.sources["codex"]?.path ?? defaults.codexPath,
+      kimiCodePath: config.sources["kimi-code"]?.path ?? defaults.kimiCodePath,
+      openCodePath: config.sources["opencode"]?.path ?? defaults.openCodePath,
+      qwenCodePath: config.sources["qwen-code"]?.path ?? defaults.qwenCodePath,
       source: uiState.source,
       rangeLabel: resolvedRangeLabel(from: uiState),
       liveMode: true,
@@ -306,6 +307,20 @@ actor TokMonEngineActor {
       uiState.kimiAPIKeyAccounts[index].label = trimmed
       try engine.configStore.saveUIState(uiState)
     }
+  }
+
+  func updateKimiAPIKeyEndDates(id: String, weekly: Date?, fiveHour: Date?) async throws {
+    var uiState = try engine.configStore.loadUIState()
+    guard let index = uiState.kimiAPIKeyAccounts.firstIndex(where: { $0.id == id }) else {
+      return
+    }
+    if let weekly {
+      uiState.kimiAPIKeyAccounts[index].weeklyEndAt = weekly
+    }
+    if let fiveHour {
+      uiState.kimiAPIKeyAccounts[index].fiveHourEndAt = fiveHour
+    }
+    try engine.configStore.saveUIState(uiState)
   }
 
   func refreshKimiQuota(forKeyID id: String) async -> KimiQuotaSnapshot {

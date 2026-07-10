@@ -6,16 +6,18 @@ struct TokMonQuotaView: View {
   let selectedAccountID: String?
   let isLoading: Bool
   let onRefresh: () -> Void
-  let onSelectAccount: (String) -> Void
+  let onSelectAccount: (String?) -> Void
   let onAddKey: (String, String) -> Void
   let onRemoveKey: (String) -> Void
   let onRenameKey: (String, String) -> Void
+  let onUpdateEndDate: (String, String, Date) -> Void
 
   @State private var isAdding = false
   @State private var newKeyInput: String = ""
   @State private var newKeyLabel: String = ""
   @State private var editingAccountID: String? = nil
   @State private var editLabel: String = ""
+  @State private var refreshRotation: Double = 0
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -35,13 +37,19 @@ struct TokMonQuotaView: View {
             .font(.system(size: 12, weight: .bold))
             .requestActionButton()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleButtonStyle())
         .focusable(false)
         .focusEffectDisabled()
 
-        Button(action: onRefresh) {
+        Button {
+          withAnimation(.easeInOut(duration: 0.5)) {
+            refreshRotation += 360
+          }
+          onRefresh()
+        } label: {
           Image(systemName: "arrow.clockwise")
             .font(.system(size: 12, weight: .bold))
+            .rotationEffect(.degrees(refreshRotation))
             .requestActionButton()
         }
         .buttonStyle(.plain)
@@ -121,22 +129,36 @@ struct TokMonQuotaView: View {
 
     return VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        if isSelected {
-          Image(systemName: "checkmark.circle.fill")
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(TokMonGlass.accent)
+        Button {
+          onSelectAccount(isSelected ? nil : account.id)
+        } label: {
+          Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(isSelected ? TokMonGlass.accent : .secondary)
         }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .focusEffectDisabled()
 
         if editingAccountID == account.id {
           TextField("Label", text: $editLabel)
             .quotaTextField(width: 120)
+        } else {
+          Text(account.label)
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .lineLimit(1)
+        }
+
+        Spacer()
+
+        if editingAccountID == account.id {
           Button {
             onRenameKey(account.id, editLabel)
             editingAccountID = nil
           } label: {
-            Text("Save")
-              .font(.system(size: 11, weight: .semibold, design: .rounded))
-              .requestActionButton()
+            Image(systemName: "checkmark")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundStyle(TokMonGlass.accent)
           }
           .buttonStyle(.plain)
           .focusable(false)
@@ -144,24 +166,19 @@ struct TokMonQuotaView: View {
           Button {
             editingAccountID = nil
           } label: {
-            Text("Cancel")
-              .font(.system(size: 11, weight: .semibold, design: .rounded))
-              .requestActionButton()
+            Image(systemName: "xmark")
+              .font(.system(size: 12, weight: .semibold))
           }
           .buttonStyle(.plain)
           .focusable(false)
           .focusEffectDisabled()
         } else {
-          Text(account.label)
-            .font(.system(size: 12, weight: .heavy, design: .rounded))
-            .lineLimit(1)
-          Spacer()
           Button {
             editLabel = account.label
             editingAccountID = account.id
           } label: {
             Image(systemName: "pencil")
-              .font(.system(size: 11, weight: .semibold))
+              .font(.system(size: 12, weight: .semibold))
           }
           .buttonStyle(.plain)
           .focusable(false)
@@ -170,34 +187,24 @@ struct TokMonQuotaView: View {
             onRemoveKey(account.id)
           } label: {
             Image(systemName: "trash")
-              .font(.system(size: 11, weight: .semibold))
+              .font(.system(size: 12, weight: .semibold))
               .foregroundStyle(TokMonGlass.danger)
           }
           .buttonStyle(.plain)
           .focusable(false)
           .focusEffectDisabled()
-          Button {
-            onSelectAccount(account.id)
-          } label: {
-            Text(isSelected ? "Selected" : "Select")
-              .font(.system(size: 11, weight: .semibold, design: .rounded))
-              .requestActionButton()
-          }
-          .buttonStyle(.plain)
-          .disabled(isSelected)
-          .focusable(false)
-          .focusEffectDisabled()
         }
       }
+      .frame(height: 22)
 
-      accountQuotaContent(snapshot: snapshot)
+      accountQuotaContent(snapshot: snapshot, account: account)
     }
     .padding(10)
     .hudCard(background: TokMonGlass.cardBackgroundInner, isSelected: isSelected)
   }
 
   @ViewBuilder
-  private func accountQuotaContent(snapshot: KimiQuotaSnapshot?) -> some View {
+  private func accountQuotaContent(snapshot: KimiQuotaSnapshot?, account: KimiAPIKeyAccount) -> some View {
     if let snapshot {
       if let error = snapshot.error, error != .noAPIKey {
         Text(errorMessage(error))
@@ -207,11 +214,11 @@ struct TokMonQuotaView: View {
       }
 
       if let weekly = snapshot.weekly {
-        quotaCard(title: "Weekly", window: weekly)
+        quotaCard(title: "Weekly", window: weekly, account: account)
       }
 
       if let fiveHour = snapshot.fiveHour {
-        quotaCard(title: "5-Hour", window: fiveHour)
+        quotaCard(title: "5-Hour", window: fiveHour, account: account)
       }
 
       if snapshot.weekly == nil && snapshot.fiveHour == nil && snapshot.error == nil {
@@ -236,7 +243,7 @@ struct TokMonQuotaView: View {
     }
   }
 
-  private func quotaCard(title: String, window: KimiQuotaWindow) -> some View {
+  private func quotaCard(title: String, window: KimiQuotaWindow, account: KimiAPIKeyAccount) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text(title)
@@ -244,27 +251,50 @@ struct TokMonQuotaView: View {
         Spacer()
         Text("\(Int(window.percentUsed))%")
           .font(.system(size: 11, weight: .heavy, design: .rounded))
-          .foregroundStyle(color(for: window.percentUsed))
+          .foregroundStyle(quotaColor(for: window.percentUsed))
       }
       GeometryReader { geo in
         RoundedRectangle(cornerRadius: 4, style: .continuous)
           .fill(.quaternary)
           .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-              .fill(color(for: window.percentUsed))
+              .fill(quotaColor(for: window.percentUsed))
               .frame(width: geo.size.width * min(window.percentUsed / 100, 1))
           }
       }
       .frame(height: 6)
-      if let countdown = window.countdown {
-        HStack {
-          Spacer()
-          Text("Resets in \(countdown)")
+      HStack(spacing: 6) {
+        if let footerText = footerText(for: window) {
+          Text(footerText)
             .font(.system(size: 10, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
+        } else {
+          ManualEndDatePicker {
+            onUpdateEndDate(account.id, title, $0)
+          }
         }
+        Spacer()
       }
     }
+  }
+
+  private func resetDateText(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "MM/dd HH:mm"
+    return formatter.string(from: date)
+  }
+
+  private func footerText(for window: KimiQuotaWindow) -> String? {
+    guard let resetAt = window.resetAt ?? window.endAt else {
+      return window.countdown.map { "Resets in \($0)" }
+    }
+    let timeText = resetDateText(resetAt)
+    guard let countdown = window.countdown else {
+      return "Resets \(timeText)"
+    }
+    return "Resets in \(countdown) (\(timeText))"
   }
 
   private func clearAddFields() {
@@ -287,10 +317,28 @@ struct TokMonQuotaView: View {
     }
   }
 
-  private func color(for percent: Double) -> Color {
-    if percent >= 95 { return TokMonGlass.danger }
-    if percent >= 80 { return .orange }
-    return TokMonGlass.accent
+}
+
+private struct PressScaleButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
+      .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
+  }
+}
+
+private struct ManualEndDatePicker: View {
+  let onCommit: (Date) -> Void
+  @State private var date = Date()
+
+  var body: some View {
+    DatePicker("End date", selection: $date, displayedComponents: [.date, .hourAndMinute])
+      .datePickerStyle(.field)
+      .labelsHidden()
+      .frame(maxWidth: 110)
+      .onChange(of: date) { _, newDate in
+        onCommit(newDate)
+      }
   }
 }
 

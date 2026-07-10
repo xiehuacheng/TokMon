@@ -4,7 +4,7 @@
 
 ## 项目速览
 
-TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Qwen Code 与 OpenCode 的 token usage。技术栈：
+TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Kimi Code、Qwen Code 与 OpenCode 的 token usage。技术栈：
 
 - App：SwiftUI / AppKit
 - 存储：SQLite3（`tokmon.db`）
@@ -28,6 +28,9 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 - `TokMonQueryStore.swift`：summary、trend、heatmap、records、sessions 查询。
 - `TokMonConfigStore.swift`：TokMon 配置和 UI state 读写。
 - `TokMonGlassStyle.swift`：主题色、玻璃态效果与动态颜色（浅色 / 深色模式）。
+- `TokMonKeychain.swift`：Kimi API Key 的 Keychain 存取（按账户隔离）。
+- `TokMonKimiQuotaStore.swift`：Kimi `/usages` 与 `/usage` 额度请求、解析与缓存。
+- `TokMonQuotaView.swift`：Kimi Quota popover 页面（支持多 key 的添加 / 删除 / 重命名 / 选择）。
 - `docs/images/`：README 展示图。
 
 ## Claude Code 使用本仓库时的特别注意
@@ -39,7 +42,7 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 3. **环境变量**：
    - `TOKMON_PROJECT_ROOT`：Swift App 从其他目录启动时的仓库路径（见 `macos-app/Sources/TokMonApp/TokMonProjectLocator.swift`）。
 
-4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图；涉及 popover 位置、窗口层级或多显示器的改动，请在主显示器和副显示器上都验证。
+4. **验证与提交**：改完至少跑 `cd macos-app && swift test` 和 `git diff --check`。涉及独立 App 的改动要重新打包启动 `.app`。UI 改动的 PR 附截图；涉及 popover 位置、窗口层级、多显示器或 Kimi Quota 面板的改动，请在主显示器和副显示器上都验证。
 
 5. **权限相关改动**：涉及屏幕捕获、辅助功能等 macOS 权限时，同步更新 `Packaging/Info.plist` 中对应的 `UsageDescription`，并在打包后验证权限弹窗与行为。
 

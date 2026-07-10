@@ -4,6 +4,8 @@
 
 **Goal:** 在 TokMon macOS App 中为 Kimi Code（Coding Plan）增加 API Key 用量面板，展示周额度、5 小时滚动额度、重置倒计时，并在 Overview 页提供迷你卡片入口。
 
+> **状态：** 本计划已实现。实际代码从单 Key 演进为多账户模型（`KimiAPIKeyAccount`），Keychain 按账户 ID 隔离，key 管理 UI 位于 popover 的 Quota 页面；设置窗口仅保留刷新间隔。具体以当前源码为准。
+
 **Architecture:** 复用现有 actor + `@MainActor ObservableObject` 架构。新增 `TokMonKimiQuotaStore`（actor）负责网络请求与解析，`TokMonKeychain` 负责安全存储 API Key；`TokMonStatsStore` 在 popover 可见期间按配置间隔轮询；UI 通过新增 `.quota` popover 页面与 Overview 迷你卡片展示。
 
 **Tech Stack:** Swift 6, SwiftUI, Swift Testing, Security.framework, URLSession, SQLite（仅用于现有功能）

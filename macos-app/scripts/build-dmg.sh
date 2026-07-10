@@ -15,19 +15,101 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
     exit 1
 fi
 
-TMP_DMG=$(mktemp -d)
-trap 'rm -rf "$TMP_DMG"' EXIT
+BUILD_TMP=$(mktemp -d)
+trap 'rm -rf "$BUILD_TMP"' EXIT
 
-cp -a "$APP_BUNDLE" "$TMP_DMG/"
+RW_DMG="$BUILD_TMP/tokmon-rw.dmg"
+MOUNT_POINT="$BUILD_TMP/mount"
+BACKGROUND_DIR="$MOUNT_POINT/.background"
+BACKGROUND_IMG="$BACKGROUND_DIR/dmg-background.png"
 
-# Remove Finder metadata that breaks strict code signature validation.
-find "$TMP_DMG" -name ".DS_Store" -delete
-find "$TMP_DMG" -print0 | while IFS= read -r -d '' entry; do
+# Create a blank read/write DMG big enough for the app plus some headroom.
+APP_SIZE=$(du -sm "$APP_BUNDLE" | cut -f1)
+DMG_SIZE_MB=$((APP_SIZE + 20))
+hdiutil create -size "${DMG_SIZE_MB}m" -fs HFS+ -volname "$APP_NAME" -ov "$RW_DMG" >/dev/null
+
+mkdir -p "$MOUNT_POINT"
+hdiutil attach "$RW_DMG" -mountpoint "$MOUNT_POINT" -nobrowse >/dev/null
+trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true; rm -rf "$BUILD_TMP"' EXIT
+
+# Copy app bundle and create the familiar /Applications alias.
+cp -a "$APP_BUNDLE" "$MOUNT_POINT/"
+ln -s /Applications "$MOUNT_POINT/Applications"
+
+# Remove Finder metadata that can break strict code signature validation.
+find "$MOUNT_POINT/$APP_NAME.app" -name ".DS_Store" -delete
+find "$MOUNT_POINT/$APP_NAME.app" -print0 | while IFS= read -r -d '' entry; do
     xattr -d com.apple.FinderInfo "$entry" 2>/dev/null || true
 done
 
+# Generate a background image if PIL is available.
+mkdir -p "$BACKGROUND_DIR"
+if python3 -c "from PIL import Image, ImageDraw, ImageFont" >/dev/null 2>&1; then
+    python3 - "$BACKGROUND_IMG" "$APP_NAME" <<'PY'
+import sys
+from PIL import Image, ImageDraw, ImageFont
+
+output_path = sys.argv[1]
+app_name = sys.argv[2]
+width, height = 600, 400
+
+# Subtle dark background matching the app's HUD aesthetic.
+img = Image.new('RGB', (width, height), '#1c1c1e')
+draw = ImageDraw.Draw(img)
+
+# Try to load a system font; fall back to PIL's default if none are available.
+font = None
+for path, size in [
+    ('/System/Library/Fonts/Helvetica.ttc', 24),
+    ('/System/Library/Fonts/SFNSText.ttf', 24),
+    ('/System/Library/Fonts/Supplemental/Arial.ttf', 24),
+    ('/Library/Fonts/Arial.ttf', 24),
+]:
+    try:
+        font = ImageFont.truetype(path, size)
+        break
+    except Exception:
+        pass
+if font is None:
+    font = ImageFont.load_default()
+
+text = f"Drag {app_name} to Applications"
+bbox = draw.textbbox((0, 0), text, font=font)
+text_width = bbox[2] - bbox[0]
+draw.text(((width - text_width) // 2, 60), text, fill='#f2f2f7', font=font)
+
+img.save(output_path)
+PY
+    chflags hidden "$BACKGROUND_DIR"
+
+    # Arrange the icons and set the background via Finder/AppleScript.
+    osascript >/dev/null 2>&1 <<EOF || true
+        tell application "Finder"
+            tell disk "$APP_NAME"
+                open
+                set current view of container window to icon view
+                set toolbar visible of container window to false
+                set statusbar visible of container window to false
+                set the bounds of container window to {100, 100, 700, 500}
+                set theViewOptions to icon view options of container window
+                set arrangement of theViewOptions to not arranged
+                set icon size of theViewOptions to 96
+                set text size of theViewOptions to 12
+                set background picture of theViewOptions to POSIX file "$BACKGROUND_IMG"
+                set position of item "$APP_NAME.app" to {150, 180}
+                set position of item "Applications" to {450, 180}
+                update
+                close
+            end tell
+        end tell
+EOF
+fi
+
+hdiutil detach "$MOUNT_POINT" >/dev/null
+
+# Convert to a compressed, read-only DMG.
 rm -f "$DMG_PATH"
-hdiutil create -volname "$APP_NAME" -srcfolder "$TMP_DMG" -ov -format UDZO "$DMG_PATH" >/dev/null
+hdiutil convert "$RW_DMG" -format UDZO -o "$DMG_PATH" >/dev/null
 
 # Sign the DMG for Sparkle's EdDSA verification.
 SIGN_UPDATE_BIN="${TOKMON_SPARKLE_SIGN_UPDATE:-}"

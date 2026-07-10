@@ -16,17 +16,23 @@ enum TokMonMenuBarPresentation {
     let quota = kimiQuotaSnapshot ?? snapshot.kimiQuotaSnapshot
     var parts: [String] = []
     if items.totalTokens {
-      parts.append(formatCompact(Double(summary.total.totalTokens)))
+      parts.append(TokMonValueFormatter.formatCompact(Double(summary.total.totalTokens)))
     }
     if items.estimatedCost {
-      parts.append(formatCost(estimatedCost(for: summary, snapshot: snapshot)))
+      parts.append(TokMonValueFormatter.formatCost(estimatedCost(for: summary, snapshot: snapshot)))
     }
     if items.requests {
-      parts.append(formatCompact(Double(summary.total.totalRequests)))
+      parts.append(TokMonValueFormatter.formatCompact(Double(summary.total.totalRequests)))
     }
-    if items.kimiQuota {
+    let showLegacyWeekly = items.kimiQuota && !items.kimiWeeklyQuota && !items.kimiFiveHourQuota
+    if items.kimiWeeklyQuota || showLegacyWeekly {
       if let weekly = quota?.weekly {
-        parts.append("K\(Int(weekly.percentUsed))%")
+        parts.append("7d \(Int(weekly.percentUsed))%")
+      }
+    }
+    if items.kimiFiveHourQuota {
+      if let fiveHour = quota?.fiveHour {
+        parts.append("5h \(Int(fiveHour.percentUsed))%")
       }
     }
 
@@ -56,20 +62,4 @@ enum TokMonMenuBarPresentation {
     return summary.estimatedCost(costRates: snapshot.dashboardState?.costRates ?? .zero)
   }
 
-  private static func formatCompact(_ value: Double) -> String {
-    if value >= 1_000_000_000 { return String(format: "%.1fB", value / 1_000_000_000) }
-    if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-    if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
-
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .decimal
-    return formatter.string(from: NSNumber(value: Int(value.rounded()))) ?? String(Int(value.rounded()))
-  }
-
-  private static func formatCost(_ value: Double) -> String {
-    if value >= 1000 { return "$" + String(format: "%.1fK", value / 1000) }
-    if value >= 1 { return "$" + String(format: "%.2f", value) }
-    if value >= 0.01 { return "$" + String(format: "%.3f", value) }
-    return "$" + String(format: "%.4f", value)
-  }
 }

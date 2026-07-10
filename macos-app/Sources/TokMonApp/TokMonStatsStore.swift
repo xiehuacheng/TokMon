@@ -15,7 +15,7 @@ struct TokMonStatsSnapshot: Sendable {
   var updatedAt: Date?
   var kimiQuotaSnapshot: KimiQuotaSnapshot? = nil
 
-  static let empty = TokMonStatsSnapshot(kimiQuotaSnapshot: nil)
+  static let empty = TokMonStatsSnapshot()
 }
 
 struct TokMonUsageSessionSelection: Equatable, Sendable {
@@ -104,6 +104,7 @@ final class TokMonStatsStore: ObservableObject {
     }
     self.kimiQuotaSnapshots = snapshots
     publishKimiQuotaSnapshot()
+    syncQuotaRefreshTask()
   }
 
   private func publishKimiQuotaSnapshot() {
@@ -149,7 +150,6 @@ final class TokMonStatsStore: ObservableObject {
     guard isFirstRefresh || isPopoverVisible || currentVersion != lastRefreshedDataVersion else {
       return false
     }
-    lastRefreshedDataVersion = currentVersion
     return true
   }
 
@@ -182,8 +182,6 @@ final class TokMonStatsStore: ObservableObject {
   }
 
   func refreshWithScan() async {
-    guard let nativeEngineActor else { return }
-    lastRefreshedDataVersion = await nativeEngineActor.databaseDataVersion()
     await refresh(scan: true)
   }
 
@@ -212,25 +210,14 @@ final class TokMonStatsStore: ObservableObject {
           )
         }
         snapshot.kimiQuotaSnapshot = self.kimiQuotaSnapshot
+        lastRefreshedDataVersion = await nativeEngineActor.databaseDataVersion()
       }
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
-      snapshot = TokMonStatsSnapshot(
-        scanStatus: snapshot.scanStatus,
-        summary: snapshot.summary,
-        previousSummary: snapshot.previousSummary,
-        trendBuckets: snapshot.trendBuckets,
-        heatmapDays: snapshot.heatmapDays,
-        yearHeatmapDays: snapshot.yearHeatmapDays,
-        recordsPage: snapshot.recordsPage,
-        usageSessions: snapshot.usageSessions,
-        selectedUsageSession: snapshot.selectedUsageSession,
-        selectedSessionRecords: snapshot.selectedSessionRecords,
-        dashboardState: snapshot.dashboardState,
-        updatedAt: snapshot.updatedAt,
-        kimiQuotaSnapshot: self.kimiQuotaSnapshot
-      )
+      var preserved = snapshot
+      preserved.kimiQuotaSnapshot = self.kimiQuotaSnapshot
+      snapshot = preserved
     }
   }
 
@@ -368,18 +355,55 @@ final class TokMonStatsStore: ObservableObject {
     defer { isRefreshingQuota = false }
     let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas()
     for (id, snapshot) in newSnapshots {
-      kimiQuotaSnapshots[id] = snapshot
-      if snapshot.error == nil, snapshot.weekly != nil || snapshot.fiveHour != nil {
+      let hasData = snapshot.weekly != nil || snapshot.fiveHour != nil
+      if hasData {
+        kimiQuotaSnapshots[id] = snapshot
         try? configStore?.saveKimiQuotaSnapshot(snapshot, keyID: id)
+      } else if kimiQuotaSnapshots[id] == nil {
+        // No previously cached data: show the empty/error state.
+        kimiQuotaSnapshots[id] = snapshot
       }
+      // If the fetch returned no usable data but we already have cached data,
+      // keep the cached snapshot to avoid the UI flickering from "has data" to
+      // "no data" and back during transient failures.
     }
     publishKimiQuotaSnapshot()
+  }
+
+  var effectiveKimiQuotaSnapshots: [String: KimiQuotaSnapshot] {
+    var result = kimiQuotaSnapshots
+    for account in kimiAPIKeyAccounts {
+      guard var snapshot = result[account.id] else { continue }
+      var changed = false
+      if var weekly = snapshot.weekly, weekly.endAt == nil, let manual = account.weeklyEndAt {
+        weekly.endAt = manual
+        snapshot.weekly = weekly
+        changed = true
+      }
+      if var fiveHour = snapshot.fiveHour, fiveHour.endAt == nil, let manual = account.fiveHourEndAt {
+        fiveHour.endAt = manual
+        snapshot.fiveHour = fiveHour
+        changed = true
+      }
+      if changed {
+        result[account.id] = snapshot
+      }
+    }
+    return result
+  }
+
+  func updateKimiAPIKeyEndDate(id: String, title: String, date: Date) async {
+    guard let nativeEngineActor else { return }
+    let weekly: Date? = title == "Weekly" ? date : nil
+    let fiveHour: Date? = title == "5-Hour" ? date : nil
+    try? await nativeEngineActor.updateKimiAPIKeyEndDates(id: id, weekly: weekly, fiveHour: fiveHour)
+    loadKimiState()
   }
 
   private func syncQuotaRefreshTask() {
     quotaRefreshTask?.cancel()
     quotaRefreshTask = nil
-    guard isPopoverVisible, isQuotaPageVisible, let nativeEngineActor else { return }
+    guard let nativeEngineActor, !kimiAPIKeyAccounts.isEmpty else { return }
 
     quotaRefreshTask = Task { [weak self, weak nativeEngineActor] in
       @MainActor
@@ -450,7 +474,7 @@ enum TokMonStatsSnapshotBuilder {
     var result: [TokMonTrendBucket] = []
 
     while current <= end {
-      let key = trendBucketKey(for: current, interval: interval)
+      let key = bucketFormatter.string(from: current)
       result.append(lookup[key] ?? TokMonTrendBucket(bucket: key))
       guard let next = calendar.date(byAdding: stepComponent, value: 1, to: current) else { break }
       current = next
@@ -557,14 +581,6 @@ enum TokMonStatsSnapshotBuilder {
       return nil
     }
     return (formattedTimestamp(previousFrom), formattedTimestamp(previousTo))
-  }
-
-  private static func trendBucketKey(for date: Date, interval: TokMonTrendInterval) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = .current
-    formatter.dateFormat = interval == .day ? "yyyy-MM-dd" : "yyyy-MM-dd HH:00"
-    return formatter.string(from: date)
   }
 
   private static func formattedDashboardBoundary(_ date: Date, seconds: Int) -> String {

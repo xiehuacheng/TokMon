@@ -1,7 +1,9 @@
 # TokMon Kimi API Key 用量面板设计文档
 
 日期：2026-07-08
-状态：待评审
+状态：已实现（代码已落地，部分实现细节与本设计稿存在差异）
+
+> **注意：** 实际代码支持多个 Kimi API Key 账户（`KimiAPIKeyAccount`），Key 按账户 ID 分别存入 Keychain，key 的增删改选集中在 popover 的 Quota 页面而非设置窗口；设置窗口仅保留刷新间隔配置。菜单栏也新增了 Kimi Weekly Quota / 5-Hour Quota 显示开关。阅读代码时请以 `TokMonQuotaView.swift`、`TokMonKimiQuotaStore.swift`、`TokMonEngineActor.swift` 和 `TokMonStatsStore.swift` 为准。
 
 ## 1. 目标
 

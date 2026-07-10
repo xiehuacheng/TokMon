@@ -57,8 +57,12 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
   var estimatedCost: Bool
   var requests: Bool
   var kimiQuota: Bool
+  var kimiWeeklyQuota: Bool
+  var kimiFiveHourQuota: Bool
 
-  var isEmpty: Bool { !totalTokens && !estimatedCost && !requests && !kimiQuota }
+  var isEmpty: Bool {
+    !totalTokens && !estimatedCost && !requests && !kimiQuota && !kimiWeeklyQuota && !kimiFiveHourQuota
+  }
 
   static let empty = TokMonMenuBarItems()
 
@@ -66,12 +70,16 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
     totalTokens: Bool = false,
     estimatedCost: Bool = false,
     requests: Bool = false,
-    kimiQuota: Bool = false
+    kimiQuota: Bool = false,
+    kimiWeeklyQuota: Bool = false,
+    kimiFiveHourQuota: Bool = false
   ) {
     self.totalTokens = totalTokens
     self.estimatedCost = estimatedCost
     self.requests = requests
     self.kimiQuota = kimiQuota
+    self.kimiWeeklyQuota = kimiWeeklyQuota
+    self.kimiFiveHourQuota = kimiFiveHourQuota
   }
 
   init(legacyMode: String) {
@@ -96,6 +104,7 @@ struct KimiQuotaWindow: Equatable, Sendable, Codable {
   var remaining: Double
   var percentUsed: Double
   var resetAt: Date?
+  var endAt: Date?
   var countdown: String?
 }
 
@@ -120,10 +129,14 @@ enum KimiQuotaError: Error, Equatable, Sendable, Codable {
 struct KimiAPIKeyAccount: Equatable, Sendable, Codable, Identifiable {
   var id: String
   var label: String
+  var weeklyEndAt: Date?
+  var fiveHourEndAt: Date?
 
-  init(id: String = UUID().uuidString, label: String) {
+  init(id: String = UUID().uuidString, label: String, weeklyEndAt: Date? = nil, fiveHourEndAt: Date? = nil) {
     self.id = id
     self.label = label
+    self.weeklyEndAt = weeklyEndAt
+    self.fiveHourEndAt = fiveHourEndAt
   }
 }
 
@@ -793,28 +806,14 @@ struct TokMonHeatmapValueDescriptor: Equatable {
     case .cacheHitRate:
       return String(format: "%.1f%%", value * 100)
     case .cost:
-      return formatCost(value)
+      return TokMonValueFormatter.formatCost(value)
     default:
-      return formatCompact(value)
+      return TokMonValueFormatter.formatCompact(value)
     }
   }
 
   var helpText: String {
     "\(day.day): \(formattedValue) \(label)"
-  }
-
-  private func formatCompact(_ value: Double) -> String {
-    if value >= 1_000_000_000 { return String(format: "%.1fB", value / 1_000_000_000) }
-    if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-    if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
-    return String(Int(value.rounded()))
-  }
-
-  private func formatCost(_ value: Double) -> String {
-    if value >= 1000 { return "$" + String(format: "%.1fK", value / 1000) }
-    if value >= 1 { return "$" + String(format: "%.2f", value) }
-    if value >= 0.01 { return "$" + String(format: "%.3f", value) }
-    return "$" + String(format: "%.4f", value)
   }
 }
 

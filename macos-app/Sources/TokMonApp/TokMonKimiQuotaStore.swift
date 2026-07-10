@@ -92,27 +92,24 @@ private func parseUsagePayload(_ data: Data, fetchedAt: Date) throws -> KimiQuot
 
   if let dataList = json["data"] as? [[String: Any]] {
     for item in dataList {
-      let label = (item["model_name"] as? String) == "all" ? "Weekly Usage" : "Limit"
-      if let window = makeWindow(from: item, label: label, now: fetchedAt) {
-        if (item["model_name"] as? String) == "all" {
-          weekly = window
-        }
+      let modelName = (item["model_name"] as? String)?.lowercased() ?? ""
+      if modelName == "all" {
+        weekly = makeWindow(from: item, label: "Weekly Usage", now: fetchedAt) ?? weekly
       }
     }
   }
 
   if let usage = json["usage"] as? [String: Any] {
-    weekly = makeWindow(from: usage, label: "Weekly Usage", now: fetchedAt)
+    weekly = makeWindow(from: usage, label: "Weekly Usage", now: fetchedAt) ?? weekly
   }
 
   if let limits = json["limits"] as? [[String: Any]] {
     for item in limits {
       let detail = (item["detail"] as? [String: Any]) ?? item
       let windowMeta = item["window"] as? [String: Any]
-      let isFiveHour = isFiveHourWindow(windowMeta)
-      if isFiveHour, let window = makeWindow(from: detail, label: "5-Hour Limit", now: fetchedAt) {
+      if fiveHour == nil, isFiveHourWindow(windowMeta),
+         let window = makeWindow(from: detail, windowMeta: windowMeta, label: "5-Hour Limit", now: fetchedAt) {
         fiveHour = window
-        break
       }
     }
   }
@@ -131,7 +128,7 @@ private func isFiveHourWindow(_ window: [String: Any]?) -> Bool {
   return duration == 300 && timeUnit.contains("MINUTE")
 }
 
-private func makeWindow(from dict: [String: Any], label: String, now: Date) -> KimiQuotaWindow? {
+private func makeWindow(from dict: [String: Any], windowMeta: [String: Any]? = nil, label: String, now: Date) -> KimiQuotaWindow? {
   guard let limit = parseNumber(dict["limit"] ?? dict["limit_amount"]) else { return nil }
 
   let used: Double
@@ -143,7 +140,9 @@ private func makeWindow(from dict: [String: Any], label: String, now: Date) -> K
     return nil
   }
 
-  let resetAt = resetDate(from: dict, now: now)
+  let explicitEnd = endDate(from: dict, windowMeta: windowMeta)
+  let resetAt = resetDate(from: dict, now: now) ?? explicitEnd
+  let endAt = explicitEnd ?? resetAt
   let countdown = resetAt.map { countdownString(from: now, to: $0) }
 
   return KimiQuotaWindow(
@@ -153,6 +152,7 @@ private func makeWindow(from dict: [String: Any], label: String, now: Date) -> K
     remaining: max(0, limit - used),
     percentUsed: limit > 0 ? (used / limit) * 100 : 0,
     resetAt: resetAt,
+    endAt: endAt,
     countdown: countdown
   )
 }
@@ -163,6 +163,16 @@ private func resetDate(from dict: [String: Any], now: Date) -> Date? {
   }
   if let resetIn = parseNumber(dict["reset_in"]) {
     return now.addingTimeInterval(resetIn)
+  }
+  return nil
+}
+
+private func endDate(from dict: [String: Any], windowMeta: [String: Any]?) -> Date? {
+  if let endTime = dict["end_at"] as? String ?? dict["end_time"] as? String ?? dict["endTime"] as? String {
+    return parseDate(endTime)
+  }
+  if let endTime = windowMeta?["end"] as? String {
+    return parseDate(endTime)
   }
   return nil
 }

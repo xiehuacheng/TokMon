@@ -1,5 +1,7 @@
 # TokMon Rename and Menu Bar Display Design
 
+> **状态：** 本设计已实现。App 已重命名为 TokMon，菜单栏使用自定义 N+ Cursor Trace 模板图标，并支持在设置窗口配置菜单栏显示项。后续代码演进（如新增 Kimi Quota 显示开关）以当前源码为准。
+
 ## Summary
 
 Rename the macOS app from AgentMon back to TokMon, with TokenMonitor used as the expanded name in documentation and explanatory surfaces. Replace the existing generic menu bar chart symbol with the approved custom Cursor Trace N+ template icon, and let users choose whether the menu bar shows only the icon or one core metric next to it.

@@ -1628,14 +1628,6 @@ final class TokMonScanner {
     return (size, mtime)
   }
 
-  private func byteSize(_ fileURL: URL) throws -> Int64 {
-    fileAttributes(fileURL).size
-  }
-
-  private func fileModificationStamp(_ fileURL: URL) -> String? {
-    fileAttributes(fileURL).mtime
-  }
-
   private func openCodeDatabaseSignature(_ databaseURL: URL) -> (size: Int64, stamp: String)? {
     let candidates = [
       databaseURL,

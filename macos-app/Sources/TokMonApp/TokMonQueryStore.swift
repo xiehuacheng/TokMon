@@ -491,28 +491,65 @@ final class TokMonQueryStore {
   }
 
   private func summaryFromAggregatedRowsSQL(_ filteredSQL: String, params filteredParams: [TokMonSQLValue]) throws -> TokMonSummary {
-    let total = try requiredDatabase.queryRows("""
-      SELECT COALESCE(SUM(requests), 0) as total_requests,
-             COALESCE(SUM(input_tokens), 0) as total_input,
-             COALESCE(SUM(output_tokens), 0) as total_output,
-             COALESCE(SUM(cache_creation), 0) as total_cache_creation,
-             COALESCE(SUM(cache_read), 0) as total_cache_read,
-             COALESCE(SUM(reasoning_tokens), 0) as total_reasoning,
-             COALESCE(SUM(cache_hit_input_tokens), 0) as total_cache_hit_input,
-             COALESCE(SUM(cache_hit_cache_read), 0) as total_cache_hit_cache_read
-      FROM (\(filteredSQL)) filtered_rollups
-    """, params: filteredParams) { row in
-      TokMonTotals(
-        totalRequests: row.int(0),
-        totalInput: row.int(1),
-        totalOutput: row.int(2),
-        totalCacheCreation: row.int(3),
-        totalCacheRead: row.int(4),
-        totalReasoning: row.int(5),
-        totalCacheHitInput: row.int(6),
-        totalCacheHitCacheRead: row.int(7),
+    let rows = try requiredDatabase.queryRows("""
+      WITH filtered AS (\(filteredSQL))
+      SELECT 'total' as agg_type,
+             NULL as source,
+             NULL as model,
+             COALESCE(SUM(requests), 0) as requests,
+             COALESCE(SUM(input_tokens), 0) as input_tokens,
+             COALESCE(SUM(output_tokens), 0) as output_tokens,
+             COALESCE(SUM(cache_creation), 0) as cache_creation,
+             COALESCE(SUM(cache_read), 0) as cache_read,
+             COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
+             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
+             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
+      FROM filtered
+      UNION ALL
+      SELECT 'source',
+             source,
+             NULL,
+             COALESCE(SUM(requests), 0),
+             COALESCE(SUM(input_tokens), 0),
+             COALESCE(SUM(output_tokens), 0),
+             COALESCE(SUM(cache_creation), 0),
+             COALESCE(SUM(cache_read), 0),
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(cache_hit_input_tokens), 0),
+             COALESCE(SUM(cache_hit_cache_read), 0)
+      FROM filtered
+      GROUP BY source
+      UNION ALL
+      SELECT 'model',
+             source,
+             model,
+             COALESCE(SUM(requests), 0),
+             COALESCE(SUM(input_tokens), 0),
+             COALESCE(SUM(output_tokens), 0),
+             COALESCE(SUM(cache_creation), 0),
+             COALESCE(SUM(cache_read), 0),
+             COALESCE(SUM(reasoning_tokens), 0),
+             COALESCE(SUM(cache_hit_input_tokens), 0),
+             COALESCE(SUM(cache_hit_cache_read), 0)
+      FROM filtered
+      GROUP BY source, model
+    """, params: filteredParams) { row -> (aggType: String, source: String, model: String, requests: Int, inputTokens: Int, outputTokens: Int, cacheCreation: Int, cacheRead: Int, reasoningTokens: Int, cacheHitInputTokens: Int, cacheHitCacheRead: Int) in
+      (
+        aggType: row.string(0),
+        source: row.string(1),
+        model: row.string(2),
+        requests: row.int(3),
+        inputTokens: row.int(4),
+        outputTokens: row.int(5),
+        cacheCreation: row.int(6),
+        cacheRead: row.int(7),
+        reasoningTokens: row.int(8),
+        cacheHitInputTokens: row.int(9),
+        cacheHitCacheRead: row.int(10)
       )
-    }.first ?? TokMonTotals(
+    }
+
+    var total = TokMonTotals(
       totalRequests: 0,
       totalInput: 0,
       totalOutput: 0,
@@ -520,57 +557,51 @@ final class TokMonQueryStore {
       totalCacheRead: 0,
       totalReasoning: 0,
     )
+    var bySource: [TokMonSourceTotals] = []
+    var byModel: [TokMonModelTotals] = []
 
-    let bySource = try requiredDatabase.queryRows("""
-      SELECT source,
-             COALESCE(SUM(requests), 0) as requests,
-             COALESCE(SUM(input_tokens), 0) as input_tokens,
-             COALESCE(SUM(output_tokens), 0) as output_tokens,
-             COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read,
-             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
-             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
-      FROM (\(filteredSQL)) filtered_rollups
-      GROUP BY source
-    """, params: filteredParams) { row in
-      TokMonSourceTotals(
-        source: row.string(0),
-        requests: row.int(1),
-        inputTokens: row.int(2),
-        outputTokens: row.int(3),
-        cacheCreation: row.int(4),
-        cacheRead: row.int(5),
-        cacheHitInputTokens: row.int(6),
-        cacheHitCacheRead: row.int(7),
-      )
+    for row in rows {
+      switch row.aggType {
+      case "total":
+        total = TokMonTotals(
+          totalRequests: row.requests,
+          totalInput: row.inputTokens,
+          totalOutput: row.outputTokens,
+          totalCacheCreation: row.cacheCreation,
+          totalCacheRead: row.cacheRead,
+          totalReasoning: row.reasoningTokens,
+          totalCacheHitInput: row.cacheHitInputTokens,
+          totalCacheHitCacheRead: row.cacheHitCacheRead,
+        )
+      case "source":
+        bySource.append(TokMonSourceTotals(
+          source: row.source,
+          requests: row.requests,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheCreation: row.cacheCreation,
+          cacheRead: row.cacheRead,
+          cacheHitInputTokens: row.cacheHitInputTokens,
+          cacheHitCacheRead: row.cacheHitCacheRead,
+        ))
+      case "model":
+        byModel.append(TokMonModelTotals(
+          model: row.model,
+          source: row.source,
+          requests: row.requests,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheCreation: row.cacheCreation,
+          cacheRead: row.cacheRead,
+          cacheHitInputTokens: row.cacheHitInputTokens,
+          cacheHitCacheRead: row.cacheHitCacheRead,
+        ))
+      default:
+        break
+      }
     }
 
-    let byModel = try requiredDatabase.queryRows("""
-      SELECT model,
-             source,
-             COALESCE(SUM(requests), 0) as requests,
-             COALESCE(SUM(input_tokens), 0) as input_tokens,
-             COALESCE(SUM(output_tokens), 0) as output_tokens,
-             COALESCE(SUM(cache_creation), 0) as cache_creation,
-             COALESCE(SUM(cache_read), 0) as cache_read,
-             COALESCE(SUM(cache_hit_input_tokens), 0) as cache_hit_input_tokens,
-             COALESCE(SUM(cache_hit_cache_read), 0) as cache_hit_cache_read
-      FROM (\(filteredSQL)) filtered_rollups
-      GROUP BY model, source
-      ORDER BY requests DESC
-    """, params: filteredParams) { row in
-      TokMonModelTotals(
-        model: row.string(0),
-        source: row.string(1),
-        requests: row.int(2),
-        inputTokens: row.int(3),
-        outputTokens: row.int(4),
-        cacheCreation: row.int(5),
-        cacheRead: row.int(6),
-        cacheHitInputTokens: row.int(7),
-        cacheHitCacheRead: row.int(8),
-      )
-    }
+    byModel.sort { $0.requests > $1.requests }
 
     return TokMonSummary(total: total, bySource: bySource, byModel: byModel)
   }

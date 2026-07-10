@@ -67,7 +67,8 @@ struct TokMonSettingsWindow: View {
                   Toggle("Total Tokens", isOn: $store.draft.menuBarDisplayItems.totalTokens)
                   Toggle("Est. Cost", isOn: $store.draft.menuBarDisplayItems.estimatedCost)
                   Toggle("Requests", isOn: $store.draft.menuBarDisplayItems.requests)
-                  Toggle("Kimi Quota", isOn: $store.draft.menuBarDisplayItems.kimiQuota)
+                  Toggle("Kimi Weekly Quota", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)
+                  Toggle("Kimi 5-Hour Quota", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)
                 }
                 .frame(width: 220, alignment: .leading)
               }

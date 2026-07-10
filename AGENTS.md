@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Qwen Code 与 OpenCode 的 token usage。面向用户的交付形态是 `.app`。
+TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Codex、Kimi Code、Qwen Code 与 OpenCode 的 token usage。面向用户的交付形态是 `.app`。
 
 - macOS App 在 `macos-app/`：`Package.swift` + `Sources/TokMonApp/` 是 SwiftUI 状态栏 App，`Assets/` 存 App icon，`Packaging/Info.plist` 是 bundle metadata，`scripts/build-app.sh` 负责打包 `.app`。
 - 测试在 `macos-app/Tests/TokMonAppTests/`。
@@ -18,13 +18,13 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
 
 ## 代码风格与命名约定
 
-macOS 侧的 Swift 代码按 SwiftPM 约定放在 `Sources/TokMonApp/`，文件按职责拆分（`TokMonStatsStore.swift`、`StatusPopoverView.swift`、`TokMonSettingsWindow.swift` 等）；新增文件遵循同样的命名风格。
+macOS 侧的 Swift 代码按 SwiftPM 约定放在 `Sources/TokMonApp/`，文件按职责拆分（`TokMonStatsStore.swift`、`StatusPopoverView.swift`、`TokMonSettingsWindow.swift`、`TokMonKimiQuotaStore.swift` 等）；新增文件遵循同样的命名风格。
 
 Swift 使用两个空格缩进。命名应清晰表达领域含义，例如 `TokMonScanner`、`TokMonQueryStore`、`selectedUsageSession`。优先使用短小直接的函数，不为临时需求增加抽象。
 
 ## 测试指南
 
-提交前至少运行 `cd macos-app && swift test` 和 `git diff --check`。修改 TokMon 时验证原生 popover、设置窗口、扫描/重建、summary/trend/heatmap/records/sessions 相关路径。涉及独立版 App 的改动需要重新跑 `bash macos-app/scripts/build-app.sh` 并启动 `release/TokMon.app` 确认。
+提交前至少运行 `cd macos-app && swift test` 和 `git diff --check`。修改 TokMon 时验证原生 popover、设置窗口、扫描/重建、summary/trend/heatmap/records/sessions/quota 相关路径。涉及独立版 App 的改动需要重新跑 `bash macos-app/scripts/build-app.sh` 并启动 `release/TokMon.app` 确认。
 
 ## 提交与 Pull Request 规范
 

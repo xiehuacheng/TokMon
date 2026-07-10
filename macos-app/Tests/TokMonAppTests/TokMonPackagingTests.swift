@@ -143,7 +143,9 @@ import Testing
   #expect(settings.contains("Toggle(\"Total Tokens\", isOn: $store.draft.menuBarDisplayItems.totalTokens)"))
   #expect(settings.contains("Toggle(\"Est. Cost\", isOn: $store.draft.menuBarDisplayItems.estimatedCost)"))
   #expect(settings.contains("Toggle(\"Requests\", isOn: $store.draft.menuBarDisplayItems.requests)"))
-  #expect(settings.contains("Toggle(\"Kimi Quota\", isOn: $store.draft.menuBarDisplayItems.kimiQuota)"))
+  #expect(settings.contains("Toggle(\"Kimi Weekly Quota\", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)"))
+  #expect(settings.contains("Toggle(\"Kimi 5-Hour Quota\", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)"))
+  #expect(!settings.contains("Toggle(\"Kimi Quota\", isOn: $store.draft.menuBarDisplayItems.kimiQuota)"))
 }
 
 @Test func userFacingTextUsesTokMonName() throws {
@@ -396,7 +398,7 @@ import Testing
   #expect(!view.contains("withAnimation(.interactiveSpring"))
 }
 
-@Test func totalTokensNumberDoesNotResizeBetweenCollapsedAndExpandedStates() throws {
+@Test func totalTokensNumberKeepsFixedSizeWithGracefulScaleFallback() throws {
   let packageDir = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -422,7 +424,7 @@ import Testing
   #expect(!view.contains(".font(.system(size: 26, weight: .black, design: .rounded).monospacedDigit())"))
   #expect(!view.contains(".font(.system(size: 24, weight: .black, design: .rounded).monospacedDigit())"))
   #expect(valueText.contains("transaction.animation = nil"))
-  #expect(!valueText.contains("minimumScaleFactor"))
+  #expect(valueText.contains("minimumScaleFactor"))
 }
 
 @Test func totalTokensCollapsedComparisonKeepsFullMetricWidth() throws {
@@ -1495,9 +1497,10 @@ import Testing
   let view = try String(contentsOf: sourcesDir.appendingPathComponent("StatusPopoverView.swift"), encoding: .utf8)
 
   #expect(runtime.contains("@Published var statusPanelSessionBubbleY: CGFloat?"))
-  #expect(view.contains(".onChange(of: selectedSessionBubbleY, initial: true)"))
   #expect(view.contains(".onChange(of: selectedPage, initial: true)"))
   #expect(view.contains(".onChange(of: stats.snapshot.selectedUsageSession, initial: true)"))
+  #expect(view.contains(".onChange(of: sessionRowFrames, initial: true)"))
+  #expect(view.contains(".onChange(of: scrollViewBounds, initial: true)"))
   #expect(view.contains(".onDisappear {\n      runtime.statusPanelSessionBubbleY = nil\n      resetTransientUIState()\n    }"))
   #expect(view.contains("private func syncSessionBubbleHitSurface()"))
   #expect(view.contains("runtime.statusPanelSessionBubbleY = selectedPage == .sessions && stats.snapshot.selectedUsageSession != nil ? selectedSessionBubbleY : nil"))

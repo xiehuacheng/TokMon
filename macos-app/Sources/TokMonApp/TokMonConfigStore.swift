@@ -29,6 +29,9 @@ final class TokMonConfigStore {
     }
 
     let data = try Data(contentsOf: url)
+    if let decoded = try? JSONDecoder().decode(TokMonUIState.self, from: data) {
+      return decoded
+    }
     return normalizedUIState(from: data) ?? .default
   }
 
@@ -51,18 +54,6 @@ final class TokMonConfigStore {
     try write(snapshot, to: kimiQuotaSnapshotURL(keyID: keyID))
   }
 
-  /// Legacy single-key cache; kept only for migration.
-  func loadLastKimiQuotaSnapshot() -> KimiQuotaSnapshot? {
-    let url = dataDir.appendingPathComponent("tokmon-kimi-quota.json")
-    guard fileManager.fileExists(atPath: url.path) else {
-      return nil
-    }
-    guard let data = try? Data(contentsOf: url) else {
-      return nil
-    }
-    return try? JSONDecoder().decode(KimiQuotaSnapshot.self, from: data)
-  }
-
   func expandUserPath(_ path: String) -> String {
     guard path == "~" || path.hasPrefix("~/") else {
       return path
@@ -81,10 +72,6 @@ final class TokMonConfigStore {
 
   private var uiStateURL: URL {
     dataDir.appendingPathComponent("tokmon-ui-state.json")
-  }
-
-  private var lastKimiQuotaSnapshotURL: URL {
-    dataDir.appendingPathComponent("tokmon-kimi-quota.json")
   }
 
   private func kimiQuotaSnapshotURL(keyID: String) -> URL {
@@ -146,11 +133,14 @@ final class TokMonConfigStore {
 
   private func normalizedMenuBarDisplayItems(from object: [String: Any]) -> TokMonMenuBarItems {
     if let items = object["menuBarDisplayItems"] as? [String: Any] {
+      let legacyKimiQuota = boolValue(items["kimiQuota"]) ?? false
       return TokMonMenuBarItems(
         totalTokens: boolValue(items["totalTokens"]) ?? false,
         estimatedCost: boolValue(items["estimatedCost"]) ?? false,
         requests: boolValue(items["requests"]) ?? false,
-        kimiQuota: boolValue(items["kimiQuota"]) ?? false
+        kimiQuota: legacyKimiQuota,
+        kimiWeeklyQuota: boolValue(items["kimiWeeklyQuota"]) ?? legacyKimiQuota,
+        kimiFiveHourQuota: boolValue(items["kimiFiveHourQuota"]) ?? false
       )
     }
     if let legacyMode = stringValue(object["menuBarDisplayMode"]) {
@@ -210,16 +200,6 @@ final class TokMonConfigStore {
       return nil
     }
     return stringValue(value) ?? defaultValue
-  }
-
-  private func optionalIntValue(in object: [String: Any], key: String, default defaultValue: Int?) -> Int? {
-    guard let value = object[key] else {
-      return defaultValue
-    }
-    if value is NSNull {
-      return nil
-    }
-    return intValue(value) ?? defaultValue
   }
 
   private func stringValue(_ value: Any?) -> String? {

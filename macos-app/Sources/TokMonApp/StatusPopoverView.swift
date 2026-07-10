@@ -12,11 +12,6 @@ struct StatusPopoverView: View {
   @State private var sessionRowFrames: [String: CGRect] = [:]
   @State private var scrollViewBounds: CGRect = .zero
   @Namespace private var pageRailSelectionNamespace
-  private let numberFormatter: NumberFormatter = {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .decimal
-    return formatter
-  }()
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -68,9 +63,6 @@ struct StatusPopoverView: View {
     .onChange(of: stats.snapshot.dashboardState?.activeSeries, initial: true) { _, activeSeries in
       selectedSeries = TokMonSeriesPresentation(rawValue: activeSeries ?? "total")
     }
-    .onChange(of: selectedSessionBubbleY, initial: true) { _, _ in
-      syncSessionBubbleHitSurface()
-    }
     .onChange(of: selectedPage, initial: true) { _, page in
       resetTransientUIState()
       syncSessionBubbleHitSurface()
@@ -78,6 +70,12 @@ struct StatusPopoverView: View {
     }
     .onChange(of: stats.snapshot.selectedUsageSession, initial: true) { _, _ in
       resetTransientUIState()
+      syncSessionBubbleHitSurface()
+    }
+    .onChange(of: sessionRowFrames, initial: true) { _, _ in
+      syncSessionBubbleHitSurface()
+    }
+    .onChange(of: scrollViewBounds, initial: true) { _, _ in
       syncSessionBubbleHitSurface()
     }
     .onAppear {
@@ -285,8 +283,8 @@ struct StatusPopoverView: View {
             costRates: costRates(forModel: row.model),
             sourceLabel: labelForSource(row.source),
             sourceColor: colorForSource(row.source),
-            formatCompact: formatChartValue,
-            formatCost: formatCost,
+            formatCompact: TokMonValueFormatter.formatCompact,
+            formatCost: TokMonValueFormatter.formatCost,
             onToggleDetails: {
               expandedRequestId = expandedRequestId == row.id ? nil : row.id
             },
@@ -319,11 +317,11 @@ struct StatusPopoverView: View {
             session: session,
             isSelected: stats.snapshot.selectedUsageSession?.id == session.id,
             costRates: costRates(forSession: session),
-            projectName: sessionDisplayProjectName(for: session),
-            firstPrompt: sessionDisplayFirstPrompt(for: session),
+            projectName: sessionProjectName(for: session, fallbackSource: session.source),
+            firstPrompt: sessionFirstPrompt(for: session, fallbackSessionId: session.sessionId),
             sourceColor: colorForSource(session.source),
-            formatCompact: formatChartValue,
-            formatCost: formatCost,
+            formatCompact: TokMonValueFormatter.formatCompact,
+            formatCost: TokMonValueFormatter.formatCost,
             onSelect: {
               toggleUsageSessionSelection(session)
             },
@@ -354,14 +352,15 @@ struct StatusPopoverView: View {
   private var quotaPage: some View {
     TokMonQuotaView(
       accounts: stats.kimiAPIKeyAccounts,
-      snapshots: stats.kimiQuotaSnapshots,
+      snapshots: stats.effectiveKimiQuotaSnapshots,
       selectedAccountID: stats.selectedKimiAPIKeyID,
       isLoading: stats.isRefreshingQuota,
       onRefresh: { Task { await stats.refreshKimiQuota() } },
       onSelectAccount: { stats.selectKimiAPIKey(id: $0) },
       onAddKey: { key, label in Task { try? await stats.addKimiAPIKey(key, label: label) } },
       onRemoveKey: { id in Task { try? await stats.removeKimiAPIKey(id: id) } },
-      onRenameKey: { id, newLabel in Task { try? await stats.renameKimiAPIKey(id: id, newLabel: newLabel) } }
+      onRenameKey: { id, newLabel in Task { try? await stats.renameKimiAPIKey(id: id, newLabel: newLabel) } },
+      onUpdateEndDate: { id, title, date in Task { await stats.updateKimiAPIKeyEndDate(id: id, title: title, date: date) } }
     )
     .font(.system(size: 12, weight: .regular, design: .rounded))
   }
@@ -398,8 +397,8 @@ struct StatusPopoverView: View {
                   costRates: costRates(forModel: row.model),
                   sourceLabel: labelForSource(row.source),
                   sourceColor: colorForSource(row.source),
-                  formatCompact: formatChartValue,
-                  formatCost: formatCost,
+                  formatCompact: TokMonValueFormatter.formatCompact,
+                  formatCost: TokMonValueFormatter.formatCost,
                   onToggleDetails: {
                     expandedRequestId = expandedRequestId == row.id ? nil : row.id
                   },
@@ -428,9 +427,9 @@ struct StatusPopoverView: View {
   private var primaryMetrics: [TokMonHudMetric] {
     let totals = stats.snapshot.summary?.total
     return [
-      TokMonHudMetric(series: .total, value: formatCompact(totals?.totalTokens), delta: metricDelta(for: .total), isSelected: selectedSeries.key == .total),
-      TokMonHudMetric(series: .cost, value: formatCost(currentEstimatedCost), delta: metricDelta(for: .cost), isSelected: selectedSeries.key == .cost),
-      TokMonHudMetric(series: .requests, value: formatCompact(totals?.totalRequests), delta: metricDelta(for: .requests), isSelected: selectedSeries.key == .requests),
+      TokMonHudMetric(series: .total, value: TokMonValueFormatter.formatCompact(totals?.totalTokens), delta: metricDelta(for: .total), isSelected: selectedSeries.key == .total),
+      TokMonHudMetric(series: .cost, value: TokMonValueFormatter.formatCost(currentEstimatedCost), delta: metricDelta(for: .cost), isSelected: selectedSeries.key == .cost),
+      TokMonHudMetric(series: .requests, value: TokMonValueFormatter.formatCompact(totals?.totalRequests), delta: metricDelta(for: .requests), isSelected: selectedSeries.key == .requests),
       TokMonHudMetric(series: .cacheHitRate, value: formatPercent(totals?.cacheHitRate), delta: metricDelta(for: .cacheHitRate), isSelected: selectedSeries.key == .cacheHitRate),
     ]
   }
@@ -438,10 +437,10 @@ struct StatusPopoverView: View {
   private var secondaryMetrics: [TokMonHudMetric] {
     let totals = stats.snapshot.summary?.total
     return [
-      TokMonHudMetric(series: .input, value: formatCompact(totals?.totalInput), delta: metricDelta(for: .input), isSelected: selectedSeries.key == .input),
-      TokMonHudMetric(series: .output, value: formatCompact(totals?.totalOutput), delta: metricDelta(for: .output), isSelected: selectedSeries.key == .output),
-      TokMonHudMetric(series: .cache, value: formatCompact(totals?.totalCacheCreation), delta: metricDelta(for: .cache), isSelected: selectedSeries.key == .cache),
-      TokMonHudMetric(series: .cacheHit, value: formatCompact(totals?.totalCacheRead), delta: metricDelta(for: .cacheHit), isSelected: selectedSeries.key == .cacheHit),
+      TokMonHudMetric(series: .input, value: TokMonValueFormatter.formatCompact(totals?.totalInput), delta: metricDelta(for: .input), isSelected: selectedSeries.key == .input),
+      TokMonHudMetric(series: .output, value: TokMonValueFormatter.formatCompact(totals?.totalOutput), delta: metricDelta(for: .output), isSelected: selectedSeries.key == .output),
+      TokMonHudMetric(series: .cache, value: TokMonValueFormatter.formatCompact(totals?.totalCacheCreation), delta: metricDelta(for: .cache), isSelected: selectedSeries.key == .cache),
+      TokMonHudMetric(series: .cacheHit, value: TokMonValueFormatter.formatCompact(totals?.totalCacheRead), delta: metricDelta(for: .cacheHit), isSelected: selectedSeries.key == .cacheHit),
     ]
   }
 
@@ -496,29 +495,11 @@ struct StatusPopoverView: View {
     return updatedAt.formatted(date: .omitted, time: .standard)
   }
 
-  private func format(_ value: Int?) -> String {
-    guard let value else { return "-" }
-    return numberFormatter.string(from: NSNumber(value: value)) ?? String(value)
-  }
-
-  private func formatCompact(_ value: Int?) -> String {
-    guard let value else { return "-" }
-    return formatChartValue(Double(value))
-  }
-
-  private func formatCost(_ value: Double?) -> String {
-    guard let value else { return "-" }
-    if value >= 1000 { return "$" + String(format: "%.1fK", value / 1000) }
-    if value >= 1 { return "$" + String(format: "%.2f", value) }
-    if value >= 0.01 { return "$" + String(format: "%.3f", value) }
-    return "$" + String(format: "%.4f", value)
-  }
-
   private func formatMetricValue(_ value: Double?) -> String {
     if selectedSeries.isPercent {
       return formatPercent(value)
     }
-    return selectedSeries.isCost ? formatCost(value) : formatChartValue(value)
+    return selectedSeries.isCost ? TokMonValueFormatter.formatCost(value) : TokMonValueFormatter.formatCompact(value)
   }
 
   private func formatPercent(_ value: Double?) -> String {
@@ -556,14 +537,6 @@ struct StatusPopoverView: View {
     default:
       return summary.total.value(for: seriesKey, costRates: fallbackCostRates)
     }
-  }
-
-  private func formatChartValue(_ value: Double?) -> String {
-    guard let value else { return "-" }
-    if value >= 1_000_000_000 { return String(format: "%.1fB", value / 1_000_000_000) }
-    if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-    if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
-    return format(Int(value.rounded()))
   }
 
   private func copyScreenshotToPasteboard() {
@@ -751,26 +724,6 @@ struct StatusPopoverView: View {
       return modelPricing[session.model] ?? .zero
     }
     return aggregateCostRates
-  }
-
-  private func sessionDisplayProjectName(for session: TokMonUsageSession) -> String {
-    if let projectName = session.projectName, !projectName.isEmpty {
-      return projectName
-    }
-    if let title = session.title, let split = splitTokMonSessionTitle(title) {
-      return split.projectName
-    }
-    return labelForSource(session.source)
-  }
-
-  private func sessionDisplayFirstPrompt(for session: TokMonUsageSession) -> String {
-    if let firstPrompt = session.firstPrompt, !firstPrompt.isEmpty {
-      return firstPrompt
-    }
-    if let title = session.title, let split = splitTokMonSessionTitle(title) {
-      return split.firstPrompt
-    }
-    return session.sessionId
   }
 
   private func sourceValue(_ source: TokMonSourceTotals, for seriesKey: TokMonSeriesKey) -> Double {
@@ -1649,6 +1602,7 @@ private struct MetricValueText: View {
       .font(.system(size: 20, weight: .black, design: .rounded).monospacedDigit())
       .foregroundStyle(isSelected ? TokMonGlass.accent : .primary)
       .lineLimit(1)
+      .minimumScaleFactor(0.5)
       .fixedSize(horizontal: true, vertical: false)
       .frame(minWidth: 76, alignment: .leading)
       .frame(height: 24, alignment: .leading)

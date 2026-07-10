@@ -46,7 +46,7 @@ struct TokMonQuotaMiniCard: View {
           .overlay(alignment: .leading) {
             if let window {
               RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(color(for: window.percentUsed))
+                .fill(quotaColor(for: window.percentUsed))
                 .frame(width: geo.size.width * min(window.percentUsed / 100, 1))
             }
           }
@@ -54,7 +54,7 @@ struct TokMonQuotaMiniCard: View {
       .frame(height: 5)
       Text(window.map { "\(Int($0.percentUsed))%" } ?? "—")
         .font(.system(size: 11, weight: .heavy, design: .rounded))
-        .foregroundStyle(window.map { color(for: $0.percentUsed) } ?? .secondary)
+        .foregroundStyle(window.map { quotaColor(for: $0.percentUsed) } ?? .secondary)
         .frame(width: 34, alignment: .trailing)
     }
   }
@@ -68,9 +68,4 @@ struct TokMonQuotaMiniCard: View {
     }
   }
 
-  private func color(for percent: Double) -> Color {
-    if percent >= 95 { return TokMonGlass.danger }
-    if percent >= 80 { return .orange }
-    return TokMonGlass.accent
-  }
 }
