@@ -47,6 +47,7 @@ final class TokMonStatsStore: ObservableObject {
   @Published private(set) var selectedKimiAPIKeyID: String? = nil
   @Published private(set) var kimiQuotaSnapshots: [String: KimiQuotaSnapshot] = [:]
   private var isUpdatingDashboardRange = false
+  private var kimiAPIKeyCache: [String: String] = [:]
 
   private let nativeEngineActor: TokMonEngineActor?
   private let configStore: TokMonConfigStore?
@@ -105,6 +106,13 @@ final class TokMonStatsStore: ObservableObject {
     self.kimiQuotaSnapshots = snapshots
     publishKimiQuotaSnapshot()
     syncQuotaRefreshTask()
+  }
+
+  private func cachedAPIKey(for id: String) async -> String? {
+    if let cached = kimiAPIKeyCache[id] { return cached }
+    guard let key = await nativeEngineActor?.loadKimiAPIKey(id: id) else { return nil }
+    kimiAPIKeyCache[id] = key
+    return key
   }
 
   private func publishKimiQuotaSnapshot() {
@@ -328,7 +336,8 @@ final class TokMonStatsStore: ObservableObject {
 
   func addKimiAPIKey(_ key: String, label: String) async throws {
     guard let nativeEngineActor else { return }
-    _ = try await nativeEngineActor.addKimiAPIKey(key, label: label)
+    let account = try await nativeEngineActor.addKimiAPIKey(key, label: label)
+    kimiAPIKeyCache[account.id] = key
     loadKimiState()
     await refreshKimiQuota()
   }
@@ -336,6 +345,7 @@ final class TokMonStatsStore: ObservableObject {
   func removeKimiAPIKey(id: String) async throws {
     guard let nativeEngineActor else { return }
     try await nativeEngineActor.removeKimiAPIKey(id: id)
+    kimiAPIKeyCache.removeValue(forKey: id)
     kimiQuotaSnapshots.removeValue(forKey: id)
     loadKimiState()
   }
@@ -351,9 +361,13 @@ final class TokMonStatsStore: ObservableObject {
       publishKimiQuotaSnapshot()
       return
     }
+    var apiKeys: [String: String] = [:]
+    for account in kimiAPIKeyAccounts {
+      apiKeys[account.id] = await cachedAPIKey(for: account.id)
+    }
     isRefreshingQuota = true
     defer { isRefreshingQuota = false }
-    let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas()
+    let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas(apiKeys: apiKeys)
     for (id, snapshot) in newSnapshots {
       let hasData = snapshot.weekly != nil || snapshot.fiveHour != nil
       if hasData {

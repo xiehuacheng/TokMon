@@ -272,6 +272,10 @@ actor TokMonEngineActor {
     try engine.configStore.loadUIState().kimiAPIKeyAccounts
   }
 
+  func loadKimiAPIKey(id: String) -> String? {
+    TokMonKeychain.loadKimiAPIKey(id: id)
+  }
+
   func addKimiAPIKey(_ key: String, label: String) async throws -> KimiAPIKeyAccount {
     let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, trimmed.hasPrefix("sk-kimi-") else {
@@ -323,20 +327,21 @@ actor TokMonEngineActor {
     try engine.configStore.saveUIState(uiState)
   }
 
-  func refreshKimiQuota(forKeyID id: String) async -> KimiQuotaSnapshot {
-    guard let apiKey = TokMonKeychain.loadKimiAPIKey(id: id), !apiKey.isEmpty else {
+  func refreshKimiQuota(forKeyID id: String, apiKey: String) async -> KimiQuotaSnapshot {
+    guard !apiKey.isEmpty else {
       return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
     }
     return await engine.kimiQuotaStore.fetchQuota(apiKey: apiKey)
   }
 
-  func refreshAllKimiQuotas() async -> [String: KimiQuotaSnapshot] {
+  func refreshAllKimiQuotas(apiKeys: [String: String]) async -> [String: KimiQuotaSnapshot] {
     let accounts = (try? loadKimiAPIKeyAccounts()) ?? []
     guard !accounts.isEmpty else { return [:] }
     return await withTaskGroup(of: (String, KimiQuotaSnapshot).self) { group in
       for account in accounts {
+        let apiKey = apiKeys[account.id] ?? ""
         group.addTask {
-          (account.id, await self.refreshKimiQuota(forKeyID: account.id))
+          (account.id, await self.refreshKimiQuota(forKeyID: account.id, apiKey: apiKey))
         }
       }
       var result: [String: KimiQuotaSnapshot] = [:]
