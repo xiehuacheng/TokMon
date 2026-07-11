@@ -251,10 +251,16 @@ struct StatusPopoverView: View {
         costRates: aggregateCostRates,
         colorForValue: { value, max in
           if selectedSeries.key == .cacheHitRate {
-            // Cache hit rates usually cluster between 0.9 and 1.0. Zoom into
-            // that narrow band so 90%, 95%, 99% and 100% are visually distinct.
-            let zoomed = Swift.max(0, Swift.min(1, (value - 0.9) / 0.1))
-            return heatmapColor(value: zoomed, maxValue: 1.0, color: selectedSeries.tintColor)
+            // Cache hit rates usually cluster in the 90s. Use a piecewise scale
+            // that keeps the 0-90% range distinguishable while giving the
+            // 90-100% band half of the total color range.
+            let normalized: Double
+            if value < 0.9 {
+              normalized = value / 0.9 * 0.5
+            } else {
+              normalized = 0.5 + (value - 0.9) / 0.1 * 0.5
+            }
+            return heatmapColor(value: normalized, maxValue: 1.0, color: selectedSeries.tintColor)
           }
           return heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor)
         },
