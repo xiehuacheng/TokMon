@@ -68,6 +68,7 @@ TokMon 是一个 macOS 原生状态栏 App，用于统一查看 Claude Code、Co
    - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
    - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
    - 在发布说明中写明 DMG 的 SHA-256。
+   - 发布说明使用中文撰写。
 
 ## 代码风格与命名约定
 
