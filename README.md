@@ -1,6 +1,6 @@
 # TokMon
 
-TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、Codex、Kimi Code、Qwen Code 和 OpenCode 的 token usage。当前交付形态是 `.app`，主界面是菜单栏 popover 和原生设置窗口。
+TokMon 是一款 macOS 原生状态栏应用，用于统一查看 Claude Code、Codex、Kimi Code、Qwen Code 与 OpenCode 的 token usage。它以独立的 `.app` 形式交付，主界面是菜单栏 popover 与原生设置窗口。
 
 ## 界面预览
 
@@ -9,85 +9,143 @@ TokMon 是一个 macOS 原生状态栏应用，用于统一查看 Claude Code、
   <img src="docs/images/tokmon-popover-dark.png" alt="TokMon macOS status bar popover in dark mode" width="320">
 </p>
 
-状态栏看板展示 token 用量卡片、趋势图、活动热力图、请求明细、session 统计和 Kimi Quota 面板；设置窗口提供路径、默认范围、模型价格、菜单栏显示项、扫描和维护操作。
-
-## 技术栈
-
-- App：SwiftUI / AppKit
-- 数据库：SQLite3
-- 配置解析：Foundation JSON
+点击菜单栏图标可查看实时统计、复制面板截图、打开设置窗口或退出应用。
 
 ## 功能概览
 
-- 支持 Total Tokens、Requests、Input、Output、Cache Created、Cache Hit、Cache Hit Rate、Est. Cost 指标切换
-- 支持趋势图、紧凑活动热力图、按模型 / 来源分布、请求日志分页、session 明细和 Kimi Quota 面板
-- 支持 Today、This Week、This Month、All 快捷时间范围
-- session 标题优先使用 session 名 / 项目文件夹名和第一句 prompt
-- 支持按模型配置价格，用于费用估算
-- 支持浅色与深色模式，主题色会自动适配以保证可读性
-- 状态栏图标与文字跟随系统深浅色及屏幕焦点状态自动调整颜色
-- 状态栏 popover 右上角提供刷新、复制截图、打开设置窗口、检查更新和退出 App
+- **多源统一**：自动扫描 Claude Code、Codex、Kimi Code、Qwen Code、OpenCode 的本地日志/数据库。
+- **指标切换**：Total Tokens、Requests、Input Tokens、Output Tokens、Cache Created、Cache Hit、Hit Rate、Est. Cost。
+- **时间范围**：Today / This Week / This Month / All 快捷范围，支持 Round / Exact 两种边界模式。
+- **趋势与热力图**：支持趋势图、按来源/模型分布、紧凑活动热力图。
+- **请求与 Session**：请求日志分页、session 明细；session 标题优先使用 session 名 / 项目文件夹名和第一句 prompt。
+- **Kimi Quota**：多 API Key 管理，展示周额度与 5 小时滚动额度，支持手动或定时刷新。
+- **菜单栏显示**：可在设置中选择在菜单栏显示 Total Tokens、Est. Cost、Requests、Kimi Weekly Quota、Kimi 5-Hour Quota。
+- **费用估算**：支持按模型配置价格，或使用全局默认费率估算 Est. Cost。
+- **外观适配**：支持浅色与深色模式，主题色、状态栏图标与文字会自动跟随系统外观。
+- **截图分享**：点击 popover 右上角相机图标，可将当前面板复制为图片；首次使用会请求屏幕录制权限。
+- **自动更新**：内置 Sparkle，可手动或自动检查 GitHub Release 更新。
 
-## 数据来源支持
+## 系统要求
 
-Claude Code、Codex、Kimi Code、Qwen Code、OpenCode
+- macOS 14 或更高版本
 
-## 运行方式
+## 安装与下载
 
-开发运行：
+1. 前往 [GitHub Releases](https://github.com/xiehuacheng/TokMon/releases) 下载最新的 `TokMon-X.Y.Z.dmg`。
+2. 打开 DMG，将 `TokMon.app` 拖入 **Applications**。
+3. 首次启动时，macOS 可能提示 Gatekeeper。当前版本使用本地 ad-hoc 签名，未经过 Apple 公证，按系统提示处理即可。
+4. 启动后点击菜单栏的 TokMon 图标开始使用。
+
+更详细的使用说明、打包与开发流程请见 [`macos-app/README.md`](macos-app/README.md)。
+
+## 快速开始
+
+**开发运行**（需要 Xcode / Swift 6.0 工具链）：
 
 ```bash
 cd macos-app
 swift run TokMon
 ```
 
-打包独立版 `.app`：
+**打包独立版 `.app`**：
 
 ```bash
 bash macos-app/scripts/build-app.sh
 open macos-app/release/TokMon.app
 ```
 
-App 启动后会在菜单栏显示 TokMon 图标。点击状态栏图标可以查看实时统计、复制面板截图、打开设置窗口或退出应用。打包产物位于 `macos-app/release/`，不会提交到 Git。
+打包产物位于 `macos-app/release/`，已被 `.gitignore` 忽略，不会进入 Git。
+
+## 界面说明
+
+### 状态栏 Popover
+
+Popover 分为四个页签：
+
+- **Overview**：核心指标卡片、趋势图、活动热力图、按来源/模型分布。
+- **Requests**：请求日志分页，展示每次请求的 tokens、模型、session、时间等明细。
+- **Sessions**：按 session 聚合的统计列表。
+- **Quota**：Kimi API Key 的额度面板，支持添加、删除、重命名和切换 key。
+
+右上角工具栏按钮依次为：刷新、复制截图、打开设置、检查更新、退出应用。
+
+### 设置窗口
+
+设置窗口分为以下几个区块：
+
+- **Sources**：选择默认展示的数据来源，以及各 agent 本地数据路径。
+- **Menu Bar**：选择在菜单栏显示的指标项。
+- **Model Pricing**：按模型配置输入/输出/缓存创建/缓存读取单价，用于费用估算。
+- **Maintenance**：手动触发 **Scan Now** 或 **Rebuild Database**。
+- **Kimi Quota**：设置 Kimi 额度面板的自动刷新间隔（默认 5 分钟，可选 Manual / 1 / 5 / 15 / 60 分钟）。
+
+## 支持的数据源
+
+TokMon 默认读取以下路径，所有路径均可在设置窗口的 **Sources** 区块修改。
+
+| 数据来源 | 默认路径 | 说明 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/projects` | 扫描本地 session 日志 |
+| Codex | `~/.codex` | 递归扫描 `sessions/`、`archived_sessions/` 下的 `.jsonl` 与 `.jsonl.zst` 文件 |
+| Kimi Code | `~/.kimi-code` | 递归查找包含 `agents` 目录的 `wire.jsonl` 日志 |
+| Qwen Code | `~/.qwen/projects` | 扫描本地项目日志 |
+| OpenCode | `~/.local/share/opencode` | 读取该目录下的 `opencode.db` SQLite 数据库 |
 
 ## 配置与数据
 
-项目可以零配置运行，默认读取 Claude Code、Codex、Kimi Code、Qwen Code 和 OpenCode 的本地数据路径。需要自定义路径时，请在 App 的原生设置窗口中修改。
-
-通过 macOS App 启动时，TokMon 会把 SQLite 数据库、扫描状态和本地配置写入：
+TokMon 可以零配置运行。通过 `.app` 启动时，SQLite 数据库、扫描状态和本地配置写入：
 
 ```text
 ~/Library/Application Support/TokMon
 ```
 
-首次从旧版 AgentMon 升级时，TokMon 会在 `~/Library/Application Support/TokMon` 不存在且旧 `~/Library/Application Support/AgentMon` 存在时迁移数据目录。若 TokMon 目录已经存在，旧目录不会被覆盖。
+该目录下常见文件：
+
+- `tokmon.db`：SQLite 数据库
+- `tokmon.config.json`：来源路径等应用配置
+- `tokmon-ui-state.json`：UI 状态（范围、指标、菜单栏显示项、模型价格等）
+- `tokmon-kimi-keys.json`：Kimi API Key 列表
+- `tokmon-kimi-quota-<id>.json`：各 key 的额度缓存
+
+### 从 AgentMon 迁移
+
+首次启动时，如果 `~/Library/Application Support/TokMon` 不存在，且旧版 `~/Library/Application Support/AgentMon` 存在，TokMon 会自动迁移数据目录，并将 `agentmon.db*` 重命名为 `tokmon.db*`。如果 TokMon 目录已存在，则不会覆盖。
+
+### 扫描版本与数据库重建
+
+`TokMonScanner.scannerVersion` 当前为 `5`。当扫描或合并语义发生变化时，该版本号会递增。App 启动时若检测到本地存储的版本低于当前版本，会自动重建数据库并重新全量扫描。
+
+### 数据一致性
+
+- 用量记录写入 `usage_records` 表，增量扫描 offset 写入 `tokmon_scan_state` 表。
+- Claude Code 的 assistant 记录包含 `message_id`，用于同一 `message.id` 的多个 streaming chunk 去重：保留 `createdAt` 最新的一条；时间相同时保留 total tokens 更大的那条。
+- 缓存命中率（Hit Rate）的分母/分子仅统计 `cacheHitSupported` 为真的记录；当前所有内置来源默认支持，未来新增不支持该语义的数据源时不会稀释命中率。
 
 ## 项目结构
 
 ```text
 macos-app/
-  Package.swift          # SwiftPM manifest
-  Sources/TokMonApp/     # SwiftUI 状态栏 App 源码
+  Package.swift          # SwiftPM manifest（macOS 14+，依赖 Sparkle）
+  Sources/TokMonApp/     # SwiftUI / AppKit 状态栏 App 源码
   Tests/TokMonAppTests/  # Swift 测试
-  Assets/                # App icon（.icns / .png）
+  Assets/                # App icon
   Packaging/Info.plist   # .app bundle metadata
   scripts/build-app.sh   # 独立版 .app 打包脚本
-  scripts/build-dmg.sh   # 签名 DMG 与 Sparkle appcast 生成脚本
-  README.md              # macOS App 使用与打包说明
+  scripts/build-dmg.sh   # 签名 DMG 与 Sparkle appcast.xml 生成脚本
+  README.md              # App 使用、打包与开发说明
 docs/
   images/                # README 截图
 ```
 
-根目录还包括：`AGENTS.md`（通用 agent 协作约定）、`CLAUDE.md`（Claude Code 协作约定）、`LICENSE` 和 README 截图资源。
+根目录还包括：`AGENTS.md`（通用 agent 协作约定）、`CLAUDE.md`（Claude Code 协作约定）、`LICENSE`。
 
-## 重要说明
+## 文档入口
 
-- TokMon 使用本地 SQLite 索引 token usage 元数据。
-- TokMon 用量数据写入 `usage_records` 表，增量扫描 offset 存在 `tokmon_scan_state`。
-- Claude Code 的 assistant 记录通过 `message_id` 去重：同一个 `message.id` 的多个 streaming chunk 会按最新 `createdAt` 合并，相同时保留 total tokens 更大的那条。
-- `TokMonScanner.scannerVersion` 会在扫描/合并语义变化时递增；App 启动时发现存储版本低于当前版本会自动重建数据库并重新全量扫描。
-- 缓存命中率只统计支持缓存命中语义的数据来源，避免不支持的来源拉低命中率。
+- [`README.md`](README.md)（本文件）：项目总览、功能介绍、安装与快速开始。
+- [`macos-app/README.md`](macos-app/README.md)：独立版 App 的详细使用、开发、打包与发布流程。
+- [`AGENTS.md`](AGENTS.md)：通用 agent 协作约定，适用于所有进入本仓库的 AI agent。
+- [`CLAUDE.md`](CLAUDE.md)：Claude Code 专用使用说明。
 
 ## License
 
-MIT
+[MIT](LICENSE)
