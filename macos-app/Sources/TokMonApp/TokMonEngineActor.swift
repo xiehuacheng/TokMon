@@ -252,11 +252,11 @@ actor TokMonEngineActor {
   }
 
   func loadKimiAPIKey(id: String) -> String? {
-    TokMonKeychain.loadKimiAPIKeys()[id]
+    engine.configStore.loadKimiAPIKeys()[id]
   }
 
   func loadAllKimiAPIKeys() -> [String: String] {
-    TokMonKeychain.loadKimiAPIKeys()
+    engine.configStore.loadKimiAPIKeys()
   }
 
   func addKimiAPIKey(_ key: String, label: String) async throws -> KimiAPIKeyAccount {
@@ -264,10 +264,10 @@ actor TokMonEngineActor {
     guard !trimmed.isEmpty, trimmed.hasPrefix("sk-kimi-") else {
       throw KimiQuotaError.invalidKey
     }
-    var keys = TokMonKeychain.loadKimiAPIKeys()
+    var keys = engine.configStore.loadKimiAPIKeys()
     let id = UUID().uuidString
     keys[id] = trimmed
-    try TokMonKeychain.saveKimiAPIKeys(keys)
+    try engine.configStore.saveKimiAPIKeys(keys)
     let account = KimiAPIKeyAccount(id: id, label: label.isEmpty ? "Kimi Key" : label)
     var uiState = try engine.configStore.loadUIState()
     uiState.kimiAPIKeyAccounts.append(account)
@@ -279,9 +279,9 @@ actor TokMonEngineActor {
   }
 
   func removeKimiAPIKey(id: String) async throws {
-    var keys = TokMonKeychain.loadKimiAPIKeys()
+    var keys = engine.configStore.loadKimiAPIKeys()
     keys.removeValue(forKey: id)
-    try TokMonKeychain.saveKimiAPIKeys(keys)
+    try engine.configStore.saveKimiAPIKeys(keys)
     var uiState = try engine.configStore.loadUIState()
     uiState.kimiAPIKeyAccounts.removeAll { $0.id == id }
     if uiState.selectedKimiAPIKeyID == id {
@@ -446,31 +446,48 @@ actor TokMonEngineActor {
   }
 }
 
-// MARK: - Kimi Keychain migration
+// MARK: - Kimi API key migration
 
-/// Migrates legacy Kimi API Key Keychain storage into the unified multi-key item.
+/// Migrates Kimi API keys from legacy Keychain storage into the app data file.
 ///
-/// This runs outside `TokMonEngineActor` because it only touches Keychain and the
-/// config file. Keeping it off the shared actor prevents Keychain authorization
-/// prompts from blocking settings loads, saves, and quota refreshes.
+/// Newer versions store keys in `tokmon-kimi-keys.json` inside the app data
+/// directory instead of Keychain. This avoids repeated Keychain authorization
+/// prompts and makes reads reliable across builds/signatures.
 func migrateKimiAPIKeyStorageIfNeeded(configStore: TokMonConfigStore) {
-  // If unified storage already exists, nothing to migrate.
-  guard !TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiKeysAccount) else { return }
+  // If the file already has keys, there is nothing to migrate.
+  let fileKeys = configStore.loadKimiAPIKeys()
+  guard fileKeys.isEmpty else {
+    tokMonLog("Kimi keys: file storage already has \(fileKeys.count) key(s)")
+    return
+  }
 
-  var keys = TokMonKeychain.loadKimiAPIKeys()
+  var keys = fileKeys
+
+  // Try the legacy unified Keychain item first.
+  if TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiKeysAccount) {
+    let unified = TokMonKeychain.loadKimiAPIKeys()
+    tokMonLog("Kimi keys: migrating unified Keychain item with \(unified.count) key(s)")
+    for (id, key) in unified where !key.isEmpty {
+      keys[id] = key
+    }
+  }
 
   // Migrate the legacy single-key account, if present.
   if TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount) {
     if let legacyKey = TokMonKeychain.load(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount),
        !legacyKey.isEmpty {
+      tokMonLog("Kimi keys: migrating legacy single-key account")
       keys[UUID().uuidString] = legacyKey
     }
     try? TokMonKeychain.delete(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount)
   }
 
-  // Migrate legacy per-key storage (one Keychain item per UUID) into the unified item.
+  // Migrate legacy per-key storage (one Keychain item per UUID).
   let legacyAccountIDs = TokMonKeychain.allKimiAPIKeyAccountIDs()
     .filter { $0 != TokMonKeychain.kimiKeysAccount }
+  if !legacyAccountIDs.isEmpty {
+    tokMonLog("Kimi keys: migrating \(legacyAccountIDs.count) legacy per-key item(s)")
+  }
   for id in legacyAccountIDs {
     if let key = TokMonKeychain.loadKimiAPIKey(id: id), !key.isEmpty {
       keys[id] = key
@@ -478,8 +495,18 @@ func migrateKimiAPIKeyStorageIfNeeded(configStore: TokMonConfigStore) {
     try? TokMonKeychain.deleteKimiAPIKey(id: id)
   }
 
-  guard !keys.isEmpty else { return }
-  try? TokMonKeychain.saveKimiAPIKeys(keys)
+  guard !keys.isEmpty else {
+    tokMonLog("Kimi keys: no keys found to migrate")
+    return
+  }
+
+  do {
+    try configStore.saveKimiAPIKeys(keys)
+    tokMonLog("Kimi keys: migrated \(keys.count) key(s) to file storage")
+  } catch {
+    tokMonLog("Kimi keys: failed to save migrated keys: \(error.localizedDescription)")
+    return
+  }
 
   // Ensure the UI state has accounts for every migrated key.
   guard var uiState = try? configStore.loadUIState() else { return }

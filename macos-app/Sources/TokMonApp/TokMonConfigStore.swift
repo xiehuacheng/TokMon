@@ -57,6 +57,20 @@ final class TokMonConfigStore: @unchecked Sendable {
     try write(snapshot, to: kimiQuotaSnapshotURL(keyID: keyID))
   }
 
+  func loadKimiAPIKeys() -> [String: String] {
+    let url = kimiAPIKeysURL
+    guard fileManager.fileExists(atPath: url.path),
+          let data = try? Data(contentsOf: url),
+          let decoded = try? JSONDecoder().decode([String: String].self, from: data) else {
+      return [:]
+    }
+    return decoded
+  }
+
+  func saveKimiAPIKeys(_ keys: [String: String]) throws {
+    try write(keys, to: kimiAPIKeysURL)
+  }
+
   func expandUserPath(_ path: String) -> String {
     guard path == "~" || path.hasPrefix("~/") else {
       return path
@@ -75,6 +89,10 @@ final class TokMonConfigStore: @unchecked Sendable {
 
   private var uiStateURL: URL {
     dataDir.appendingPathComponent("tokmon-ui-state.json")
+  }
+
+  private var kimiAPIKeysURL: URL {
+    dataDir.appendingPathComponent("tokmon-kimi-keys.json")
   }
 
   private func kimiQuotaSnapshotURL(keyID: String) -> URL {
