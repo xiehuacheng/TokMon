@@ -68,7 +68,7 @@ final class TokMonStatsStore: ObservableObject {
     self.nowProvider = nowProvider
     loadKimiState()
     Task { @MainActor [weak self] in
-      try? await self?.nativeEngineActor?.migrateLegacyKimiAPIKeyIfNeeded()
+      try? await self?.nativeEngineActor?.migrateKimiAPIKeyStorageIfNeeded()
       self?.loadKimiState()
     }
   }
@@ -79,7 +79,7 @@ final class TokMonStatsStore: ObservableObject {
     self.nowProvider = nowProvider
     loadKimiState()
     Task { @MainActor [weak self] in
-      try? await self?.nativeEngineActor?.migrateLegacyKimiAPIKeyIfNeeded()
+      try? await self?.nativeEngineActor?.migrateKimiAPIKeyStorageIfNeeded()
       self?.loadKimiState()
     }
   }

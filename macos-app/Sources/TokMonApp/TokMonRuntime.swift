@@ -77,7 +77,7 @@ final class TokMonRuntime: ObservableObject {
     tokMonLog("TokMon runtime using native TokMon engine")
     stats.startObserving()
     Task { [sourceWatcher, engineActor, stats] in
-      try? await engineActor?.migrateLegacyKimiAPIKeyIfNeeded()
+      try? await engineActor?.migrateKimiAPIKeyStorageIfNeeded()
       await Self.migrateScannerVersion(
         engineActor: engineActor,
         defaults: UserDefaults.standard,

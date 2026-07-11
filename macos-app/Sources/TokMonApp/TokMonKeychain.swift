@@ -5,6 +5,32 @@ enum TokMonKeychain {
   static let kimiService = "com.tokmon.kimi-code.api-key"
   /// Legacy single-key account; kept for migration.
   static let kimiAccount = "kimi-code-api-key"
+  /// Unified account that stores all Kimi API keys in a single Keychain item.
+  static let kimiKeysAccount = "kimi-code-api-keys"
+
+  // MARK: - Unified multi-key storage
+
+  static func saveKimiAPIKeys(_ keys: [String: String]) throws {
+    let data = try JSONEncoder().encode(keys)
+    guard let json = String(data: data, encoding: .utf8) else {
+      throw KimiKeychainError.invalidData
+    }
+    try save(json, service: kimiService, account: kimiKeysAccount)
+  }
+
+  static func loadKimiAPIKeys() -> [String: String] {
+    guard let json = load(service: kimiService, account: kimiKeysAccount),
+          let data = json.data(using: .utf8) else {
+      return [:]
+    }
+    return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+  }
+
+  static func deleteKimiAPIKeys() throws {
+    try delete(service: kimiService, account: kimiKeysAccount)
+  }
+
+  // MARK: - Legacy per-key storage (kept for migration)
 
   static func saveKimiAPIKey(_ key: String, id: String) throws {
     try save(key, service: kimiService, account: id)
