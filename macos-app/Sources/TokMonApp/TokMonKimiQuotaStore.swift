@@ -4,21 +4,35 @@ actor TokMonKimiQuotaStore {
   private let baseURL: String
   private let urlSession: URLSession
 
-  init(baseURL: String = "https://api.kimi.com/coding/v1", urlSession: URLSession = URLSession(configuration: .ephemeral)) {
+  init(baseURL: String = "https://api.kimi.com/coding/v1", urlSession: URLSession? = nil) {
     self.baseURL = baseURL
-    self.urlSession = urlSession
+    if let urlSession {
+      self.urlSession = urlSession
+    } else {
+      let config = URLSessionConfiguration.ephemeral
+      config.urlCache = nil
+      config.requestCachePolicy = .reloadIgnoringLocalCacheData
+      self.urlSession = URLSession(configuration: config)
+    }
   }
 
   func fetchQuota(apiKey: String) async -> KimiQuotaSnapshot {
     guard !apiKey.isEmpty else {
+      tokMonLog("Kimi quota: empty API key")
       return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .noAPIKey)
     }
+    tokMonLog("Kimi quota: fetching for key prefix \(apiKey.prefix(12))...")
     do {
       let snapshot = try await performFetch(apiKey: apiKey)
+      let weekly = snapshot.weekly.map { "used=\(Int($0.used))/limit=\(Int($0.limit))" } ?? "nil"
+      let fiveHour = snapshot.fiveHour.map { "used=\(Int($0.used))/limit=\(Int($0.limit))" } ?? "nil"
+      tokMonLog("Kimi quota: parsed weekly=(\(weekly)), fiveHour=(\(fiveHour))")
       return snapshot
     } catch let error as KimiQuotaError {
+      tokMonLog("Kimi quota: fetch error \(error)")
       return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: error)
     } catch {
+      tokMonLog("Kimi quota: unexpected error \(error)")
       return KimiQuotaSnapshot(weekly: nil, fiveHour: nil, fetchedAt: nil, error: .network)
     }
   }
@@ -28,6 +42,7 @@ actor TokMonKimiQuotaStore {
       let data = try await fetchData(apiKey: apiKey, path: "/usages")
       return try parseUsagePayload(data, fetchedAt: Date())
     } catch KimiQuotaError.endpointNotFound {
+      tokMonLog("Kimi quota: /usages returned 404, falling back to /usage")
       let data = try await fetchData(apiKey: apiKey, path: "/usage")
       return try parseUsagePayload(data, fetchedAt: Date())
     }
@@ -45,10 +60,12 @@ actor TokMonKimiQuotaStore {
     // Kimi so the UI does not display stale numbers after the user refreshes.
     request.cachePolicy = .reloadIgnoringLocalCacheData
 
+    tokMonLog("Kimi quota: requesting \(url.absoluteString)")
     let (data, response) = try await urlSession.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
       throw KimiQuotaError.network
     }
+    tokMonLog("Kimi quota: HTTP \(httpResponse.statusCode), body length \(data.count)")
 
     switch httpResponse.statusCode {
     case 200:

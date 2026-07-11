@@ -363,17 +363,23 @@ final class TokMonStatsStore: ObservableObject {
 
   func refreshKimiQuota() async {
     guard let nativeEngineActor, !kimiAPIKeyAccounts.isEmpty else {
+      tokMonLog("Kimi quota refresh: skipped, no engine or accounts")
       publishKimiQuotaSnapshot()
       return
     }
+    tokMonLog("Kimi quota refresh: starting for \(kimiAPIKeyAccounts.count) account(s)")
     var apiKeys: [String: String] = [:]
     for account in kimiAPIKeyAccounts {
       apiKeys[account.id] = await cachedAPIKey(for: account.id)
+      tokMonLog("Kimi quota refresh: account \(account.id) key cached? \(apiKeys[account.id] != nil)")
     }
     isRefreshingQuota = true
     defer { isRefreshingQuota = false }
     let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas(apiKeys: apiKeys)
     for (id, snapshot) in newSnapshots {
+      let weekly = snapshot.weekly.map { "\(Int($0.used))/\(Int($0.limit))" } ?? "nil"
+      let fiveHour = snapshot.fiveHour.map { "\(Int($0.used))/\(Int($0.limit))" } ?? "nil"
+      tokMonLog("Kimi quota refresh: account \(id) weekly=(\(weekly)) fiveHour=(\(fiveHour)) error=\(String(describing: snapshot.error))")
       if let existing = kimiQuotaSnapshots[id], snapshot.weekly == nil, snapshot.fiveHour == nil {
         // Fetch failed but we have cached data: preserve the cached windows and
         // surface the error/fetchedAt so the UI can show that refresh failed.

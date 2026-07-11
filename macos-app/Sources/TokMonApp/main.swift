@@ -10,6 +10,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private var statusPanel: NSPanel?
   private var outsideClickMonitor: Any?
   private var localClickMonitor: Any?
+  private var panelKeyObserver: NSObjectProtocol?
   private var cancellables = Set<AnyCancellable>()
   private var isClosingStatusPanel = false
   private var appearanceObserver: NSObjectProtocol?
@@ -89,6 +90,27 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     runtime.statusPanel = panel
     animateStatusPanelOpen(panel, targetFrame: panelFrame)
     installOutsideClickMonitor()
+    installPanelKeyObserver(panel)
+  }
+
+  private func installPanelKeyObserver(_ panel: NSPanel) {
+    removePanelKeyObserver()
+    panelKeyObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didResignKeyNotification,
+      object: panel,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.closeStatusPanel()
+      }
+    }
+  }
+
+  private func removePanelKeyObserver() {
+    if let panelKeyObserver {
+      NotificationCenter.default.removeObserver(panelKeyObserver)
+      self.panelKeyObserver = nil
+    }
   }
 
   private func closeStatusPanel() {
@@ -98,6 +120,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     runtime.stats.popoverDidDisappear()
     isClosingStatusPanel = true
     removeOutsideClickMonitor()
+    removePanelKeyObserver()
     setStatusItemHighlighted(false)
     animateStatusPanelClose(panel)
   }
@@ -159,6 +182,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
   private func finishClosingStatusPanel(_ panel: NSPanel) {
     panel.orderOut(nil)
     statusPanel?.delegate = nil
+    removePanelKeyObserver()
     if statusPanel === panel {
       statusPanel = nil
       runtime.statusPanel = nil
