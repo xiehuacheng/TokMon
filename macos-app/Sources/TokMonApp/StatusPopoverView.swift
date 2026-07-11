@@ -249,7 +249,12 @@ struct StatusPopoverView: View {
         days: stats.snapshot.heatmapDays,
         selectedSeries: selectedSeries.key,
         costRates: aggregateCostRates,
-        colorForValue: { value, max in heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor) },
+        colorForValue: { value, max in
+          if selectedSeries.key == .cacheHitRate {
+            return heatmapColor(value: value, maxValue: 1.0, color: selectedSeries.tintColor, gamma: 0.5)
+          }
+          return heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor)
+        },
       )
       TokMonHudBreakdownCard(
         title: "Top Models",
@@ -806,11 +811,13 @@ struct StatusPopoverView: View {
     }
   }
 
-  private func heatmapColor(value: Double, maxValue: Double, color: Color) -> Color {
+  private func heatmapColor(value: Double, maxValue: Double, color: Color, gamma: Double = 1.0) -> Color {
     guard maxValue > 0, value > 0 else {
       return Color.secondary.opacity(0.12)
     }
-    let opacity = 0.22 + 0.58 * (value / maxValue)
+    let normalized = min(max(value / maxValue, 0), 1)
+    let scaled = pow(normalized, gamma)
+    let opacity = 0.15 + 0.80 * scaled
     return color.opacity(opacity)
   }
 

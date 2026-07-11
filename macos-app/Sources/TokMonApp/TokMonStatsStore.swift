@@ -67,10 +67,6 @@ final class TokMonStatsStore: ObservableObject {
     self.configStore = configStore
     self.nowProvider = nowProvider
     loadKimiState()
-    Task { @MainActor [weak self] in
-      try? await self?.nativeEngineActor?.migrateKimiAPIKeyStorageIfNeeded()
-      self?.loadKimiState()
-    }
   }
 
   init(engineActor: TokMonEngineActor, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
@@ -78,10 +74,6 @@ final class TokMonStatsStore: ObservableObject {
     self.configStore = configStore
     self.nowProvider = nowProvider
     loadKimiState()
-    Task { @MainActor [weak self] in
-      try? await self?.nativeEngineActor?.migrateKimiAPIKeyStorageIfNeeded()
-      self?.loadKimiState()
-    }
   }
 
   init(startupError: String, configStore: TokMonConfigStore? = nil, nowProvider: @escaping @Sendable () -> Date = Date.init) {
@@ -110,9 +102,12 @@ final class TokMonStatsStore: ObservableObject {
 
   private func cachedAPIKey(for id: String) async -> String? {
     if let cached = kimiAPIKeyCache[id] { return cached }
-    guard let key = await nativeEngineActor?.loadKimiAPIKey(id: id) else { return nil }
-    kimiAPIKeyCache[id] = key
-    return key
+    guard let keys = await nativeEngineActor?.loadAllKimiAPIKeys() else { return nil }
+    // Preload every key into the cache so subsequent refreshes do not touch Keychain.
+    for (keyID, key) in keys {
+      kimiAPIKeyCache[keyID] = key
+    }
+    return keys[id]
   }
 
   private func publishKimiQuotaSnapshot() {
@@ -369,17 +364,19 @@ final class TokMonStatsStore: ObservableObject {
     defer { isRefreshingQuota = false }
     let newSnapshots = await nativeEngineActor.refreshAllKimiQuotas(apiKeys: apiKeys)
     for (id, snapshot) in newSnapshots {
-      let hasData = snapshot.weekly != nil || snapshot.fiveHour != nil
-      if hasData {
+      if let existing = kimiQuotaSnapshots[id], snapshot.weekly == nil, snapshot.fiveHour == nil {
+        // Fetch failed but we have cached data: preserve the cached windows and
+        // surface the error/fetchedAt so the UI can show that refresh failed.
+        var updated = existing
+        updated.error = snapshot.error
+        updated.fetchedAt = snapshot.fetchedAt ?? nowProvider()
+        kimiQuotaSnapshots[id] = updated
+      } else {
         kimiQuotaSnapshots[id] = snapshot
-        try? configStore?.saveKimiQuotaSnapshot(snapshot, keyID: id)
-      } else if kimiQuotaSnapshots[id] == nil {
-        // No previously cached data: show the empty/error state.
-        kimiQuotaSnapshots[id] = snapshot
+        if snapshot.weekly != nil || snapshot.fiveHour != nil {
+          try? configStore?.saveKimiQuotaSnapshot(snapshot, keyID: id)
+        }
       }
-      // If the fetch returned no usable data but we already have cached data,
-      // keep the cached snapshot to avoid the UI flickering from "has data" to
-      // "no data" and back during transient failures.
     }
     publishKimiQuotaSnapshot()
   }

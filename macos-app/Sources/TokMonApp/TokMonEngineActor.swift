@@ -249,8 +249,9 @@ actor TokMonEngineActor {
 
   func migrateKimiAPIKeyStorageIfNeeded() async throws {
     // If unified storage already exists, nothing to migrate.
+    guard !TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiKeysAccount) else { return }
+
     var keys = TokMonKeychain.loadKimiAPIKeys()
-    guard keys.isEmpty else { return }
 
     // Migrate the legacy single-key account, if present.
     if TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount) {
@@ -292,6 +293,10 @@ actor TokMonEngineActor {
 
   func loadKimiAPIKey(id: String) -> String? {
     TokMonKeychain.loadKimiAPIKeys()[id]
+  }
+
+  func loadAllKimiAPIKeys() -> [String: String] {
+    TokMonKeychain.loadKimiAPIKeys()
   }
 
   func addKimiAPIKey(_ key: String, label: String) async throws -> KimiAPIKeyAccount {

@@ -72,27 +72,33 @@ enum TokMonKeychain {
     guard let data = value.data(using: .utf8) else {
       throw KimiKeychainError.invalidData
     }
-    let query: [String: Any] = [
+
+    // Try updating an existing item first. This avoids the access-control
+    // evaluation that SecItemAdd performs even when the item already exists.
+    let updateQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    let updateAttrs: [String: Any] = [kSecValueData as String: data]
+    let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttrs as CFDictionary)
+    if updateStatus == errSecSuccess {
+      return
+    } else if updateStatus != errSecItemNotFound {
+      throw KimiKeychainError.osStatus(updateStatus)
+    }
+
+    // The item does not exist yet; add it.
+    let addQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
       kSecValueData as String: data,
       kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
     ]
-    let status = SecItemAdd(query as CFDictionary, nil)
-    if status == errSecDuplicateItem {
-      let updateQuery: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: service,
-        kSecAttrAccount as String: account,
-      ]
-      let updateAttrs: [String: Any] = [kSecValueData as String: data]
-      let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttrs as CFDictionary)
-      guard updateStatus == errSecSuccess else {
-        throw KimiKeychainError.osStatus(updateStatus)
-      }
-    } else if status != errSecSuccess {
-      throw KimiKeychainError.osStatus(status)
+    let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+    guard addStatus == errSecSuccess else {
+      throw KimiKeychainError.osStatus(addStatus)
     }
   }
 
