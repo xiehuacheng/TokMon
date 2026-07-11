@@ -247,46 +247,6 @@ actor TokMonEngineActor {
     )
   }
 
-  func migrateKimiAPIKeyStorageIfNeeded() async throws {
-    // If unified storage already exists, nothing to migrate.
-    guard !TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiKeysAccount) else { return }
-
-    var keys = TokMonKeychain.loadKimiAPIKeys()
-
-    // Migrate the legacy single-key account, if present.
-    if TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount) {
-      if let legacyKey = TokMonKeychain.load(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount),
-         !legacyKey.isEmpty {
-        keys[UUID().uuidString] = legacyKey
-      }
-      try TokMonKeychain.delete(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount)
-    }
-
-    // Migrate legacy per-key storage (one Keychain item per UUID) into the unified item.
-    let legacyAccountIDs = TokMonKeychain.allKimiAPIKeyAccountIDs()
-      .filter { $0 != TokMonKeychain.kimiKeysAccount }
-    for id in legacyAccountIDs {
-      if let key = TokMonKeychain.loadKimiAPIKey(id: id), !key.isEmpty {
-        keys[id] = key
-      }
-      try TokMonKeychain.deleteKimiAPIKey(id: id)
-    }
-
-    guard !keys.isEmpty else { return }
-    try TokMonKeychain.saveKimiAPIKeys(keys)
-
-    // Ensure the UI state has accounts for every migrated key.
-    var uiState = try engine.configStore.loadUIState()
-    let existingIDs = Set(uiState.kimiAPIKeyAccounts.map(\.id))
-    for (id, _) in keys where !existingIDs.contains(id) {
-      uiState.kimiAPIKeyAccounts.append(KimiAPIKeyAccount(id: id, label: "Kimi Key"))
-    }
-    if uiState.selectedKimiAPIKeyID == nil {
-      uiState.selectedKimiAPIKeyID = uiState.kimiAPIKeyAccounts.first?.id
-    }
-    try engine.configStore.saveUIState(uiState)
-  }
-
   func loadKimiAPIKeyAccounts() throws -> [KimiAPIKeyAccount] {
     try engine.configStore.loadUIState().kimiAPIKeyAccounts
   }
@@ -484,4 +444,51 @@ actor TokMonEngineActor {
     }
     return URL(fileURLWithPath: path)
   }
+}
+
+// MARK: - Kimi Keychain migration
+
+/// Migrates legacy Kimi API Key Keychain storage into the unified multi-key item.
+///
+/// This runs outside `TokMonEngineActor` because it only touches Keychain and the
+/// config file. Keeping it off the shared actor prevents Keychain authorization
+/// prompts from blocking settings loads, saves, and quota refreshes.
+func migrateKimiAPIKeyStorageIfNeeded(configStore: TokMonConfigStore) {
+  // If unified storage already exists, nothing to migrate.
+  guard !TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiKeysAccount) else { return }
+
+  var keys = TokMonKeychain.loadKimiAPIKeys()
+
+  // Migrate the legacy single-key account, if present.
+  if TokMonKeychain.has(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount) {
+    if let legacyKey = TokMonKeychain.load(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount),
+       !legacyKey.isEmpty {
+      keys[UUID().uuidString] = legacyKey
+    }
+    try? TokMonKeychain.delete(service: TokMonKeychain.kimiService, account: TokMonKeychain.kimiAccount)
+  }
+
+  // Migrate legacy per-key storage (one Keychain item per UUID) into the unified item.
+  let legacyAccountIDs = TokMonKeychain.allKimiAPIKeyAccountIDs()
+    .filter { $0 != TokMonKeychain.kimiKeysAccount }
+  for id in legacyAccountIDs {
+    if let key = TokMonKeychain.loadKimiAPIKey(id: id), !key.isEmpty {
+      keys[id] = key
+    }
+    try? TokMonKeychain.deleteKimiAPIKey(id: id)
+  }
+
+  guard !keys.isEmpty else { return }
+  try? TokMonKeychain.saveKimiAPIKeys(keys)
+
+  // Ensure the UI state has accounts for every migrated key.
+  guard var uiState = try? configStore.loadUIState() else { return }
+  let existingIDs = Set(uiState.kimiAPIKeyAccounts.map(\.id))
+  for (id, _) in keys where !existingIDs.contains(id) {
+    uiState.kimiAPIKeyAccounts.append(KimiAPIKeyAccount(id: id, label: "Kimi Key"))
+  }
+  if uiState.selectedKimiAPIKeyID == nil {
+    uiState.selectedKimiAPIKeyID = uiState.kimiAPIKeyAccounts.first?.id
+  }
+  try? configStore.saveUIState(uiState)
 }

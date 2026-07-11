@@ -1,6 +1,9 @@
 import Foundation
 
-final class TokMonConfigStore {
+/// File-backed config/UI state store. Marked `@unchecked Sendable` because the
+/// implementation only performs atomic file writes and reads; the shared
+/// `FileManager.default` instance is safe to use across isolation boundaries.
+final class TokMonConfigStore: @unchecked Sendable {
   private let dataDir: URL
   private let fileManager: FileManager
 

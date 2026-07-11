@@ -100,6 +100,16 @@ final class TokMonStatsStore: ObservableObject {
     syncQuotaRefreshTask()
   }
 
+  /// Loads all Kimi API keys into memory once so periodic quota refreshes do
+  /// not repeatedly touch Keychain after the app starts.
+  func preloadKimiAPIKeyCache() async {
+    guard let nativeEngineActor else { return }
+    let keys = await nativeEngineActor.loadAllKimiAPIKeys()
+    for (keyID, key) in keys {
+      kimiAPIKeyCache[keyID] = key
+    }
+  }
+
   private func cachedAPIKey(for id: String) async -> String? {
     if let cached = kimiAPIKeyCache[id] { return cached }
     guard let keys = await nativeEngineActor?.loadAllKimiAPIKeys() else { return nil }
