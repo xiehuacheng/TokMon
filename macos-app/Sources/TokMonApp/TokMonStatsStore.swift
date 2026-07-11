@@ -47,7 +47,6 @@ final class TokMonStatsStore: ObservableObject {
   @Published private(set) var selectedKimiAPIKeyID: String? = nil
   @Published private(set) var kimiQuotaSnapshots: [String: KimiQuotaSnapshot] = [:]
   private var isUpdatingDashboardRange = false
-  private var kimiAPIKeyCache: [String: String] = [:]
 
   private let nativeEngineActor: TokMonEngineActor?
   private let configStore: TokMonConfigStore?
@@ -98,30 +97,6 @@ final class TokMonStatsStore: ObservableObject {
     self.kimiQuotaSnapshots = snapshots
     publishKimiQuotaSnapshot()
     syncQuotaRefreshTask()
-  }
-
-  /// Loads all Kimi API keys into memory once so periodic quota refreshes do
-  /// not repeatedly read storage after the app starts.
-  func preloadKimiAPIKeyCache() async {
-    guard let nativeEngineActor else {
-      tokMonLog("Kimi quota preload: no engine actor")
-      return
-    }
-    let keys = await nativeEngineActor.loadAllKimiAPIKeys()
-    tokMonLog("Kimi quota preload: loaded \(keys.count) key(s)")
-    for (keyID, key) in keys {
-      kimiAPIKeyCache[keyID] = key
-    }
-  }
-
-  private func cachedAPIKey(for id: String) async -> String? {
-    if let cached = kimiAPIKeyCache[id] { return cached }
-    guard let keys = await nativeEngineActor?.loadAllKimiAPIKeys() else { return nil }
-    // Preload every key into the cache so subsequent refreshes do not touch Keychain.
-    for (keyID, key) in keys {
-      kimiAPIKeyCache[keyID] = key
-    }
-    return keys[id]
   }
 
   private func publishKimiQuotaSnapshot() {
@@ -345,8 +320,7 @@ final class TokMonStatsStore: ObservableObject {
 
   func addKimiAPIKey(_ key: String, label: String) async throws {
     guard let nativeEngineActor else { return }
-    let account = try await nativeEngineActor.addKimiAPIKey(key, label: label)
-    kimiAPIKeyCache[account.id] = key
+    _ = try await nativeEngineActor.addKimiAPIKey(key, label: label)
     loadKimiState()
     await refreshKimiQuota()
   }
@@ -354,7 +328,6 @@ final class TokMonStatsStore: ObservableObject {
   func removeKimiAPIKey(id: String) async throws {
     guard let nativeEngineActor else { return }
     try await nativeEngineActor.removeKimiAPIKey(id: id)
-    kimiAPIKeyCache.removeValue(forKey: id)
     kimiQuotaSnapshots.removeValue(forKey: id)
     loadKimiState()
   }
@@ -374,8 +347,8 @@ final class TokMonStatsStore: ObservableObject {
     tokMonLog("Kimi quota refresh: starting for \(kimiAPIKeyAccounts.count) account(s)")
     var apiKeys: [String: String] = [:]
     for account in kimiAPIKeyAccounts {
-      apiKeys[account.id] = await cachedAPIKey(for: account.id)
-      tokMonLog("Kimi quota refresh: account \(account.id) key cached? \(apiKeys[account.id] != nil)")
+      apiKeys[account.id] = await nativeEngineActor.loadKimiAPIKey(id: account.id)
+      tokMonLog("Kimi quota refresh: account \(account.id) key loaded? \(apiKeys[account.id] != nil)")
     }
     isRefreshingQuota = true
     defer { isRefreshingQuota = false }

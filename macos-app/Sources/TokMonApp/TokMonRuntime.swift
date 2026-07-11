@@ -11,7 +11,6 @@ final class TokMonRuntime: ObservableObject {
 
   private var settingsWindowController: TokMonSettingsWindowController?
   private let engineActor: TokMonEngineActor?
-  private let configStore: TokMonConfigStore?
   private var started = false
   private var sourceWatcher: TokMonSourceWatcher?
   private var fileWatcher: TokMonFileWatcher?
@@ -20,9 +19,9 @@ final class TokMonRuntime: ObservableObject {
 
   init() {
     do {
-      let (engine, configStore) = try Self.makeTokMonEngine()
+      let engine = try Self.makeTokMonEngine()
       let engineActor = TokMonEngineActor(engine: engine)
-      let statsStore = TokMonStatsStore(engineActor: engineActor, configStore: configStore)
+      let statsStore = TokMonStatsStore(engineActor: engineActor, configStore: engine.configStore)
 
       let onScan: @Sendable ([String]) -> Void = { [weak statsStore, weak engineActor] paths in
         Task {
@@ -35,7 +34,7 @@ final class TokMonRuntime: ObservableObject {
 
       let watcher = TokMonSourceWatcher(
         configProvider: {
-          (try? configStore.loadConfig()) ?? TokMonConfig.default
+          (try? engine.configStore.loadConfig()) ?? TokMonConfig.default
         },
         onChange: onScan
       )
@@ -53,7 +52,6 @@ final class TokMonRuntime: ObservableObject {
       )
       stats = statsStore
       self.engineActor = engineActor
-      self.configStore = configStore
       sourceWatcher = watcher
       fileWatcher = watcherForFileEvents
       settingsWindowController = controller
@@ -67,7 +65,6 @@ final class TokMonRuntime: ObservableObject {
       tokMonLog("TokMon native TokMon engine failed to initialize: \(error.localizedDescription)")
       stats = TokMonStatsStore(startupError: error.localizedDescription)
       engineActor = nil
-      configStore = nil
       sourceWatcher = nil
       fileWatcher = nil
       settingsWindowController = nil
@@ -79,18 +76,6 @@ final class TokMonRuntime: ObservableObject {
     started = true
     tokMonLog("TokMon runtime using native TokMon engine")
     stats.startObserving()
-
-    // Run Kimi Keychain migration off the shared engine actor. Keychain
-    // authorization dialogs can block for a long time; keeping this work off
-    // the actor ensures settings loads/saves and quota refreshes remain
-    // responsive. After migration finishes, preload the in-memory key cache so
-    // periodic quota refreshes do not repeatedly touch Keychain.
-    Task { [configStore, stats] in
-      if let configStore {
-        migrateKimiAPIKeyStorageIfNeeded(configStore: configStore)
-      }
-      await stats.preloadKimiAPIKeyCache()
-    }
 
     Task { [sourceWatcher, engineActor, stats] in
       await Self.migrateScannerVersion(
@@ -165,11 +150,10 @@ final class TokMonRuntime: ObservableObject {
     }
   }
 
-  private static func makeTokMonEngine() throws -> (engine: TokMonEngine, configStore: TokMonConfigStore) {
+  private static func makeTokMonEngine() throws -> TokMonEngine {
     let dataDir = try TokMonProjectLocator.appDataDir()
     let configStore = TokMonConfigStore(dataDir: dataDir)
     let database = try TokMonDatabase(appDataDir: dataDir)
-    let engine = TokMonEngine(configStore: configStore, database: database)
-    return (engine, configStore)
+    return TokMonEngine(configStore: configStore, database: database)
   }
 }
