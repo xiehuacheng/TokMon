@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-本文件是 TokMon 仓库的通用协作指南，适用于所有在此仓库工作的 agent（包括 Claude Code、Kimi 等）。Claude Code 还应阅读 [`CLAUDE.md`](CLAUDE.md) 中的专用事项。
+本文件是 TokMon 仓库的通用协作指南，适用于所有在此仓库工作的 agent（包括 Claude Code、Kimi 等）。内容覆盖项目结构、构建测试、代码风格、发布流程与特殊注意事项。
 
 ## 项目速览
 
