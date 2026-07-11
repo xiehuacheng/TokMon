@@ -41,6 +41,9 @@ actor TokMonKimiQuotaStore {
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
     request.setValue("KimiCLI/1.6", forHTTPHeaderField: "User-Agent")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    // Quota responses should never be cached; always fetch fresh data from
+    // Kimi so the UI does not display stale numbers after the user refreshes.
+    request.cachePolicy = .reloadIgnoringLocalCacheData
 
     let (data, response) = try await urlSession.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
