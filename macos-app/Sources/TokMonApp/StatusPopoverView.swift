@@ -258,7 +258,7 @@ struct StatusPopoverView: View {
             if value < 0.9 {
               normalized = pow(value / 0.9, 0.7) * 0.5
             } else {
-              normalized = 0.5 + 0.5 * pow((value - 0.9) / 0.1, 2.0)
+              normalized = 0.5 + 0.5 * pow((value - 0.9) / 0.1, 3.0)
             }
             return heatmapColor(value: normalized, maxValue: 1.0, color: selectedSeries.tintColor)
           }
