@@ -251,7 +251,11 @@ struct StatusPopoverView: View {
         costRates: aggregateCostRates,
         colorForValue: { value, max in
           if selectedSeries.key == .cacheHitRate {
-            return heatmapColor(value: value, maxValue: 1.0, color: selectedSeries.tintColor, gamma: 0.5)
+            // Use a gamma > 1 to stretch the high end of the hit-rate scale.
+            // Most cache hit rates cluster near 1.0, so a linear or sqrt curve
+            // makes the cells look nearly identical; gamma 2.0 magnifies the
+            // differences between 0.7-1.0.
+            return heatmapColor(value: value, maxValue: 1.0, color: selectedSeries.tintColor, gamma: 2.0)
           }
           return heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor)
         },
