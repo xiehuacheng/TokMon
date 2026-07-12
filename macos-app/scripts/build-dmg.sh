@@ -129,7 +129,44 @@ fi
 DMG_SIZE=$(stat -f%z "$DMG_PATH")
 BUILD_VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$APP_ROOT/Packaging/Info.plist")
 DOWNLOAD_URL="https://github.com/xiehuacheng/TokMon/releases/download/v$VERSION/$(basename "$DMG_PATH")"
+RELEASE_NOTES_NAME="release-notes.html"
+RELEASE_NOTES_URL="https://github.com/xiehuacheng/TokMon/releases/download/v$VERSION/$RELEASE_NOTES_NAME"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
+RELEASE_NOTES_PATH="$RELEASE_DIR/$RELEASE_NOTES_NAME"
+
+# Generate a simple HTML release-notes page from the git log since the previous version tag.
+PREV_TAG=$(git tag --sort=-v:refname | grep -v "^v${VERSION}$" | head -n1 || true)
+if [[ -z "$PREV_TAG" ]]; then
+    PREV_TAG="$(git rev-list --max-parents=0 HEAD 2>/dev/null || echo "")"
+fi
+{
+    echo '<!DOCTYPE html>'
+    echo '<html lang="zh-CN">'
+    echo '<head>'
+    echo '  <meta charset="UTF-8">'
+    echo "  <title>TokMon v$VERSION Release Notes</title>"
+    echo '  <style>'
+    echo '    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #f2f2f7; background: #1c1c1e; }'
+    echo '    h1 { font-size: 20px; margin-bottom: 12px; }'
+    echo '    ul { line-height: 1.6; padding-left: 20px; }'
+    echo '    li { margin-bottom: 6px; }'
+    echo '    a { color: #0a84ff; }'
+    echo '  </style>'
+    echo '</head>'
+    echo '<body>'
+    echo "  <h1>TokMon v$VERSION</h1>"
+    echo '  <ul>'
+    if [[ -n "$PREV_TAG" ]]; then
+        git log --pretty=format:"<li>%s</li>" "${PREV_TAG}..HEAD" 2>/dev/null || true
+    else
+        git log --pretty=format:"<li>%s</li>" -10 2>/dev/null || true
+    fi
+    echo '  </ul>'
+    echo "  <p><a href=\"https://github.com/xiehuacheng/TokMon/releases/tag/v$VERSION\">查看完整 Release</a></p>"
+    echo '</body>'
+    echo '</html>'
+} > "$RELEASE_NOTES_PATH"
+echo "Generated $RELEASE_NOTES_PATH"
 
 if [[ -n "$SPARKLE_SIGNATURE" ]]; then
     cat > "$APPCAST_PATH" <<EOF
@@ -147,6 +184,7 @@ if [[ -n "$SPARKLE_SIGNATURE" ]]; then
       <sparkle:version>$BUILD_VERSION</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>$RELEASE_NOTES_URL</sparkle:releaseNotesLink>
       <enclosure url="$DOWNLOAD_URL"
                  length="$DMG_SIZE"
                  type="application/x-apple-diskimage"
