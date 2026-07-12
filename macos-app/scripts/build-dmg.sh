@@ -133,40 +133,126 @@ RELEASE_NOTES_NAME="release-notes.html"
 RELEASE_NOTES_URL="https://github.com/xiehuacheng/TokMon/releases/download/v$VERSION/$RELEASE_NOTES_NAME"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
 RELEASE_NOTES_PATH="$RELEASE_DIR/$RELEASE_NOTES_NAME"
+RELEASE_NOTES_MD_SOURCE="$APP_ROOT/release-notes.md"
 
-# Generate a simple HTML release-notes page from the git log since the previous version tag.
-PREV_TAG=$(git tag --sort=-v:refname | grep -v "^v${VERSION}$" | head -n1 || true)
-if [[ -z "$PREV_TAG" ]]; then
-    PREV_TAG="$(git rev-list --max-parents=0 HEAD 2>/dev/null || echo "")"
+# Convert the Chinese Markdown release notes into a simple HTML page for Sparkle.
+if [[ -f "$RELEASE_NOTES_MD_SOURCE" ]]; then
+    python3 - "$RELEASE_NOTES_MD_SOURCE" "$RELEASE_NOTES_PATH" "$VERSION" <<'PY'
+import html, re, sys
+md_path, out_path, version = sys.argv[1:4]
+with open(md_path, encoding='utf-8') as f:
+    lines = f.read().splitlines()
+
+def inline(s):
+    s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
+    s = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', s)
+    s = re.sub(r'`([^`]+)`', r'<code>\1</code>', s)
+    return s
+
+out = [
+    '<!DOCTYPE html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '  <meta charset="UTF-8">',
+    f'  <title>TokMon v{version} 更新日志</title>',
+    '  <style>',
+    '    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #f2f2f7; background: #1c1c1e; }',
+    '    h1 { font-size: 20px; margin-bottom: 12px; }',
+    '    h2 { font-size: 16px; margin-top: 20px; margin-bottom: 8px; color: #e5e5ea; }',
+    '    ul { line-height: 1.6; padding-left: 20px; }',
+    '    li { margin-bottom: 6px; }',
+    '    p { line-height: 1.5; margin: 8px 0; }',
+    '    code { font-family: Menlo, monospace; background: #2c2c2e; padding: 2px 5px; border-radius: 4px; }',
+    '    pre { background: #2c2c2e; padding: 10px; border-radius: 8px; overflow-x: auto; }',
+    '    a { color: #0a84ff; }',
+    '  </style>',
+    '</head>',
+    '<body>',
+    f'  <h1>TokMon v{version} 更新日志</h1>',
+]
+
+in_list = False
+in_code = False
+code_lines = []
+
+def flush_code():
+    global in_code, code_lines
+    if code_lines:
+        out.append('  <pre><code>' + html.escape('\n'.join(code_lines)) + '</code></pre>')
+    in_code = False
+    code_lines = []
+
+for raw in lines:
+    line = raw.rstrip()
+    if line.startswith('```'):
+        if in_list:
+            out.append('  </ul>')
+            in_list = False
+        if in_code:
+            flush_code()
+        else:
+            in_code = True
+        continue
+    if in_code:
+        code_lines.append(line)
+        continue
+    if not line:
+        if in_list:
+            out.append('  </ul>')
+            in_list = False
+        continue
+    if line.startswith('## '):
+        if in_list:
+            out.append('  </ul>')
+            in_list = False
+        out.append(f'  <h2>{inline(line[3:])}</h2>')
+    elif line.startswith('- '):
+        if not in_list:
+            out.append('  <ul>')
+            in_list = True
+        out.append(f'    <li>{inline(line[2:])}</li>')
+    else:
+        if in_list:
+            out.append('  </ul>')
+            in_list = False
+        out.append(f'  <p>{inline(line)}</p>')
+
+if in_list:
+    out.append('  </ul>')
+flush_code()
+out.extend([
+    f'  <p><a href="https://github.com/xiehuacheng/TokMon/releases/tag/v{version}">查看完整 Release</a></p>',
+    '</body>',
+    '</html>',
+])
+
+with open(out_path, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(out))
+PY
+    echo "Generated $RELEASE_NOTES_PATH from $RELEASE_NOTES_MD_SOURCE"
+else
+    echo "Warning: $RELEASE_NOTES_MD_SOURCE not found. Falling back to a minimal Chinese release notes page." >&2
+    cat > "$RELEASE_NOTES_PATH" <<EOF
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>TokMon v$VERSION 更新日志</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #f2f2f7; background: #1c1c1e; }
+    h1 { font-size: 20px; margin-bottom: 12px; }
+    p { line-height: 1.5; }
+    a { color: #0a84ff; }
+  </style>
+</head>
+<body>
+  <h1>TokMon v$VERSION 更新日志</h1>
+  <p>详情请前往 <a href="https://github.com/xiehuacheng/TokMon/releases/tag/v$VERSION">GitHub Release 页面</a> 查看。</p>
+</body>
+</html>
+EOF
+    echo "Generated fallback $RELEASE_NOTES_PATH"
 fi
-{
-    echo '<!DOCTYPE html>'
-    echo '<html lang="zh-CN">'
-    echo '<head>'
-    echo '  <meta charset="UTF-8">'
-    echo "  <title>TokMon v$VERSION Release Notes</title>"
-    echo '  <style>'
-    echo '    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #f2f2f7; background: #1c1c1e; }'
-    echo '    h1 { font-size: 20px; margin-bottom: 12px; }'
-    echo '    ul { line-height: 1.6; padding-left: 20px; }'
-    echo '    li { margin-bottom: 6px; }'
-    echo '    a { color: #0a84ff; }'
-    echo '  </style>'
-    echo '</head>'
-    echo '<body>'
-    echo "  <h1>TokMon v$VERSION</h1>"
-    echo '  <ul>'
-    if [[ -n "$PREV_TAG" ]]; then
-        git log --pretty=format:"<li>%s</li>" "${PREV_TAG}..HEAD" 2>/dev/null || true
-    else
-        git log --pretty=format:"<li>%s</li>" -10 2>/dev/null || true
-    fi
-    echo '  </ul>'
-    echo "  <p><a href=\"https://github.com/xiehuacheng/TokMon/releases/tag/v$VERSION\">查看完整 Release</a></p>"
-    echo '</body>'
-    echo '</html>'
-} > "$RELEASE_NOTES_PATH"
-echo "Generated $RELEASE_NOTES_PATH"
 
 if [[ -n "$SPARKLE_SIGNATURE" ]]; then
     cat > "$APPCAST_PATH" <<EOF

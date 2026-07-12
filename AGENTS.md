@@ -65,34 +65,36 @@ docs/
 
 ## 发布流程
 
-发布新版本时按以下步骤执行，确保 DMG 与 `appcast.xml` 同时上传：
+发布新版本时按以下步骤执行，确保 DMG、`appcast.xml` 与 `release-notes.html` 同时上传：
 
 1. **完成所有改动并通过验证**：
    - `cd macos-app && swift test`
    - `cd /项目根目录 && git diff --check`
-   - `bash macos-app/scripts/build-app.sh`
-   - `bash macos-app/scripts/build-dmg.sh`
 2. **更新版本号**：修改 `macos-app/Packaging/Info.plist`：
    - `CFBundleShortVersionString`：语义版本号，例如 `0.2.14`
    - `CFBundleVersion`：整数构建号，例如 `17`
-3. **重新打包**（版本号变更后必须重新执行，确保产物携带新版本号）：
+3. **撰写中文 Release Notes**：
+   - 在 `macos-app/release-notes.md` 中写入该版本的中文更新日志。
+   - 内容使用 Markdown，常用二级标题 `## 主要改动`、列表 `- `、校验值代码块即可。
+   - `build-dmg.sh` 会读取该文件生成 `macos-app/release/release-notes.html`，并通过 `<sparkle:releaseNotesLink>` 写入 `appcast.xml`，使 Sparkle 更新窗口能显示更新日志。
+4. **打包**（版本号或 release notes 变更后必须重新执行，确保产物携带最新信息）：
    - `bash macos-app/scripts/build-app.sh`
    - `bash macos-app/scripts/build-dmg.sh`
-4. **清理旧版 DMG**（避免 `macos-app/release/` 出现重复安装包）。
-5. **提交并打 tag**：
+5. **清理旧版 DMG**（避免 `macos-app/release/` 出现重复安装包）。
+6. **提交并打 tag**：
    - `git add -A`
    - `git commit -m "Release TokMon X.Y.Z"`
    - `git tag -a vX.Y.Z -m "TokMon vX.Y.Z"`
-6. **推送**：
+7. **推送**：
    - `git push origin main`
    - `git push origin vX.Y.Z`
-7. **创建 GitHub Release**：
+8. **创建 GitHub Release**：
    - Release title：`TokMon vX.Y.Z`
    - Tag：`vX.Y.Z`
-   - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
-   - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
+   - 发布说明使用 `macos-app/release-notes.md` 的中文内容，覆盖完整变更。
+   - **必须上传三个资源**：`TokMon-X.Y.Z.dmg`、`appcast.xml`、`release-notes.html`。
    - 在发布说明中写明 DMG 的 SHA-256。
-   - 发布说明使用中文撰写。
+   - 发布说明、`release-notes.html` 的标题与正文均使用中文撰写；避免直接暴露英文 commit message。
 
 ## 代码风格与命名约定
 
