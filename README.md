@@ -15,11 +15,11 @@ TokMon 是一款 macOS 原生状态栏应用，用于统一查看 Claude Code、
 
 - **多源统一**：自动扫描 Claude Code、Codex、Kimi Code、Qwen Code、OpenCode 的本地日志/数据库。
 - **指标切换**：Total Tokens、Requests、Input Tokens、Output Tokens、Cache Created、Cache Hit、Hit Rate、Est. Cost。
-- **时间范围**：Today / This Week / This Month / All 快捷范围，支持 Round / Exact 两种边界模式。
-- **趋势与热力图**：支持趋势图、按来源/模型分布、紧凑活动热力图。
-- **请求与 Session**：请求日志分页、session 明细；session 标题优先使用 session 名 / 项目文件夹名和第一句 prompt。
-- **Kimi Quota**：多 API Key 管理，展示周额度与 5 小时滚动额度，支持手动或定时刷新。
-- **菜单栏显示**：可在设置中选择在菜单栏显示 Total Tokens、Est. Cost、Requests、Kimi Weekly Quota、Kimi 5-Hour Quota。
+- **时间范围**：Today / This Week / This Month / All / Custom 快捷范围；Custom 可在 popover 中直接选择起止日期。
+- **趋势与热力图**：支持趋势图、按来源/模型分布、紧凑活动热力图；命中率等比例类指标会根据数据分布动态调整纵坐标，兼顾变化幅度与区分度。
+- **请求与 Session**：请求日志分页、session 明细，均支持按关键字搜索过滤；session 标题优先使用 session 名 / 项目文件夹名和第一句 prompt。
+- **Kimi Quota**：多 API Key 管理，展示周额度与 5 小时滚动额度，支持手动或定时刷新；未配置 API Key 时不显示 Quota 卡片/页签。
+- **菜单栏显示**：可在设置中选择在菜单栏显示 Total Tokens、Est. Cost、Requests、Cache Hit Rate、Kimi Weekly Quota、Kimi 5-Hour Quota。
 - **费用估算**：支持按模型配置价格，或使用全局默认费率估算 Est. Cost。
 - **外观适配**：支持浅色与深色模式，主题色、状态栏图标与文字会自动跟随系统外观。
 - **截图分享**：点击 popover 右上角相机图标，可将当前面板复制为图片；首次使用会请求屏幕录制权限。
@@ -62,10 +62,10 @@ open macos-app/release/TokMon.app
 
 Popover 分为四个页签：
 
-- **Overview**：核心指标卡片、趋势图、活动热力图、按来源/模型分布。
-- **Requests**：请求日志分页，展示每次请求的 tokens、模型、session、时间等明细。
-- **Sessions**：按 session 聚合的统计列表。
-- **Quota**：Kimi API Key 的额度面板，支持添加、删除、重命名和切换 key。
+- **Tokens**：核心指标卡片、趋势图、活动热力图、按来源/模型分布。
+- **Requests**：请求日志分页，展示每次请求的 tokens、模型、session、时间等明细；支持搜索过滤。
+- **Sessions**：按 session 聚合的统计列表；支持搜索过滤。
+- **Quota**：Kimi API Key 的额度面板，支持添加、删除、重命名和切换 key；未配置 key 时隐藏。
 
 右上角工具栏按钮依次为：刷新、复制截图、打开设置、检查更新、退出应用。
 
@@ -73,11 +73,12 @@ Popover 分为四个页签：
 
 设置窗口分为以下几个区块：
 
-- **Sources**：选择默认展示的数据来源，以及各 agent 本地数据路径。
+- **General**：设置是否开机自启（Launch at Login）。
+- **Sources**：多选要在 popover 中展示的数据来源（Select All + 各来源独立开关），并配置各 agent 本地数据路径。
 - **Menu Bar**：选择在菜单栏显示的指标项。
 - **Model Pricing**：按模型配置输入/输出/缓存创建/缓存读取单价，用于费用估算。
-- **Maintenance**：手动触发 **Scan Now** 或 **Rebuild Database**。
 - **Kimi Quota**：设置 Kimi 额度面板的自动刷新间隔（默认 5 分钟，可选 Manual / 1 / 5 / 15 / 60 分钟）。
+- **Maintenance**：手动触发 **Rebuild Database**；即时刷新按钮位于 popover 工具栏。
 
 ## 支持的数据源
 

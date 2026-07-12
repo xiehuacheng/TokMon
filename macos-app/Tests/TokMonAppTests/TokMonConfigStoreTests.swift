@@ -14,11 +14,24 @@ import Testing
   #expect(config.sources["kimi-code"]?.path == "~/.kimi-code")
   #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
   #expect(config.sources["qwen-code"]?.path == "~/.qwen/projects")
+  #expect(state.source == [])
   #expect(state.rangeLabel == "thisWeek")
   #expect(state.rangeDays == nil)
   #expect(state.rangeMode == "round")
   #expect(state.activeSeries == "total")
   #expect(state.menuBarDisplayItems == .empty)
+  #expect(!state.launchAtLogin)
+}
+
+@Test func configStoreLoadsAndSavesLaunchAtLogin() throws {
+  let dataDir = try makeTokMonTempDir()
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  var state = try store.loadUIState()
+  state.launchAtLogin = true
+  try store.saveUIState(state)
+
+  #expect(try store.loadUIState().launchAtLogin)
 }
 
 @Test func configStoreDefaultsMissingNativeConfigAndUIStateFields() throws {
@@ -63,7 +76,7 @@ import Testing
   #expect(config.sources["kimi-code"]?.path == "~/.kimi-code")
   #expect(config.sources["opencode"]?.path == "~/.local/share/opencode")
   #expect(config.sources["qwen-code"]?.path == "~/.qwen/projects")
-  #expect(state.source == "codex")
+  #expect(state.source == ["codex"])
   #expect(state.from == "")
   #expect(state.to == "")
   #expect(state.rangeLabel == "thisWeek")
@@ -76,6 +89,45 @@ import Testing
   #expect(state.modelPricing["bad"] == TokMonCostRates(input: 0, output: 0, cacheCreate: 0, cacheRead: 0))
   #expect(state.kimiAPIKeyAccounts.isEmpty)
   #expect(state.selectedKimiAPIKeyID == nil)
+}
+
+@Test func configStoreNormalizesLegacyStringSourceToArray() throws {
+  let dataDir = try makeTokMonTempDir()
+  try """
+  {
+    "source": "codex"
+  }
+  """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  let state = try store.loadUIState()
+  #expect(state.source == ["codex"])
+}
+
+@Test func configStoreNormalizesLegacyEmptySourceToEmptyArray() throws {
+  let dataDir = try makeTokMonTempDir()
+  try """
+  {
+    "source": ""
+  }
+  """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  let state = try store.loadUIState()
+  #expect(state.source == [])
+}
+
+@Test func configStoreLoadsSourceArrayDirectly() throws {
+  let dataDir = try makeTokMonTempDir()
+  try """
+  {
+    "source": ["claude-code", "codex"]
+  }
+  """.write(to: dataDir.appendingPathComponent("tokmon-ui-state.json"), atomically: true, encoding: .utf8)
+  let store = TokMonConfigStore(dataDir: dataDir)
+
+  let state = try store.loadUIState()
+  #expect(state.source == ["claude-code", "codex"])
 }
 
 @Test func configStoreLoadsAndSavesMenuBarDisplayItems() throws {
@@ -94,12 +146,16 @@ import Testing
   #expect(!state.menuBarDisplayItems.totalTokens)
 
   state.menuBarDisplayItems.requests = true
+  state.menuBarDisplayItems.cacheHitRate = true
   try store.saveUIState(state)
 
   let text = try String(contentsOf: dataDir.appendingPathComponent("tokmon-ui-state.json"), encoding: .utf8)
   #expect(text.contains("\"menuBarDisplayItems\""))
   #expect(text.contains("\"requests\" : true"))
-  #expect(try store.loadUIState().menuBarDisplayItems.requests)
+  #expect(text.contains("\"cacheHitRate\" : true"))
+  let loaded = try store.loadUIState()
+  #expect(loaded.menuBarDisplayItems.requests)
+  #expect(loaded.menuBarDisplayItems.cacheHitRate)
 }
 
 @Test func configStoreDefaultsUnknownMenuBarDisplayModeToEmpty() throws {

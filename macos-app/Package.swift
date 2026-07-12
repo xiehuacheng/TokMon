@@ -24,6 +24,7 @@ let package = Package(
         .linkedLibrary("sqlite3"),
         .linkedFramework("CoreServices"),
         .linkedFramework("Security"),
+        .linkedFramework("ServiceManagement"),
       ],
     ),
     .testTarget(

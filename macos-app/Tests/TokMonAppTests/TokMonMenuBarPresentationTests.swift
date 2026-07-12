@@ -23,6 +23,33 @@ import Testing
   #expect(TokMonMenuBarPresentation.title(for: items, snapshot: snapshot) == "42.8K · 128")
 }
 
+@Test func menuBarPresentationFormatsCacheHitRate() {
+  var snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
+  snapshot.summary = TokMonSummary(
+    total: TokMonTotals(
+      totalRequests: 128,
+      totalInput: 1000,
+      totalOutput: 0,
+      totalCacheCreation: 0,
+      totalCacheRead: 965,
+      totalReasoning: 0,
+      totalCacheHitInput: 35,
+      totalCacheHitCacheRead: 965,
+    ),
+    bySource: [],
+    byModel: []
+  )
+
+  #expect(TokMonMenuBarPresentation.title(for: TokMonMenuBarItems(cacheHitRate: true), snapshot: snapshot) == "96.5%")
+}
+
+@Test func menuBarPresentationConcatenatesCacheHitRateWithOtherItems() {
+  let snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
+
+  let items = TokMonMenuBarItems(totalTokens: true, cacheHitRate: true)
+  #expect(TokMonMenuBarPresentation.title(for: items, snapshot: snapshot) == "42.8K · 0.0%")
+}
+
 @Test func menuBarPresentationShowsKimiWeeklyQuota() {
   var snapshot = makeMenuBarSnapshot(totalTokens: 42_800, requests: 128, cost: 1.28)
   snapshot.kimiQuotaSnapshot = KimiQuotaSnapshot(
@@ -126,7 +153,7 @@ private func makeMenuBarSnapshot(totalTokens: Int, requests: Int, cost: Double) 
     ],
   )
   let dashboardState = TokMonDashboardState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     interval: "day",

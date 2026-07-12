@@ -132,7 +132,7 @@ final class TokMonConfigStore: @unchecked Sendable {
     let defaults = TokMonUIState.default
     let preset = TokMonRangePreset(label: optionalStringValue(object["rangeLabel"], default: defaults.rangeLabel))
     return TokMonUIState(
-      source: stringValue(object["source"]) ?? defaults.source,
+      source: normalizedSources(from: object["source"]) ?? defaults.source,
       from: stringValue(object["from"]) ?? defaults.from,
       to: stringValue(object["to"]) ?? defaults.to,
       rangeLabel: preset.label,
@@ -145,11 +145,22 @@ final class TokMonConfigStore: @unchecked Sendable {
       menuBarDisplayItems: normalizedMenuBarDisplayItems(from: object),
       refreshRate: intValue(object["refreshRate"]) ?? defaults.refreshRate,
       kimiQuotaRefreshInterval: intValue(object["kimiQuotaRefreshInterval"]) ?? defaults.kimiQuotaRefreshInterval,
+      launchAtLogin: boolValue(object["launchAtLogin"]) ?? defaults.launchAtLogin,
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),
       kimiAPIKeyAccounts: normalizedKimiAPIKeyAccounts(from: object["kimiAPIKeyAccounts"]),
       selectedKimiAPIKeyID: optionalStringValue(object["selectedKimiAPIKeyID"], default: nil)
     )
+  }
+
+  private func normalizedSources(from rawValue: Any?) -> [String]? {
+    if let array = rawValue as? [String] {
+      return array
+    }
+    if let string = stringValue(rawValue) {
+      return string.isEmpty ? [] : [string]
+    }
+    return nil
   }
 
   private func normalizedMenuBarDisplayItems(from object: [String: Any]) -> TokMonMenuBarItems {
@@ -159,6 +170,7 @@ final class TokMonConfigStore: @unchecked Sendable {
         totalTokens: boolValue(items["totalTokens"]) ?? false,
         estimatedCost: boolValue(items["estimatedCost"]) ?? false,
         requests: boolValue(items["requests"]) ?? false,
+        cacheHitRate: boolValue(items["cacheHitRate"]) ?? false,
         kimiQuota: legacyKimiQuota,
         kimiWeeklyQuota: boolValue(items["kimiWeeklyQuota"]) ?? legacyKimiQuota,
         kimiFiveHourQuota: boolValue(items["kimiFiveHourQuota"]) ?? false

@@ -11,6 +11,8 @@ struct StatusPopoverView: View {
   @State private var refreshRotation: Double = 0
   @State private var sessionRowFrames: [String: CGRect] = [:]
   @State private var scrollViewBounds: CGRect = .zero
+  @State private var requestSearchText = ""
+  @State private var sessionSearchText = ""
   @Namespace private var pageRailSelectionNamespace
 
   var body: some View {
@@ -207,10 +209,15 @@ struct StatusPopoverView: View {
   private var rangeControl: some View {
     Group {
       if let state = stats.snapshot.dashboardState, stats.usesNativeEngine {
-        RangePresetControl(
-          selectedLabel: TokMonRangePreset(label: state.rangeLabel).label,
-          onSelect: selectRangePreset,
-        )
+        VStack(alignment: .leading, spacing: 6) {
+          RangePresetControl(
+            selectedLabel: TokMonRangePreset(label: state.rangeLabel).label,
+            onSelect: selectRangePreset,
+          )
+          if TokMonRangePreset(label: state.rangeLabel) == .custom {
+            customRangeDatePickers(state: state)
+          }
+        }
       } else if let state = stats.snapshot.dashboardState {
         Text(state.rangeDisplay)
           .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -225,6 +232,37 @@ struct StatusPopoverView: View {
     }
   }
 
+  private func customRangeDatePickers(state: TokMonDashboardState) -> some View {
+    HStack(spacing: 8) {
+      CompactDatePickerButton(
+        label: "From",
+        date: Binding(
+          get: { parseDashboardDate(state.from) ?? Date() },
+          set: { newDate in
+            let from = dashboardStartOfDay(newDate)
+            let to = max(dashboardEndOfDay(parseDashboardDate(state.to) ?? newDate), from)
+            Task {
+              await stats.updateDashboardCustomRange(from: from, to: to)
+            }
+          }
+        )
+      )
+      CompactDatePickerButton(
+        label: "To",
+        date: Binding(
+          get: { parseDashboardDate(state.to) ?? Date() },
+          set: { newDate in
+            let from = min(dashboardStartOfDay(parseDashboardDate(state.from) ?? newDate), dashboardEndOfDay(newDate))
+            let to = dashboardEndOfDay(newDate)
+            Task {
+              await stats.updateDashboardCustomRange(from: from, to: to)
+            }
+          }
+        )
+      )
+    }
+  }
+
   private var overviewPage: some View {
     VStack(alignment: .leading, spacing: 10) {
       TokMonHudMetricGrid(
@@ -234,9 +272,11 @@ struct StatusPopoverView: View {
         onToggleTotalExpanded: toggleTotalTokensExpanded,
         onSelect: selectSeries,
       )
-      TokMonQuotaMiniCard(snapshot: stats.kimiQuotaSnapshot) {
-        withAnimation(TokMonMotion.softSnappySpring) {
-          selectedPage = .quota
+      if !stats.kimiAPIKeyAccounts.isEmpty {
+        TokMonQuotaMiniCard(snapshot: stats.kimiQuotaSnapshot) {
+          withAnimation(TokMonMotion.softSnappySpring) {
+            selectedPage = .quota
+          }
         }
       }
       TokMonHudTrendCard(
@@ -244,26 +284,13 @@ struct StatusPopoverView: View {
         valueLabel: selectedSeries.label,
         points: trendPoints(for: selectedSeries.key),
         color: selectedSeries.tintColor,
+        isPercent: selectedSeries.isPercent
       )
       TokMonHudActivityCard(
         days: stats.snapshot.heatmapDays,
         selectedSeries: selectedSeries.key,
         costRates: aggregateCostRates,
-        colorForValue: { value, max in
-          if selectedSeries.key == .cacheHitRate {
-            // Cache hit rates usually cluster in the 90s. Give the 90-100% band
-            // most of the color range so 92%, 95%, 98%, 99% are easy to tell
-            // apart, while keeping the 0-90% range visible at the low end.
-            let normalized: Double
-            if value < 0.9 {
-              normalized = pow(value / 0.9, 0.7) * 0.15
-            } else {
-              normalized = 0.15 + 0.85 * pow((value - 0.9) / 0.1, 3.0)
-            }
-            return heatmapColor(value: normalized, maxValue: 1.0, color: selectedSeries.tintColor)
-          }
-          return heatmapColor(value: value, maxValue: max, color: selectedSeries.tintColor)
-        },
+        color: selectedSeries.tintColor,
       )
       TokMonHudBreakdownCard(
         title: "Top Models",
@@ -282,13 +309,17 @@ struct StatusPopoverView: View {
   }
 
   private var requestsPage: some View {
-    let rows = stats.snapshot.recordsPage?.rows ?? []
+    let allRows = stats.snapshot.recordsPage?.rows ?? []
     let total = stats.snapshot.recordsPage?.total ?? 0
+    let rows = filteredRequestRows(allRows)
 
     return VStack(alignment: .leading, spacing: 9) {
-      TokMonHudSectionHeader("Requests", trailing: total > 0 ? "Showing \(rows.count) of \(total)" : nil)
+      TokMonHudSectionHeader("Requests", trailing: requestTrailingText(totalRows: allRows.count, total: total, filtered: rows.count))
+      TextField("Search", text: $requestSearchText)
+        .textFieldStyle(.roundedBorder)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
       if rows.isEmpty {
-        emptyState("No requests in the selected range.")
+        emptyState(allRows.isEmpty ? "No requests in the selected range." : "No requests match your search.")
       } else {
         ForEach(rows) { row in
           RequestRowView(
@@ -318,13 +349,36 @@ struct StatusPopoverView: View {
     .hudCard()
   }
 
+  private func requestTrailingText(totalRows: Int, total: Int, filtered: Int) -> String? {
+    guard total > 0 else { return nil }
+    if requestSearchText.isEmpty {
+      return "Showing \(totalRows) of \(total)"
+    }
+    return "Showing \(filtered) of \(totalRows)"
+  }
+
+  private func filteredRequestRows(_ rows: [TokMonRecordRow]) -> [TokMonRecordRow] {
+    let query = requestSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !query.isEmpty else { return rows }
+    return rows.filter { row in
+      row.model.lowercased().contains(query)
+        || row.sessionId.lowercased().contains(query)
+        || (row.sessionTitle ?? "").lowercased().contains(query)
+        || row.source.lowercased().contains(query)
+    }
+  }
+
   private var sessionsPage: some View {
-    let sessions = stats.snapshot.usageSessions
+    let allSessions = stats.snapshot.usageSessions
+    let sessions = filteredSessions(allSessions)
 
     return VStack(alignment: .leading, spacing: 9) {
-      TokMonHudSectionHeader("Sessions", trailing: sessions.isEmpty ? nil : "Latest \(sessions.count)")
+      TokMonHudSectionHeader("Sessions", trailing: sessionTrailingText(totalSessions: allSessions.count, filtered: sessions.count))
+      TextField("Search", text: $sessionSearchText)
+        .textFieldStyle(.roundedBorder)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
       if sessions.isEmpty {
-        emptyState("No usage sessions yet.")
+        emptyState(allSessions.isEmpty ? "No usage sessions yet." : "No sessions match your search.")
       } else {
         ForEach(sessions) { session in
           SessionRowView(
@@ -360,6 +414,28 @@ struct StatusPopoverView: View {
     .hudCard()
     .onPreferenceChange(SessionRowFramePreferenceKey.self) { frames in
       sessionRowFrames = frames
+    }
+  }
+
+  private func sessionTrailingText(totalSessions: Int, filtered: Int) -> String? {
+    guard totalSessions > 0 else { return nil }
+    if sessionSearchText.isEmpty {
+      return "Latest \(totalSessions)"
+    }
+    return "Showing \(filtered) of \(totalSessions)"
+  }
+
+  private func filteredSessions(_ sessions: [TokMonUsageSession]) -> [TokMonUsageSession] {
+    let query = sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !query.isEmpty else { return sessions }
+    return sessions.filter { session in
+      let projectName = sessionProjectName(for: session, fallbackSource: session.source).lowercased()
+      let firstPrompt = sessionFirstPrompt(for: session, fallbackSessionId: session.sessionId).lowercased()
+      return projectName.contains(query)
+        || firstPrompt.contains(query)
+        || session.sessionId.lowercased().contains(query)
+        || session.model.lowercased().contains(query)
+        || session.source.lowercased().contains(query)
     }
   }
 
@@ -787,20 +863,7 @@ struct StatusPopoverView: View {
   }
 
   private func labelForSource(_ source: String) -> String {
-    switch source {
-    case "claude-code":
-      "Claude Code"
-    case "codex":
-      "Codex"
-    case "kimi-code":
-      "Kimi Code"
-    case "opencode":
-      "OpenCode"
-    case "qwen-code":
-      "Qwen Code"
-    default:
-      source
-    }
+    TokMonSourceName.label(for: source)
   }
 
   private func colorForSource(_ source: String) -> Color {
@@ -820,16 +883,6 @@ struct StatusPopoverView: View {
     }
   }
 
-  private func heatmapColor(value: Double, maxValue: Double, color: Color, gamma: Double = 1.0) -> Color {
-    guard maxValue > 0, value > 0 else {
-      return Color.secondary.opacity(0.12)
-    }
-    let normalized = min(max(value / maxValue, 0), 1)
-    let scaled = pow(normalized, gamma)
-    let opacity = 0.15 + 0.80 * scaled
-    return color.opacity(opacity)
-  }
-
   private func splitTokMonSessionTitle(_ title: String) -> (projectName: String, firstPrompt: String)? {
     let separator = " - "
     guard let range = title.range(of: separator) else {
@@ -841,6 +894,129 @@ struct StatusPopoverView: View {
       return nil
     }
     return (projectName, firstPrompt)
+  }
+}
+
+private func heatmapColor(value: Double, maxValue: Double, color: Color, gamma: Double = 1.0) -> Color {
+  guard maxValue > 0, value > 0 else {
+    return Color.secondary.opacity(0.12)
+  }
+  let normalized = min(max(value / maxValue, 0), 1)
+  let scaled = pow(normalized, gamma)
+  let opacity = 0.15 + 0.80 * scaled
+  return color.opacity(opacity)
+}
+
+/// Computes a percentile from a sorted array using linear interpolation.
+private func percentile(_ sortedValues: [Double], _ p: Double) -> Double {
+  guard !sortedValues.isEmpty else { return 0 }
+  let clampedP = max(0, min(1, p))
+  let index = Double(sortedValues.count - 1) * clampedP
+  let lower = Int(floor(index))
+  let upper = Int(ceil(index))
+  guard upper < sortedValues.count else { return sortedValues[lower] }
+  guard lower != upper else { return sortedValues[lower] }
+  let t = index - Double(lower)
+  return sortedValues[lower] * (1 - t) + sortedValues[upper] * t
+}
+
+/// Returns a heatmap color that is robust to outliers, zero-activity days,
+/// and the magnitude of the selected metric.
+///
+/// - No-activity cells (`requests == 0`) use the empty color.
+/// - Scale is computed from active values, ignoring zeros and trimming the
+///   bottom/top 5% to reduce the impact of outliers.
+/// - A gamma correction is applied based on the median so the densest part of
+///   the distribution gets the most color contrast.
+private func adaptiveHeatmapColor(
+  for day: TokMonHeatmapDay,
+  series: TokMonSeriesKey,
+  costRates: TokMonCostRates,
+  activeValues: [Double],
+  color: Color
+) -> Color {
+  guard day.requests > 0, !activeValues.isEmpty else {
+    return Color.secondary.opacity(0.12)
+  }
+
+  let value = TokMonHeatmapValueDescriptor(day: day, series: series, costRates: costRates).value
+  let positiveValues = activeValues.filter { $0 > 0 }
+  let scaleSource = positiveValues.isEmpty ? activeValues : positiveValues
+  let sorted = scaleSource.sorted()
+
+  let scaleMin = percentile(sorted, 0.05)
+  let scaleMax = percentile(sorted, 0.95)
+
+  guard scaleMax > scaleMin else {
+    return heatmapColor(value: 0.5, maxValue: 1.0, color: color)
+  }
+
+  var normalized = (value - scaleMin) / (scaleMax - scaleMin)
+  normalized = max(0, min(1, normalized))
+
+  let median = percentile(sorted, 0.5)
+  let normalizedMedian = (median - scaleMin) / (scaleMax - scaleMin)
+  if normalizedMedian > 0, normalizedMedian < 1 {
+    let gamma = log(0.5) / log(normalizedMedian)
+    if gamma.isFinite, gamma > 0 {
+      normalized = pow(normalized, gamma)
+    }
+  }
+
+  return heatmapColor(value: normalized, maxValue: 1.0, color: color)
+}
+
+private struct CompactDatePickerButton: View {
+  let label: String
+  @Binding var date: Date
+  @State private var isPresented = false
+
+  var body: some View {
+    Button(action: { isPresented = true }) {
+      HStack(spacing: 6) {
+        Text(label)
+          .font(.system(size: 10, weight: .heavy, design: .rounded))
+          .foregroundStyle(.secondary)
+        Text(shortDateFormatter.string(from: date))
+          .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+          .foregroundStyle(.primary)
+        Spacer(minLength: 0)
+        Image(systemName: "calendar")
+          .font(.system(size: 10, weight: .bold))
+          .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 5)
+      .frame(maxWidth: .infinity)
+      .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .focusable(false)
+    .background {
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(.regularMaterial)
+        .overlay {
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(TokMonGlass.glassEdge, lineWidth: 1)
+        }
+    }
+    .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+      DatePicker("", selection: $date, displayedComponents: .date)
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .padding(10)
+        .fixedSize()
+    }
+    .onChange(of: date) { _, _ in
+      isPresented = false
+    }
+  }
+
+  private var shortDateFormatter: DateFormatter {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .short
+    formatter.timeStyle = .none
+    return formatter
   }
 }
 
@@ -1307,7 +1483,7 @@ private struct SystemMenuPageRail: View {
 private struct RangePresetControl: View {
   let selectedLabel: String
   let onSelect: (TokMonRangePreset) -> Void
-  private let prototypeRangePresets: [TokMonRangePreset] = [.today, .thisWeek, .thisMonth, .all]
+  private let prototypeRangePresets: [TokMonRangePreset] = [.today, .thisWeek, .thisMonth, .all, .custom]
 
   var body: some View {
     HStack(spacing: 3) {
@@ -1322,7 +1498,7 @@ private struct RangePresetControl: View {
             .frame(maxWidth: .infinity, minHeight: 22)
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-                .buttonStyle(GlassButtonStyle(cornerRadius: 10, isSelected: false))
+        .buttonStyle(GlassButtonStyle(cornerRadius: 10, isSelected: false))
         .focusable(false)
         .foregroundStyle(selectedLabel == preset.label ? .primary : .secondary)
         .tokMonSelectionPill(isSelected: selectedLabel == preset.label, cornerRadius: 10)
@@ -1633,11 +1809,12 @@ private struct TokMonHudTrendCard: View {
   let valueLabel: String
   let points: [TokMonTrendPoint]
   let color: Color
+  let isPercent: Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       TokMonHudSectionHeader(title, trailing: valueLabel)
-      TrendLineChart(points: points, color: color)
+      TrendLineChart(points: points, color: color, isPercent: isPercent)
         .frame(height: 60)
     }
     .padding(10)
@@ -1649,7 +1826,7 @@ private struct TokMonHudActivityCard: View {
   let days: [TokMonHeatmapDay]
   let selectedSeries: TokMonSeriesKey
   let costRates: TokMonCostRates
-  let colorForValue: (Double, Double) -> Color
+  let color: Color
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -1665,7 +1842,7 @@ private struct TokMonHudActivityCard: View {
           days: days,
           selectedSeries: selectedSeries,
           costRates: costRates,
-          colorForValue: colorForValue,
+          color: color,
         )
       }
     }
@@ -1750,11 +1927,13 @@ private struct RecentActivityGrid: View {
   let days: [TokMonHeatmapDay]
   let selectedSeries: TokMonSeriesKey
   let costRates: TokMonCostRates
-  let colorForValue: (Double, Double) -> Color
+  let color: Color
 
   var body: some View {
     let layout = TokMonHeatmapLayout(days: days)
-    let maxValue = days.map { TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value }.max() ?? 0
+    let activeValues = days
+      .filter { $0.requests > 0 }
+      .map { TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value }
     GeometryReader { proxy in
       let heatmapLabelWidth: CGFloat = 31
       let metrics = TokMonHeatmapLayout.metrics(
@@ -1776,10 +1955,15 @@ private struct RecentActivityGrid: View {
                   let day = week.cells[weekdayIndex]
                   ZStack {
                     RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                      .fill(day.map { colorForValue(
-                        TokMonHeatmapValueDescriptor(day: $0, series: selectedSeries, costRates: costRates).value,
-                        maxValue,
-                      ) } ?? Color.secondary.opacity(0.12))
+                      .fill(day.map {
+                        adaptiveHeatmapColor(
+                          for: $0,
+                          series: selectedSeries,
+                          costRates: costRates,
+                          activeValues: activeValues,
+                          color: color
+                        )
+                      } ?? Color.secondary.opacity(0.12))
                   }
                   .frame(width: cellSize, height: cellSize)
                   .contentShape(Rectangle())
@@ -1844,10 +2028,11 @@ private struct HeatmapWeekdayAxis: View {
 private struct TrendLineChart: View {
   let points: [TokMonTrendPoint]
   let color: Color
+  let isPercent: Bool
 
   var body: some View {
     GeometryReader { proxy in
-      let yAxisWidth: CGFloat = 36
+      let yAxisWidth: CGFloat = isPercent ? 42 : 36
       let xAxisHeight: CGFloat = 14
       let chartRect = CGRect(
         x: yAxisWidth,
@@ -1855,7 +2040,7 @@ private struct TrendLineChart: View {
         width: max(proxy.size.width - yAxisWidth, 1),
         height: max(proxy.size.height - xAxisHeight, 1),
       )
-      let scale = TrendChartScale(points: points)
+      let scale = TrendChartScale(points: points, percentMode: isPercent)
       let chartPoints = normalizedPoints(in: chartRect.size, scale: scale)
       VStack(spacing: 2) {
         HStack(spacing: 4) {
@@ -1899,6 +2084,12 @@ private struct TrendLineChart: View {
   }
 
   private func formatAxisValue(_ value: Double) -> String {
+    if isPercent {
+      let values = points.map(\.value)
+      let range = (values.max() ?? 0) - (values.min() ?? 0)
+      let decimals = range < 0.05 ? 1 : 0
+      return String(format: "%.*f%%", decimals, value * 100)
+    }
     if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
     if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
     return String(format: "%.0f", value)
@@ -1964,13 +2155,30 @@ private struct TrendChartScale {
   let maxValue: Double
   let range: Double
 
-  init(points: [TokMonTrendPoint]) {
+  init(points: [TokMonTrendPoint], percentMode: Bool = false) {
     let values = points.map(\.value)
-    let rawMin = min(values.min() ?? 0, 0)
+    let rawMin = values.min() ?? 0
     let rawMax = values.max() ?? 0
-    minValue = rawMin
-    maxValue = rawMax
-    range = max(rawMax - rawMin, 1)
+    let dataRange = max(rawMax - rawMin, 0)
+
+    if percentMode {
+      let padding = max(dataRange * 0.2, 0.01)
+      minValue = max(rawMin - padding, 0)
+      maxValue = min(rawMax + padding, 1)
+      range = max(maxValue - minValue, 0.001)
+    } else if rawMin > 0, rawMax > 0, dataRange / rawMax < 0.25 {
+      // Values are clustered in a narrow band (e.g. all large token counts).
+      // Zoom the y-axis to that band so small relative changes remain visible.
+      let padding = max(dataRange * 0.2, rawMax * 0.02)
+      minValue = max(rawMin - padding, 0)
+      maxValue = rawMax + padding
+      range = max(maxValue - minValue, rawMax * 0.01)
+    } else {
+      let baseline = min(rawMin, 0)
+      minValue = baseline
+      maxValue = rawMax
+      range = max(rawMax - baseline, 1)
+    }
   }
 
   func normalized(_ value: Double) -> Double {
@@ -2364,6 +2572,26 @@ private func shortTimestamp(_ value: String) -> String {
     return String(value[start..<end])
   }
   return value
+}
+
+private func parseDashboardDate(_ value: String) -> Date? {
+  let formatter = DateFormatter()
+  formatter.locale = Locale(identifier: "en_US_POSIX")
+  formatter.timeZone = .current
+  formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+  return formatter.date(from: value)
+}
+
+private func dashboardStartOfDay(_ date: Date) -> String {
+  TokMonStatsSnapshotBuilder.formattedTimestamp(Calendar.current.startOfDay(for: date))
+}
+
+private func dashboardEndOfDay(_ date: Date) -> String {
+  var calendar = Calendar.current
+  calendar.timeZone = .current
+  let startOfDay = calendar.startOfDay(for: date)
+  let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) ?? date
+  return TokMonStatsSnapshotBuilder.formattedTimestamp(endOfDay)
 }
 
 private struct TokMonSeriesPresentation {

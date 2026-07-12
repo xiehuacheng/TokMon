@@ -140,12 +140,12 @@ import Testing
   )
 
   #expect(settings.contains("SettingsSection(\"Menu Bar\")"))
-  #expect(settings.contains("Toggle(\"Total Tokens\", isOn: $store.draft.menuBarDisplayItems.totalTokens)"))
-  #expect(settings.contains("Toggle(\"Est. Cost\", isOn: $store.draft.menuBarDisplayItems.estimatedCost)"))
-  #expect(settings.contains("Toggle(\"Requests\", isOn: $store.draft.menuBarDisplayItems.requests)"))
-  #expect(settings.contains("Toggle(\"Kimi Weekly Quota\", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)"))
-  #expect(settings.contains("Toggle(\"Kimi 5-Hour Quota\", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)"))
-  #expect(!settings.contains("Toggle(\"Kimi Quota\", isOn: $store.draft.menuBarDisplayItems.kimiQuota)"))
+  #expect(settings.contains("menuBarToggle(\"Total Tokens\", isOn: $store.draft.menuBarDisplayItems.totalTokens)"))
+  #expect(settings.contains("menuBarToggle(\"Est. Cost\", isOn: $store.draft.menuBarDisplayItems.estimatedCost)"))
+  #expect(settings.contains("menuBarToggle(\"Requests\", isOn: $store.draft.menuBarDisplayItems.requests)"))
+  #expect(settings.contains("menuBarToggle(\"Cache Hit Rate\", isOn: $store.draft.menuBarDisplayItems.cacheHitRate)"))
+  #expect(settings.contains("menuBarToggle(\"Kimi Weekly Quota\", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)"))
+  #expect(settings.contains("menuBarToggle(\"Kimi 5-Hour Quota\", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)"))
 }
 
 @Test func userFacingTextUsesTokMonName() throws {
@@ -303,7 +303,7 @@ import Testing
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(view.contains("private let prototypeRangePresets: [TokMonRangePreset] = [.today, .thisWeek, .thisMonth, .all]"))
+  #expect(view.contains("private let prototypeRangePresets: [TokMonRangePreset] = [.today, .thisWeek, .thisMonth, .all, .custom]"))
   #expect(view.contains("ForEach(prototypeRangePresets)"))
   #expect(!view.contains("ForEach(TokMonRangePreset.allCases)"))
   #expect(view.contains("TokMonHudMetric(series: .total"))
@@ -321,7 +321,6 @@ import Testing
   #expect(view.contains("TrendXAxisLabels("))
   #expect(!view.contains("YearHeatmapPopover"))
   #expect(!view.contains("showsYearHeatmap"))
-  #expect(!view.contains(".popover(isPresented:"))
 }
 
 @Test func statusPopoverUsesDistinctSourceColors() throws {
@@ -864,7 +863,6 @@ import Testing
   #expect(!settings.contains("FieldRow(\"Metric\")"))
   #expect(!settings.contains("private let metrics"))
   #expect(settings.contains("SettingsSection(\"Maintenance\")"))
-  #expect(settings.contains("Button(\"Scan Now\")"))
   #expect(settings.contains("Button(\"Rebuild Database\")"))
 }
 
@@ -1159,12 +1157,10 @@ import Testing
   RoundedRectangle(cornerRadius: 24, style: .continuous)
       .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
   """))
-  #expect(view.contains("\"OpenCode\""))
   #expect(models.contains("\"OpenCode\""))
   #expect(settings.contains("(\"opencode\", \"OpenCode\")"))
   #expect(settings.contains("(\"qwen-code\", \"Qwen Code\")"))
-  #expect(settings.contains("FieldRow(\"OpenCode\")"))
-  #expect(settings.contains("FieldRow(\"Qwen Code\")"))
+  #expect(settings.contains("func sourcePathRow("))
 }
 
 @Test func statusPopoverScrollViewCatchesWheelEventsAcrossTransparentGaps() throws {

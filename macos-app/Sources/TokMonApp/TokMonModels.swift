@@ -56,12 +56,13 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
   var totalTokens: Bool
   var estimatedCost: Bool
   var requests: Bool
+  var cacheHitRate: Bool
   var kimiQuota: Bool
   var kimiWeeklyQuota: Bool
   var kimiFiveHourQuota: Bool
 
   var isEmpty: Bool {
-    !totalTokens && !estimatedCost && !requests && !kimiQuota && !kimiWeeklyQuota && !kimiFiveHourQuota
+    !totalTokens && !estimatedCost && !requests && !cacheHitRate && !kimiQuota && !kimiWeeklyQuota && !kimiFiveHourQuota
   }
 
   static let empty = TokMonMenuBarItems()
@@ -70,6 +71,7 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
     totalTokens: Bool = false,
     estimatedCost: Bool = false,
     requests: Bool = false,
+    cacheHitRate: Bool = false,
     kimiQuota: Bool = false,
     kimiWeeklyQuota: Bool = false,
     kimiFiveHourQuota: Bool = false
@@ -77,6 +79,7 @@ struct TokMonMenuBarItems: Codable, Equatable, Sendable {
     self.totalTokens = totalTokens
     self.estimatedCost = estimatedCost
     self.requests = requests
+    self.cacheHitRate = cacheHitRate
     self.kimiQuota = kimiQuota
     self.kimiWeeklyQuota = kimiWeeklyQuota
     self.kimiFiveHourQuota = kimiFiveHourQuota
@@ -141,7 +144,7 @@ struct KimiAPIKeyAccount: Equatable, Sendable, Codable, Identifiable {
 }
 
 struct TokMonUIState: Codable, Equatable {
-  var source: String
+  var source: [String]
   var from: String
   var to: String
   var rangeLabel: String?
@@ -156,13 +159,15 @@ struct TokMonUIState: Codable, Equatable {
   var refreshRate: Int
   /// Refresh interval for the Kimi quota panel, in minutes. `0` means manual refresh.
   var kimiQuotaRefreshInterval: Int = 5
+  /// Start TokMon automatically when the user logs in.
+  var launchAtLogin: Bool = false
   var costRates: TokMonCostRates
   var modelPricing: [String: TokMonCostRates] = [:]
   var kimiAPIKeyAccounts: [KimiAPIKeyAccount] = []
   var selectedKimiAPIKeyID: String? = nil
 
   static let `default` = TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: TokMonRangePreset.thisWeek.label,
@@ -175,6 +180,7 @@ struct TokMonUIState: Codable, Equatable {
     menuBarDisplayItems: .empty,
     refreshRate: 3000,
     kimiQuotaRefreshInterval: 5,
+    launchAtLogin: false,
     costRates: .zero,
     modelPricing: [:],
   )
@@ -185,6 +191,7 @@ enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
   case thisWeek
   case thisMonth
   case all
+  case custom
 
   init(label: String?) {
     switch label {
@@ -196,6 +203,8 @@ enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
       self = .thisMonth
     case "all":
       self = .all
+    case "custom":
+      self = .custom
     default:
       self = .thisWeek
     }
@@ -214,6 +223,8 @@ enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
       "This Month"
     case .all:
       "All"
+    case .custom:
+      "Custom"
     }
   }
 
@@ -227,6 +238,8 @@ enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
       "Month"
     case .all:
       "All"
+    case .custom:
+      "Custom"
     }
   }
 
@@ -242,7 +255,7 @@ enum TokMonRangePreset: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .today:
       "hour"
-    case .thisWeek, .thisMonth, .all:
+    case .thisWeek, .thisMonth, .all, .custom:
       "day"
     }
   }
@@ -302,7 +315,7 @@ struct TokMonScanState: Equatable {
 struct TokMonQueryFilter: Equatable {
   var from: String
   var to: String
-  var source: String?
+  var sources: [String]
   var model: String?
 
   var hasTimeRange: Bool {
@@ -929,7 +942,7 @@ private func cacheHitRatio(inputTokens: Int, cacheRead: Int) -> Double {
 }
 
 struct TokMonDashboardState: Decodable {
-  let source: String
+  let source: [String]
   let from: String
   let to: String
   let interval: String
@@ -968,7 +981,7 @@ struct TokMonDashboardState: Decodable {
   }
 
   init(
-    source: String,
+    source: [String],
     from: String,
     to: String,
     interval: String,
@@ -1005,7 +1018,13 @@ struct TokMonDashboardState: Decodable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+    if let sourceArray = try container.decodeIfPresent([String].self, forKey: .source) {
+      source = sourceArray
+    } else if let sourceString = try container.decodeIfPresent(String.self, forKey: .source) {
+      source = sourceString.isEmpty ? [] : [sourceString]
+    } else {
+      source = []
+    }
     from = try container.decodeIfPresent(String.self, forKey: .from) ?? ""
     to = try container.decodeIfPresent(String.self, forKey: .to) ?? ""
     interval = try container.decodeIfPresent(String.self, forKey: .interval) ?? "day"
@@ -1033,9 +1052,31 @@ struct TokMonDashboardState: Decodable {
   }
 
   var sourceLabel: String {
-    switch source {
-    case "":
+    switch source.count {
+    case 0:
       "All Sources"
+    case 1:
+      TokMonSourceName.label(for: source[0])
+    default:
+      "\(source.count) Sources"
+    }
+  }
+
+  var rangeDisplay: String {
+    if let rangeLabel, !rangeLabel.isEmpty {
+      return rangeLabel
+    }
+    return "\(from.dropLast(3)) - \(to.dropLast(3))"
+  }
+
+  var rangeModeLabel: String {
+    rangeMode == "round" ? "Round" : "Exact"
+  }
+}
+
+enum TokMonSourceName {
+  static func label(for source: String) -> String {
+    switch source {
     case "claude-code":
       "Claude Code"
     case "codex":
@@ -1049,17 +1090,6 @@ struct TokMonDashboardState: Decodable {
     default:
       source
     }
-  }
-
-  var rangeDisplay: String {
-    if let rangeLabel, !rangeLabel.isEmpty {
-      return rangeLabel
-    }
-    return "\(from.dropLast(3)) - \(to.dropLast(3))"
-  }
-
-  var rangeModeLabel: String {
-    rangeMode == "round" ? "Round" : "Exact"
   }
 }
 

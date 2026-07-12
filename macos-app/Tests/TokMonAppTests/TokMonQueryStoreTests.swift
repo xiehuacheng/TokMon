@@ -21,7 +21,7 @@ import Testing
     projectPath: "/tmp",
   ))
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-16 23:59:59", source: nil, model: nil)
+  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-16 23:59:59", sources: [], model: nil)
 
   let summary = try store.summary(filter: filter)
   let trend = try store.trend(filter: filter, interval: "hour")
@@ -87,12 +87,12 @@ import Testing
     cacheHitSupported: false,
   ))
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", source: nil, model: nil)
+  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", sources: [], model: nil)
 
   let summary = try store.summary(filter: filter)
   let trend = try store.trend(filter: filter, interval: "day")
   let heatmapDay = try #require(try store.heatmap(
-    source: nil,
+    sources: [],
     model: nil,
     endingAt: makeLocalDate("2026-05-14 10:05:30"),
     days: 1,
@@ -136,7 +136,7 @@ import Testing
 
   let store = TokMonQueryStore(database: db)
   let records = try store.records(
-    filter: TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil),
+    filter: TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", sources: [], model: nil),
     page: 0,
     limit: 10,
   )
@@ -175,7 +175,7 @@ import Testing
   ))
 
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil)
+  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", sources: [], model: nil)
   let records = try store.records(filter: filter, page: 0, limit: 10)
   let sessionRecords = try store.recordsForSession(filter: filter, source: "codex", sessionId: "codex-session", limit: 10)
   let sessions = try store.sessions(limit: 10)
@@ -213,7 +213,7 @@ import Testing
   ))
 
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", source: nil, model: nil)
+  let filter = TokMonQueryFilter(from: "2026-05-20 00:00:00", to: "2026-05-21 00:00:00", sources: [], model: nil)
   let records = try store.records(filter: filter, page: 0, limit: 10)
   let sessions = try store.sessions(limit: 10)
 
@@ -234,7 +234,7 @@ import Testing
   let filter = TokMonQueryFilter(
     from: "2026-05-11 00:00:00",
     to: "2026-05-14 10:05:59",
-    source: nil,
+    sources: [],
     model: nil,
   )
 
@@ -264,7 +264,7 @@ import Testing
   let filter = TokMonQueryFilter(
     from: "2026-05-04 00:00:00",
     to: "2026-05-07 10:05:59",
-    source: "codex",
+    sources: ["codex"],
     model: nil,
   )
 
@@ -296,7 +296,7 @@ import Testing
   let filter = TokMonQueryFilter(
     from: "2026-01-01 00:00:00",
     to: "2026-05-14 10:05:59",
-    source: nil,
+    sources: [],
     model: nil,
   )
 
@@ -320,7 +320,7 @@ import Testing
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s2", model: "gpt-b", inputTokens: 99, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:05:00.000Z"))
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", source: "codex", model: "gpt-a")
+  let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", sources: ["codex"], model: "gpt-a")
 
   let summary = try store.summary(filter: filter)
   let sessions = try store.sessions(filter: filter, limit: 10)
@@ -342,13 +342,13 @@ import Testing
   let allSummary = try store.summary(filter: TokMonQueryFilter(
     from: "0001-01-01 00:00:00",
     to: "9999-12-31 23:59:59",
-    source: nil,
+    sources: [],
     model: nil,
   ))
   let boundedSummary = try store.summary(filter: TokMonQueryFilter(
     from: "2026-05-01 00:00:00",
     to: "2026-05-31 23:59:59",
-    source: nil,
+    sources: [],
     model: nil,
   ))
 
@@ -364,7 +364,7 @@ import Testing
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s2", model: "gpt-a", inputTokens: 20, outputTokens: 2, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:05:00.000Z"))
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 30, outputTokens: 3, cacheCreation: 0, cacheRead: 0, reasoningTokens: 4, createdAt: "2026-05-14T01:10:00.000Z"))
   let store = TokMonQueryStore(database: db)
-  let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", source: "codex", model: nil)
+  let filter = TokMonQueryFilter(from: "2026-05-14 08:00:00", to: "2026-05-14 10:00:00", sources: ["codex"], model: nil)
 
   let rows = try store.recordsForSession(filter: filter, source: "codex", sessionId: "s1", limit: 10)
 
@@ -393,11 +393,31 @@ import Testing
   _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
   let store = TokMonQueryStore(database: db)
 
-  let days = try store.heatmap(source: nil, model: nil, endingAt: makeLocalDate("2026-05-14 10:05:30"))
+  let days = try store.heatmap(sources: [], model: nil, endingAt: makeLocalDate("2026-05-14 10:05:30"))
 
   #expect(days.count == 112)
   #expect(days.first?.day == "2026-01-23")
   #expect(days.last?.day == "2026-05-14")
   #expect(days.filter { $0.requests == 0 }.count == 111)
   #expect(days.first { $0.day == "2026-05-14" }?.requests == 1)
+}
+
+@Test func queryStoreFiltersWithMultipleSources() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(source: "claude-code", sessionId: "c1", model: "claude-a", inputTokens: 8, outputTokens: 4, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T02:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "kimi-code", sessionId: "k1", model: "kimi-a", inputTokens: 5, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T03:00:00.000Z"))
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-14 23:59:59", sources: ["claude-code", "codex"], model: nil)
+
+  let summary = try store.summary(filter: filter)
+  let records = try store.records(filter: filter, page: 0, limit: 10)
+  let sessions = try store.sessions(filter: filter, limit: 10)
+
+  #expect(summary.total.totalRequests == 2)
+  #expect(summary.total.totalInput == 18)
+  #expect(summary.bySource.map(\.source).sorted() == ["claude-code", "codex"])
+  #expect(records.total == 2)
+  #expect(sessions.map(\.source).sorted() == ["claude-code", "codex"])
 }

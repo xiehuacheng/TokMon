@@ -7,8 +7,7 @@ struct TokMonSettingsWindow: View {
   let onCancel: () -> Void
   @State private var selectedPricingModel = ""
 
-  private let sources = [
-    ("", "All Sources"),
+  private let sourceOptions = [
     ("claude-code", "Claude Code"),
     ("codex", "Codex"),
     ("kimi-code", "Kimi Code"),
@@ -28,72 +27,45 @@ struct TokMonSettingsWindow: View {
 
         ScrollView(showsIndicators: false) {
           VStack(alignment: .leading, spacing: 12) {
+            SettingsSection("General") {
+              FieldRow("Startup") {
+                Toggle("Launch at Login", isOn: $store.draft.launchAtLogin)
+                  .frame(width: 220, alignment: .leading)
+              }
+            }
+
             SettingsSection("Sources") {
-              FieldRow("Default") {
-                Picker("Source", selection: $store.draft.source) {
-                  ForEach(sources, id: \.0) { value, label in
-                    Text(label).tag(value)
-                  }
+              Toggle("Select All", isOn: selectAllSourcesBinding)
+                .padding(.leading, 2)
+
+              Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach(sourceOptions, id: \.0) { value, label in
+                  sourcePathRow(value: value, label: label, path: sourcePathBinding(for: value), placeholder: sourcePlaceholder(for: value))
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 220)
-              }
-              FieldRow("Claude Code") {
-                TextField("~/.claude/projects", text: $store.draft.claudePath)
-                  .settingsTextField(width: 430)
-              }
-              FieldRow("Codex") {
-                TextField("~/.codex/sessions", text: $store.draft.codexPath)
-                  .settingsTextField(width: 430)
-              }
-              FieldRow("Kimi Code") {
-                TextField("~/.kimi-code", text: $store.draft.kimiCodePath)
-                  .settingsTextField(width: 430)
-              }
-              FieldRow("OpenCode") {
-                TextField("~/.local/share/opencode", text: $store.draft.openCodePath)
-                  .settingsTextField(width: 430)
-              }
-              FieldRow("Qwen Code") {
-                TextField("~/.qwen/projects", text: $store.draft.qwenCodePath)
-                  .settingsTextField(width: 430)
               }
             }
 
             SettingsSection("Menu Bar") {
               FieldRow("Show") {
-                VStack(alignment: .leading, spacing: 6) {
-                  Toggle("Total Tokens", isOn: $store.draft.menuBarDisplayItems.totalTokens)
-                  Toggle("Est. Cost", isOn: $store.draft.menuBarDisplayItems.estimatedCost)
-                  Toggle("Requests", isOn: $store.draft.menuBarDisplayItems.requests)
-                  Toggle("Kimi Weekly Quota", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)
-                  Toggle("Kimi 5-Hour Quota", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)
+                VStack(alignment: .leading, spacing: 8) {
+                  HStack(alignment: .center, spacing: 12) {
+                    menuBarToggle("Total Tokens", isOn: $store.draft.menuBarDisplayItems.totalTokens)
+                    menuBarToggle("Est. Cost", isOn: $store.draft.menuBarDisplayItems.estimatedCost)
+                  }
+                  HStack(alignment: .center, spacing: 12) {
+                    menuBarToggle("Requests", isOn: $store.draft.menuBarDisplayItems.requests)
+                    menuBarToggle("Cache Hit Rate", isOn: $store.draft.menuBarDisplayItems.cacheHitRate)
+                  }
+                  HStack(alignment: .center, spacing: 12) {
+                    menuBarToggle("Kimi Weekly Quota", isOn: $store.draft.menuBarDisplayItems.kimiWeeklyQuota)
+                    menuBarToggle("Kimi 5-Hour Quota", isOn: $store.draft.menuBarDisplayItems.kimiFiveHourQuota)
+                  }
                 }
-                .frame(width: 220, alignment: .leading)
               }
             }
 
             SettingsSection("Model Pricing") {
               modelPricingEditor
-            }
-
-            SettingsSection("Maintenance") {
-              FieldRow("Actions") {
-                HStack(spacing: 8) {
-                  Button("Scan Now") {
-                    Task { try? await store.scanNow() }
-                  }
-                  .tokMonGlassButton()
-                  .disabled(store.isBusy)
-
-                  Button("Rebuild Database") {
-                    Task { try? await store.rebuildAndRescan() }
-                  }
-                  .tokMonGlassButton()
-                  .disabled(store.isBusy)
-                }
-              }
             }
 
             SettingsSection("Kimi Quota") {
@@ -108,6 +80,16 @@ struct TokMonSettingsWindow: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 320)
+              }
+            }
+
+            SettingsSection("Maintenance") {
+              FieldRow("Actions") {
+                Button("Rebuild Database") {
+                  Task { try? await store.rebuildAndRescan() }
+                }
+                .tokMonGlassButton()
+                .disabled(store.isBusy)
               }
             }
           }
@@ -315,6 +297,93 @@ struct TokMonSettingsWindow: View {
         store.draft.modelPricing[model] = rates
       },
     )
+  }
+
+  private var selectAllSourcesBinding: Binding<Bool> {
+    Binding(
+      get: {
+        sourceOptions.allSatisfy { store.draft.source.contains($0.0) }
+      },
+      set: { selected in
+        store.draft.source = selected ? sourceOptions.map(\.0) : []
+      },
+    )
+  }
+
+  private func sourceBinding(for value: String) -> Binding<Bool> {
+    Binding(
+      get: {
+        store.draft.source.contains(value)
+      },
+      set: { selected in
+        if selected {
+          if !store.draft.source.contains(value) {
+            store.draft.source.append(value)
+          }
+        } else {
+          store.draft.source.removeAll { $0 == value }
+        }
+      },
+    )
+  }
+
+  private func sourcePathRow(
+    value: String,
+    label: String,
+    path: Binding<String>,
+    placeholder: String
+  ) -> some View {
+    GridRow {
+      Toggle("", isOn: sourceBinding(for: value))
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+        .accessibilityLabel(label)
+      Text(label)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .frame(width: 100, alignment: .trailing)
+      TextField(placeholder, text: path)
+        .settingsTextField(width: 420)
+    }
+  }
+
+  private func sourcePathBinding(for value: String) -> Binding<String> {
+    switch value {
+    case "claude-code": return $store.draft.claudePath
+    case "codex": return $store.draft.codexPath
+    case "kimi-code": return $store.draft.kimiCodePath
+    case "opencode": return $store.draft.openCodePath
+    case "qwen-code": return $store.draft.qwenCodePath
+    default: return .constant("")
+    }
+  }
+
+  private func sourcePlaceholder(for value: String) -> String {
+    switch value {
+    case "claude-code": return "~/.claude/projects"
+    case "codex": return "~/.codex/sessions"
+    case "kimi-code": return "~/.kimi-code"
+    case "opencode": return "~/.local/share/opencode"
+    case "qwen-code": return "~/.qwen/projects"
+    default: return ""
+    }
+  }
+
+  private func menuBarToggle(_ label: String, isOn: Binding<Bool>) -> some View {
+    HStack(spacing: 6) {
+      Toggle("", isOn: isOn)
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+        .accessibilityLabel(label)
+      Text(label)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+        .frame(width: 150, alignment: .leading)
+    }
+    .frame(width: 180, alignment: .leading)
   }
 }
 

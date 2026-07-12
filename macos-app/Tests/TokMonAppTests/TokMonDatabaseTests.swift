@@ -148,7 +148,7 @@ import Testing
     filter: TokMonQueryFilter(
       from: "2026-05-14 00:00:00",
       to: "2026-05-15 00:00:00",
-      source: "claude-code",
+      sources: ["claude-code"],
       model: nil
     )
   )

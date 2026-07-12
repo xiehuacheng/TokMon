@@ -19,9 +19,12 @@
 - macOS 菜单栏原生 App，点击图标弹出统计面板。
 - 统一聚合 Claude Code、Codex、Kimi Code、Qwen Code、OpenCode 的 token usage。
 - Popover 分为四个页面：Tokens（概览）、Requests（请求明细）、Sessions（会话统计）、Quota（Kimi 额度）。
-- Overview 支持切换 Total Tokens、Requests、Input、Output、Cache Created、Cache Hit、Cache Hit Rate、Est. Cost 等指标。
-- 支持 Today、This Week、This Month、All 时间范围，以及趋势图、活动热力图、按来源/模型分布。
-- 菜单栏可显示 Total Tokens、Est. Cost、Requests、Kimi Weekly Quota、Kimi 5-Hour Quota。
+- Tokens 页面支持切换 Total Tokens、Requests、Input、Output、Cache Created、Cache Hit、Cache Hit Rate、Est. Cost 等指标。
+- 支持 Today、This Week、This Month、All、Custom 时间范围，Custom 可在 popover 中直接选择起止日期。
+- 支持趋势图、活动热力图、按来源/模型分布；命中率等比例类指标会根据数据分布动态调整纵坐标，兼顾变化幅度与区分度。
+- Requests / Sessions 页面支持按关键字搜索过滤。
+- 菜单栏可显示 Total Tokens、Est. Cost、Requests、Cache Hit Rate、Kimi Weekly Quota、Kimi 5-Hour Quota。
+- 未配置 Kimi API Key 时，Quota 页面与首页 Quota 卡片自动隐藏。
 - 点击 popover 右上角相机图标可将当前面板截图复制到剪贴板。
 - 支持浅色/深色模式，主题色随系统外观自动调整。
 - 内置 Sparkle 更新检查。
@@ -78,10 +81,14 @@ TOKMON_PROJECT_ROOT=/path/to/TokMon swift run TokMon
 
 设置窗口可通过 popover 右上角齿轮图标打开，包含以下区块：
 
+### General
+
+- **Launch at Login**：设置 TokMon 是否随用户登录自动启动。
+
 ### Sources
 
-- **Default**：设置 popover 默认展示的数据来源（All Sources / Claude Code / Codex / Kimi Code / OpenCode / Qwen Code）。
-- **各来源路径**：分别配置 Claude Code、Codex、Kimi Code、OpenCode、Qwen Code 的本地数据路径。
+- **Show**：选择要在 popover 中展示的数据来源，提供全选（Select All）和各来源独立开关；未选择任何来源时等同于展示全部来源。
+- **各来源路径**：复选框位于来源名称左侧，右侧为路径输入框，分别配置 Claude Code、Codex、Kimi Code、OpenCode、Qwen Code 的本地数据路径。
 
 ### Menu Bar
 
@@ -90,6 +97,7 @@ TOKMON_PROJECT_ROOT=/path/to/TokMon swift run TokMon
 - Total Tokens
 - Est. Cost
 - Requests
+- Cache Hit Rate
 - Kimi Weekly Quota
 - Kimi 5-Hour Quota
 
@@ -99,14 +107,13 @@ TOKMON_PROJECT_ROOT=/path/to/TokMon swift run TokMon
 - 用于 Est. Cost 估算。
 - 模型列表来自已扫描到的模型；可手动添加、删除。
 
-### Maintenance
-
-- **Scan Now**：立即增量扫描所有配置路径。
-- **Rebuild Database**：清空数据库并重新全量扫描；常用于数据异常或 scanner 版本升级后需要重建的场景。
-
 ### Kimi Quota
 
 - **Refresh Interval**：Kimi 额度自动刷新间隔，可选 Manual（手动）、1 min、5 min、15 min、60 min，默认 5 min。
+
+### Maintenance
+
+- **Rebuild Database**：清空数据库并重新全量扫描；常用于数据异常或 scanner 版本升级后需要重建的场景。即时刷新请使用 popover 工具栏的刷新按钮。
 
 ## 支持的数据源与默认路径
 

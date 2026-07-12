@@ -145,7 +145,7 @@ final class TokMonQueryStore {
     }
   }
 
-  func heatmap(source: String?, model: String?, endingAt: Date = Date(), days: Int = 112) throws -> [TokMonHeatmapDay] {
+  func heatmap(sources: [String], model: String?, endingAt: Date = Date(), days: Int = 112) throws -> [TokMonHeatmapDay] {
     let calendar = Calendar.current
     let endDay = calendar.startOfDay(for: endingAt)
     guard let startDay = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: endDay) else {
@@ -162,7 +162,7 @@ final class TokMonQueryStore {
       .text(sqlFormatter.string(from: startDay)),
       .text(sqlFormatter.string(from: calendar.date(byAdding: DateComponents(day: 1, second: -1), to: endDay) ?? endDay)),
     ]
-    appendOptionalFilters(source: source, model: model, tablePrefix: nil, whereSQL: &whereSQL, params: &params)
+    appendOptionalFilters(sources: sources, model: model, tablePrefix: nil, whereSQL: &whereSQL, params: &params)
 
     let rows = try requiredDatabase.queryRows("""
       SELECT strftime('%Y-%m-%d', period_start) as day,
@@ -686,8 +686,9 @@ final class TokMonQueryStore {
 
   private func appendOuterFilters(to sql: String, filter: TokMonQueryFilter) -> String {
     var clauses: [String] = []
-    if let source = filter.source, !source.isEmpty {
-      clauses.append("source = ?")
+    if !filter.sources.isEmpty {
+      let placeholders = Array(repeating: "?", count: filter.sources.count).joined(separator: ", ")
+      clauses.append("source IN (\(placeholders))")
     }
     if let model = filter.model, !model.isEmpty {
       clauses.append("model = ?")
@@ -700,8 +701,8 @@ final class TokMonQueryStore {
 
   private func appendOuterFilterParams(to params: [TokMonSQLValue], filter: TokMonQueryFilter) -> [TokMonSQLValue] {
     var result = params
-    if let source = filter.source, !source.isEmpty {
-      result.append(.text(source))
+    if !filter.sources.isEmpty {
+      result.append(contentsOf: filter.sources.map { .text($0) })
     }
     if let model = filter.model, !model.isEmpty {
       result.append(.text(model))
@@ -752,7 +753,7 @@ final class TokMonQueryStore {
       params.append(.text(filter.to))
     }
     var whereSQL = clauses.isEmpty ? "WHERE 1 = 1" : "WHERE \(clauses.joined(separator: " AND "))"
-    appendOptionalFilters(source: filter.source, model: filter.model, tablePrefix: resolvedTablePrefix, whereSQL: &whereSQL, params: &params)
+    appendOptionalFilters(sources: filter.sources, model: filter.model, tablePrefix: resolvedTablePrefix, whereSQL: &whereSQL, params: &params)
     return (whereSQL, params, resolvedTableName, resolvedTablePrefix, usesRollups)
   }
 
@@ -795,15 +796,16 @@ final class TokMonQueryStore {
   }
 
   private func appendOptionalFilters(
-    source: String?,
+    sources: [String],
     model: String?,
     tablePrefix: String?,
     whereSQL: inout String,
     params: inout [TokMonSQLValue],
   ) {
-    if let source, !source.isEmpty {
-      whereSQL += " AND \(column("source", tablePrefix: tablePrefix)) = ?"
-      params.append(.text(source))
+    if !sources.isEmpty {
+      let placeholders = Array(repeating: "?", count: sources.count).joined(separator: ", ")
+      whereSQL += " AND \(column("source", tablePrefix: tablePrefix)) IN (\(placeholders))"
+      params.append(contentsOf: sources.map { .text($0) })
     }
     if let model, !model.isEmpty {
       whereSQL += " AND \(column("model", tablePrefix: tablePrefix)) = ?"

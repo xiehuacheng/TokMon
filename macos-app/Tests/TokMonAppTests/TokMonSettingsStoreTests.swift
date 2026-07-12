@@ -25,7 +25,7 @@ import Testing
   store.draft.kimiCodePath = "~/custom-kimi"
   store.draft.openCodePath = "~/custom-opencode"
   store.draft.qwenCodePath = "~/custom-qwen"
-  store.draft.source = "codex"
+  store.draft.source = ["codex"]
   store.draft.rangeLabel = "today"
   store.draft.liveMode = false
   store.draft.interval = "hour"
@@ -52,7 +52,7 @@ import Testing
   #expect(config.sources["opencode"]?.path == "~/custom-opencode")
   #expect(config.sources["qwen-code"]?.path == "~/custom-qwen")
   #expect(config.sources["future-source"]?.path == "~/future")
-  #expect(uiState.source == "codex")
+  #expect(uiState.source == ["codex"])
   #expect(uiState.rangeLabel == "today")
   #expect(uiState.rangeHours == nil)
   #expect(uiState.rangeDays == nil)
@@ -73,7 +73,7 @@ import Testing
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "thisWeek",
@@ -148,7 +148,7 @@ import Testing
   let dataDir = try makeTokMonTempDir()
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "2026-05-01 00:00:00",
     to: "2026-05-02 23:59:59",
     rangeLabel: "thisMonth",

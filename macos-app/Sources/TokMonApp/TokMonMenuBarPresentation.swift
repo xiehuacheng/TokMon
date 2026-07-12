@@ -24,6 +24,9 @@ enum TokMonMenuBarPresentation {
     if items.requests {
       parts.append(TokMonValueFormatter.formatCompact(Double(summary.total.totalRequests)))
     }
+    if items.cacheHitRate {
+      parts.append(formatCacheHitRate(summary.total.cacheHitRate))
+    }
     let showLegacyWeekly = items.kimiQuota && !items.kimiWeeklyQuota && !items.kimiFiveHourQuota
     if items.kimiWeeklyQuota || showLegacyWeekly {
       if let weekly = quota?.weekly {
@@ -49,6 +52,13 @@ enum TokMonMenuBarPresentation {
       return "TokMon"
     }
     return "TokMon \(title)"
+  }
+
+  private static func formatCacheHitRate(_ value: Double?) -> String {
+    guard let value else {
+      return "-"
+    }
+    return String(format: "%.1f%%", value * 100)
   }
 
   private static func estimatedCost(

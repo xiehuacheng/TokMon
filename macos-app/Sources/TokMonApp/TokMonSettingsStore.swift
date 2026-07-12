@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class TokMonSettingsStore: ObservableObject {
@@ -30,7 +31,27 @@ final class TokMonSettingsStore: ObservableObject {
   func save() async throws {
     try await runBusyAction {
       try await engineActor.saveSettings(draft: draft)
+    }
+    applyLaunchAtLogin(draft.launchAtLogin)
+    if errorMessage == nil {
       statusMessage = "Settings saved."
+    }
+  }
+
+  private func applyLaunchAtLogin(_ enabled: Bool) {
+    let service = SMAppService.mainApp
+    do {
+      if enabled {
+        if service.status != .enabled {
+          try service.register()
+        }
+      } else {
+        if service.status == .enabled {
+          try service.unregister()
+        }
+      }
+    } catch {
+      errorMessage = "Could not change login item: \(error.localizedDescription)"
     }
   }
 
@@ -80,6 +101,7 @@ struct TokMonSettingsDraft: Equatable {
   var cacheReadRate = TokMonUIState.default.costRates.cacheRead
   var modelPricing = TokMonUIState.default.modelPricing
   var kimiQuotaRefreshInterval: Int = TokMonUIState.default.kimiQuotaRefreshInterval
+  var launchAtLogin: Bool = TokMonUIState.default.launchAtLogin
   var availableModels: [TokMonModelOption] = []
 }
 

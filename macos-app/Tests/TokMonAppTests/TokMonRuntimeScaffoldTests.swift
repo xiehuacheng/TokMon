@@ -195,7 +195,7 @@ private func makeUserDefaultsSuite(name: String) -> UserDefaults {
   let summary = try engine.queryStore.summary(filter: TokMonQueryFilter(
     from: "2026-05-14 08:00:00",
     to: "2026-05-14 10:00:00",
-    source: "codex",
+    sources: ["codex"],
     model: nil,
   ))
 

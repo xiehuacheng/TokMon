@@ -8,7 +8,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -73,7 +73,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -109,7 +109,7 @@ import Testing
 
   #expect(store.errorMessage == nil)
   #expect(store.snapshot.scanStatus?.processed == 0)
-  #expect(store.snapshot.dashboardState?.source == "codex")
+  #expect(store.snapshot.dashboardState?.source == ["codex"])
   #expect(store.snapshot.dashboardState?.from == "2026-05-14 00:00:00")
   #expect(store.snapshot.dashboardState?.to == "2026-05-14 10:05:59")
   #expect(store.snapshot.summary?.total.totalRequests == 1)
@@ -128,7 +128,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -181,7 +181,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "24H",
@@ -217,7 +217,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -250,7 +250,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "thisWeek",
@@ -281,7 +281,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "thisWeek",
@@ -317,7 +317,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "thisMonth",
@@ -353,7 +353,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "codex",
+    source: ["codex"],
     from: "",
     to: "",
     rangeLabel: "all",
@@ -385,7 +385,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "24H",
@@ -429,7 +429,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -483,7 +483,7 @@ import Testing
     ],
   ))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -523,7 +523,7 @@ import Testing
   for (label, expectedFrom, expectedTo, expectedInterval) in cases {
     let preset = TokMonRangePreset(label: label)
     let state = TokMonStatsSnapshotBuilder.currentDashboardState(from: TokMonUIState(
-      source: "",
+      source: [],
       from: "",
       to: "",
       rangeLabel: label,
@@ -550,13 +550,107 @@ import Testing
     "thisWeek",
     "thisMonth",
     "all",
+    "custom",
   ])
   #expect(TokMonRangePreset.allCases.map(\.displayLabel) == [
     "Today",
     "This Week",
     "This Month",
     "All",
+    "Custom",
   ])
+}
+
+@Test func customRangePresetResolvesFromLabel() {
+  #expect(TokMonRangePreset(label: "custom") == .custom)
+  #expect(TokMonRangePreset(label: "Custom") == .thisWeek)
+}
+
+@MainActor
+@Test func statsStoreUpdatesNativeDashboardCustomRangeSelection() async throws {
+  let dataDir = try makeTokMonTempDir()
+  let configStore = TokMonConfigStore(dataDir: dataDir)
+  try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
+  try configStore.saveUIState(TokMonUIState(
+    source: [],
+    from: "",
+    to: "",
+    rangeLabel: "thisWeek",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "round",
+    interval: "day",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ))
+  let engine = TokMonEngine(configStore: configStore, database: try TokMonDatabase(appDataDir: dataDir))
+  let store = TokMonStatsStore(
+    engine: engine,
+    nowProvider: { makeLocalDate("2026-05-14 10:05:30") },
+  )
+
+  await store.updateDashboardCustomRange(from: "2026-05-01 00:00:00", to: "2026-05-05 23:59:59")
+
+  #expect(store.snapshot.dashboardState?.rangeLabel == "custom")
+  #expect(store.snapshot.dashboardState?.from == "2026-05-01 00:00:00")
+  #expect(store.snapshot.dashboardState?.to == "2026-05-05 23:59:59")
+  #expect(store.snapshot.dashboardState?.interval == "day")
+  #expect(store.snapshot.dashboardState?.rangeMode == "round")
+  #expect(store.snapshot.previousSummary == nil)
+
+  let persistedState = try configStore.loadUIState()
+  #expect(persistedState.rangeLabel == "custom")
+  #expect(persistedState.from == "2026-05-01 00:00:00")
+  #expect(persistedState.to == "2026-05-05 23:59:59")
+  #expect(persistedState.interval == "day")
+  #expect(persistedState.rangeMode == "round")
+}
+
+@Test func dashboardCustomRangeResolvesStoredBoundaries() {
+  let now = makeLocalDate("2026-05-14 10:05:30")
+  let state = TokMonStatsSnapshotBuilder.currentDashboardState(from: TokMonUIState(
+    source: [],
+    from: "2026-05-01 00:00:00",
+    to: "2026-05-05 23:59:59",
+    rangeLabel: "custom",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "exact",
+    interval: "day",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ), now: now)
+
+  #expect(state.rangeLabel == "custom")
+  #expect(state.interval == "day")
+  #expect(state.from == "2026-05-01 00:00:00")
+  #expect(state.to == "2026-05-05 23:59:59")
+}
+
+@Test func dashboardCustomRangeFallsBackToThisWeekWhenEmpty() {
+  let now = makeLocalDate("2026-05-14 10:05:30")
+  let state = TokMonStatsSnapshotBuilder.currentDashboardState(from: TokMonUIState(
+    source: [],
+    from: "",
+    to: "",
+    rangeLabel: "custom",
+    rangeHours: nil,
+    rangeDays: nil,
+    liveMode: true,
+    rangeMode: "exact",
+    interval: "day",
+    activeSeries: "total",
+    refreshRate: 3000,
+    costRates: .zero,
+  ), now: now)
+
+  #expect(state.rangeLabel == "custom")
+  #expect(state.from == "2026-05-11 00:00:00")
+  #expect(state.to == "2026-05-14 10:05:59")
 }
 
 @MainActor
@@ -565,7 +659,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "2026-05-01 00:00:00",
     to: "2026-05-02 23:59:59",
     rangeLabel: "all",
@@ -596,7 +690,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "all",
@@ -634,7 +728,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -679,7 +773,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",
@@ -727,7 +821,7 @@ import Testing
   let configStore = TokMonConfigStore(dataDir: dataDir)
   try configStore.saveConfig(emptyTokMonConfig(dataDir: dataDir))
   try configStore.saveUIState(TokMonUIState(
-    source: "",
+    source: [],
     from: "",
     to: "",
     rangeLabel: "today",

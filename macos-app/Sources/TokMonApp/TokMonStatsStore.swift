@@ -263,6 +263,26 @@ final class TokMonStatsStore: ObservableObject {
     }
   }
 
+  func updateDashboardCustomRange(from: String, to: String) async {
+    guard let nativeEngineActor else { return }
+    guard !isUpdatingDashboardRange else { return }
+
+    isUpdatingDashboardRange = true
+    defer { isUpdatingDashboardRange = false }
+    do {
+      snapshot = try await nativeEngineActor.updateDashboardCustomRangeAndRefreshRangeStats(
+        from: from,
+        to: to,
+        preserving: snapshot,
+        now: nowProvider(),
+      )
+      snapshot.kimiQuotaSnapshot = self.kimiQuotaSnapshot
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   func selectUsageSession(source: String, sessionId: String) {
     guard usesNativeEngine else { return }
     selectedUsageSession = TokMonUsageSessionSelection(source: source, sessionId: sessionId)
@@ -513,13 +533,14 @@ enum TokMonStatsSnapshotBuilder {
   static func previousFilter(from dashboardState: TokMonDashboardState) -> TokMonQueryFilter? {
     let preset = TokMonRangePreset(label: dashboardState.rangeLabel)
     guard preset != .all,
+          preset != .custom,
           let range = previousRange(for: preset, from: dashboardState.from, to: dashboardState.to) else {
       return nil
     }
     return TokMonQueryFilter(
       from: range.from,
       to: range.to,
-      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      sources: dashboardState.source,
       model: nil,
     )
   }
@@ -553,6 +574,13 @@ enum TokMonStatsSnapshotBuilder {
       return (formattedDashboardBoundary(start, seconds: 0), currentEnd)
     case .all:
       return ("0001-01-01 00:00:00", "9999-12-31 23:59:59")
+    case .custom:
+      if !uiState.from.isEmpty, !uiState.to.isEmpty {
+        return (uiState.from, uiState.to)
+      }
+      let weekdayIndex = (calendar.component(.weekday, from: today) + 5) % 7
+      let start = calendar.date(byAdding: .day, value: -weekdayIndex, to: today) ?? today
+      return (formattedDashboardBoundary(start, seconds: 0), currentEnd)
     }
   }
 
@@ -575,7 +603,7 @@ enum TokMonStatsSnapshotBuilder {
       component = .day
     case .thisMonth:
       component = .month
-    case .all:
+    case .all, .custom:
       return nil
     }
 

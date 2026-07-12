@@ -105,6 +105,7 @@ docs/
 
 - 提交前至少运行 `cd macos-app && swift test` 和 `git diff --check`。
 - 修改 TokMon 时验证原生 popover、设置窗口、扫描/重建、summary/trend/heatmap/records/sessions/quota 相关路径。
+- 涉及 `TokMonSettingsWindow.swift` 或 `StatusPopoverView.swift` 的文案、Section 名称、标签文案变更时，同步检查并更新 `TokMonPackagingTests.swift` 中对源码字符串的断言。
 - 涉及独立版 App 的改动需要重新跑 `bash macos-app/scripts/build-app.sh` 并启动 `macos-app/release/TokMon.app` 确认。
 
 ## 提交与 Pull Request 规范

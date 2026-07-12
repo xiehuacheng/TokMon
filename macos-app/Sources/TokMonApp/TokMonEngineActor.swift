@@ -31,6 +31,7 @@ actor TokMonEngineActor {
       cacheReadRate: uiState.costRates.cacheRead,
       modelPricing: uiState.modelPricing,
       kimiQuotaRefreshInterval: uiState.kimiQuotaRefreshInterval,
+      launchAtLogin: uiState.launchAtLogin,
       availableModels: models,
     )
   }
@@ -65,6 +66,29 @@ actor TokMonEngineActor {
     now: Date,
   ) throws -> TokMonStatsSnapshot {
     try updateDashboardRange(label: label)
+    return try refreshRangeStats(preserving: existingSnapshot, now: now)
+  }
+
+  func updateDashboardCustomRange(from: String, to: String) throws {
+    var uiState = try engine.configStore.loadUIState()
+    uiState.rangeLabel = TokMonRangePreset.custom.label
+    uiState.rangeHours = TokMonRangePreset.custom.hours
+    uiState.rangeDays = TokMonRangePreset.custom.days
+    uiState.from = from
+    uiState.to = to
+    uiState.liveMode = true
+    uiState.rangeMode = "round"
+    uiState.interval = TokMonRangePreset.custom.interval
+    try engine.configStore.saveUIState(uiState)
+  }
+
+  func updateDashboardCustomRangeAndRefreshRangeStats(
+    from: String,
+    to: String,
+    preserving existingSnapshot: TokMonStatsSnapshot,
+    now: Date,
+  ) throws -> TokMonStatsSnapshot {
+    try updateDashboardCustomRange(from: from, to: to)
     return try refreshRangeStats(preserving: existingSnapshot, now: now)
   }
 
@@ -128,7 +152,7 @@ actor TokMonEngineActor {
     let filter = TokMonQueryFilter(
       from: dashboardState.from,
       to: dashboardState.to,
-      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      sources: dashboardState.source,
       model: nil,
     )
     let summary = try engine.queryStore.summary(filter: filter, now: now)
@@ -179,7 +203,7 @@ actor TokMonEngineActor {
     let filter = TokMonQueryFilter(
       from: dashboardState.from,
       to: dashboardState.to,
-      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      sources: dashboardState.source,
       model: nil,
     )
     return try engine.queryStore.recordsForSession(
@@ -202,7 +226,7 @@ actor TokMonEngineActor {
     let filter = TokMonQueryFilter(
       from: dashboardState.from,
       to: dashboardState.to,
-      source: dashboardState.source.isEmpty ? nil : dashboardState.source,
+      sources: dashboardState.source,
       model: nil,
     )
     let summary = try engine.queryStore.summary(filter: filter, now: now)
@@ -210,7 +234,7 @@ actor TokMonEngineActor {
       .previousFilter(from: dashboardState)
       .map { try engine.queryStore.summary(filter: $0, now: now) }
     let trend = try engine.queryStore.trend(filter: filter, interval: dashboardState.interval, now: now)
-    let heatmap = try engine.queryStore.heatmap(source: filter.source, model: filter.model, endingAt: now)
+    let heatmap = try engine.queryStore.heatmap(sources: filter.sources, model: filter.model, endingAt: now)
     let records = try engine.queryStore.records(filter: filter, page: 0, limit: recordsLimit)
     let sessions = try engine.queryStore.sessions(filter: filter, limit: sessionsLimit)
     let selectedRecords = try selectedSession.map {
@@ -360,6 +384,7 @@ actor TokMonEngineActor {
       menuBarDisplayItems: draft.menuBarDisplayItems,
       refreshRate: max(1000, draft.refreshRate),
       kimiQuotaRefreshInterval: max(0, draft.kimiQuotaRefreshInterval),
+      launchAtLogin: draft.launchAtLogin,
       costRates: TokMonCostRates(
         input: max(0, draft.inputRate),
         output: max(0, draft.outputRate),

@@ -123,7 +123,7 @@ import Testing
 
   let metadata = try #require(try database.sessionMetadata(source: "codex", id: "named-session"))
   let records = try TokMonQueryStore(database: database).records(
-    filter: TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", source: nil, model: nil),
+    filter: TokMonQueryFilter(from: "2026-05-14 00:00:00", to: "2026-05-15 00:00:00", sources: [], model: nil),
     page: 0,
     limit: 10,
   )
