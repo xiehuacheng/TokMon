@@ -477,12 +477,13 @@ final class TokMonQueryStore {
   }
 
   private func summaryFromYearRollups(filter: TokMonQueryFilter) throws -> TokMonSummary {
-    let filteredSQL = appendOuterFilters(
-      to: """
+    let baseSQL = """
       SELECT source, model, requests, input_tokens, output_tokens, cache_creation, cache_read, reasoning_tokens, cache_hit_input_tokens, cache_hit_cache_read
       FROM tokmon_usage_rollups
       WHERE grain = 'year'
-      """,
+      """
+    let filteredSQL = appendOuterFilters(
+      to: "SELECT * FROM (\(baseSQL)) rollup_years",
       filter: filter,
     )
     let filteredParams = appendOuterFilterParams(to: [], filter: filter)

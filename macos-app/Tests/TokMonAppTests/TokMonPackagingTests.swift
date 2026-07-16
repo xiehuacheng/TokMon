@@ -648,7 +648,7 @@ import Testing
   #expect(main.contains("width: statusPanelContentWidth + statusPanelShadowPadding * 2,"))
   #expect(main.contains("height: statusPanelHeight + statusPanelShadowPadding"))
   #expect(main.contains("let x = mainX - sessionBubbleWidth - sessionBubbleGutter - statusPanelShadowPadding"))
-  #expect(main.contains("let y = screenFrame.maxY"))
+  #expect(main.contains("let y = screen.visibleFrame.maxY - panelSize.height + 5"))
   #expect(!main.contains("adjustedFrame.size.height += statusPanelShadowPadding"))
   #expect(!main.contains("adjustedFrame.origin.y -= statusPanelShadowPadding"))
   #expect(main.contains("let mainPanelWidth: CGFloat = statusPanelMainWidth"))
@@ -897,7 +897,7 @@ import Testing
   let settings = try String(contentsOf: settingsURL, encoding: .utf8)
 
   #expect(settings.contains("let window = SettingsWindow("))
-  #expect(settings.contains("styleMask: [.titled, .fullSizeContentView]"))
+  #expect(settings.contains("styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel]"))
   #expect(settings.contains("window.titleVisibility = .hidden"))
   #expect(settings.contains("window.titlebarAppearsTransparent = true"))
   #expect(settings.contains("window.isOpaque = false"))
@@ -920,7 +920,9 @@ import Testing
   #expect(settings.contains("private final class SettingsHostingView<Content: View>: NSHostingView<Content>"))
   #expect(settings.contains("return bounds.contains(point) ? self : nil"))
   #expect(settings.contains("override func scrollWheel(with event: NSEvent)"))
-  #expect(settings.contains("private final class SettingsWindow: NSWindow"))
+  #expect(settings.contains("private final class SettingsWindow: NSPanel"))
+  #expect(settings.contains("override var canBecomeKey: Bool { true }"))
+  #expect(settings.contains("override var canBecomeMain: Bool { false }"))
   #expect(settings.contains("override func sendEvent(_ event: NSEvent)"))
   #expect(settings.contains("case .scrollWheel"))
   #expect(settings.contains("forwardScrollWheelToContentScroller(event)"))
@@ -1009,10 +1011,10 @@ import Testing
   let runtime = try String(contentsOf: runtimeURL, encoding: .utf8)
 
   #expect(runtime.contains("private var settingsWindowPresentationActive = false"))
-  #expect(runtime.contains("if !wasVisible {"))
   #expect(runtime.contains("settingsWindowPresentationActive = true"))
-  #expect(runtime.contains("if self?.settingsWindowPresentationActive == true"))
-  #expect(!runtime.contains("if !wasVisible && statusPanel?.isVisible != true"))
+  #expect(runtime.contains("self?.settingsWindowPresentationActive = false"))
+  #expect(!runtime.contains("setActivationPolicy(.regular)"))
+  #expect(!runtime.contains("setActivationPolicy(.accessory)"))
 }
 
 @Test func statusPanelIgnoresClicksInsideSettingsWindow() throws {
@@ -1119,7 +1121,7 @@ import Testing
   #expect(main.contains("let panelSize = NSSize("))
   #expect(main.contains("width: statusPanelContentWidth + statusPanelShadowPadding * 2,"))
   #expect(main.contains("height: statusPanelHeight + statusPanelShadowPadding"))
-  #expect(main.contains("let y = screenFrame.maxY"))
+  #expect(main.contains("let y = screen.visibleFrame.maxY - panelSize.height + 5"))
   #expect(!main.contains("let y = buttonFrameInScreen.minY - panelSize.height"))
   #expect(view.contains(".frame(width: statusPanelContentWidth + statusPanelShadowPadding * 2, height: statusPanelHeight + statusPanelShadowPadding, alignment: .topLeading)"))
   #expect(view.contains(".frame(width: statusPanelMainWidth, height: statusPanelHeight)"))

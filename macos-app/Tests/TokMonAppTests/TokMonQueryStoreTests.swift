@@ -357,6 +357,27 @@ import Testing
   #expect(boundedSummary.total.totalRequests == 1)
 }
 
+@Test func queryStoreAllRangeAppliesSourceFilterWithoutSyntaxError() throws {
+  let dataDir = try makeTokMonTempDir()
+  let db = try TokMonDatabase(appDataDir: dataDir)
+  _ = try db.insertUsage(TokMonUsageRecord(source: "claude-code", sessionId: "c1", model: "claude-a", inputTokens: 8, outputTokens: 4, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T01:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "codex", sessionId: "s1", model: "gpt-a", inputTokens: 10, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T02:00:00.000Z"))
+  _ = try db.insertUsage(TokMonUsageRecord(source: "kimi-code", sessionId: "k1", model: "kimi-a", inputTokens: 5, outputTokens: 1, cacheCreation: 0, cacheRead: 0, reasoningTokens: 0, createdAt: "2026-05-14T03:00:00.000Z"))
+  let store = TokMonQueryStore(database: db)
+  let filter = TokMonQueryFilter(
+    from: "0001-01-01 00:00:00",
+    to: "9999-12-31 23:59:59",
+    sources: ["claude-code", "codex"],
+    model: nil,
+  )
+
+  let summary = try store.summary(filter: filter)
+
+  #expect(summary.total.totalRequests == 2)
+  #expect(summary.total.totalInput == 18)
+  #expect(summary.bySource.map(\.source).sorted() == ["claude-code", "codex"])
+}
+
 @Test func queryStoreReturnsRecordsForSpecificUsageSession() throws {
   let dataDir = try makeTokMonTempDir()
   let db = try TokMonDatabase(appDataDir: dataDir)

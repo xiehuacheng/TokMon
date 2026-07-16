@@ -601,14 +601,13 @@ final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
 
   func show() {
     if let window {
-      NSRunningApplication.current.activate(options: .activateAllWindows)
       present(window)
       return
     }
 
     let window = SettingsWindow(
       contentRect: NSRect(x: 0, y: 0, width: 660, height: 580),
-      styleMask: [.titled, .fullSizeContentView],
+      styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
       backing: .buffered,
       defer: false,
     )
@@ -620,11 +619,11 @@ final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
     window.contentView = SettingsHostingView(rootView: TokMonSettingsWindow(
       store: settingsStore,
       onSaveAndClose: { [weak self] in
-        self?.window?.close()
         self?.onSettingsSaved?()
+        self?.hideSettings()
       },
       onCancel: { [weak self] in
-        self?.window?.close()
+        self?.hideSettings()
       },
     ))
     window.isOpaque = false
@@ -637,7 +636,6 @@ final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
     window.delegate = self
     window.initialFirstResponder = nil
     self.window = window
-    NSRunningApplication.current.activate(options: .activateAllWindows)
     present(window)
   }
 
@@ -657,12 +655,25 @@ final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
     return window.frame.contains(NSEvent.mouseLocation)
   }
 
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    hideSettings()
+    return false
+  }
+
   func windowWillClose(_ notification: Notification) {
+    onWindowClosed?()
+  }
+
+  private func hideSettings() {
+    window?.orderOut(nil)
     onWindowClosed?()
   }
 }
 
-private final class SettingsWindow: NSWindow {
+private final class SettingsWindow: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { false }
+
   override func sendEvent(_ event: NSEvent) {
     switch event.type {
     case .scrollWheel:

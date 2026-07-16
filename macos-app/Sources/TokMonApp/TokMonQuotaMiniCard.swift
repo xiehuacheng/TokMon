@@ -48,6 +48,7 @@ struct TokMonQuotaMiniCard: View {
               RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(quotaColor(for: window.percentUsed))
                 .frame(width: geo.size.width * min(window.percentUsed / 100, 1))
+                .animation(.easeInOut(duration: 0.25), value: window.percentUsed)
             }
           }
       }

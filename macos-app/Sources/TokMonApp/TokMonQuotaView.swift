@@ -70,7 +70,9 @@ struct TokMonQuotaView: View {
 
       ForEach(accounts) { account in
         accountCard(account)
+          .transition(.opacity.combined(with: .scale(scale: 0.96)))
       }
+      .animation(.easeInOut(duration: 0.25), value: accounts.map(\.id))
     }
     .padding(9)
     .hudCard()

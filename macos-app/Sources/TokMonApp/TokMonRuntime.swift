@@ -14,7 +14,6 @@ final class TokMonRuntime: ObservableObject {
   private var started = false
   private var sourceWatcher: TokMonSourceWatcher?
   private var fileWatcher: TokMonFileWatcher?
-  private var windowPresentationCount = 0
   private var settingsWindowPresentationActive = false
 
   init() {
@@ -56,10 +55,7 @@ final class TokMonRuntime: ObservableObject {
       fileWatcher = watcherForFileEvents
       settingsWindowController = controller
       settingsWindowController?.onWindowClosed = { [weak self] in
-        if self?.settingsWindowPresentationActive == true {
-          self?.settingsWindowPresentationActive = false
-          self?.endWindowPresentation()
-        }
+        self?.settingsWindowPresentationActive = false
       }
     } catch {
       tokMonLog("TokMon native TokMon engine failed to initialize: \(error.localizedDescription)")
@@ -108,31 +104,12 @@ final class TokMonRuntime: ObservableObject {
   }
 
   func openSettings() {
-    let wasVisible = settingsWindowController?.isWindowVisible == true
-    if !wasVisible {
-      settingsWindowPresentationActive = true
-      beginWindowPresentation()
-    }
+    settingsWindowPresentationActive = true
     settingsWindowController?.show()
   }
 
   func isSettingsWindowEvent(_ event: NSEvent) -> Bool {
     settingsWindowController?.containsEvent(event) == true
-  }
-
-  func beginWindowPresentation() {
-    let wasActive = NSApplication.shared.isActive
-    let policyResult = NSApplication.shared.setActivationPolicy(.regular)
-    windowPresentationCount += 1
-    tokMonLog("TokMon beginWindowPresentation: wasActive=\(wasActive), policyResult=\(policyResult), count=\(windowPresentationCount)")
-  }
-
-  func endWindowPresentation() {
-    windowPresentationCount = max(0, windowPresentationCount - 1)
-    if windowPresentationCount == 0 {
-      NSApplication.shared.setActivationPolicy(.accessory)
-    }
-    tokMonLog("TokMon endWindowPresentation: count=\(windowPresentationCount), isActive=\(NSApplication.shared.isActive)")
   }
 
   func quit() {

@@ -99,6 +99,7 @@ struct StatusPopoverView: View {
   private var errorBanner: some View {
     if let errorMessage = stats.errorMessage {
       Text(errorMessage)
+        .transition(.move(edge: .top).combined(with: .opacity))
         .font(.system(size: 12, weight: .semibold, design: .rounded))
         .foregroundStyle(TokMonGlass.danger)
         .lineLimit(2)
@@ -139,7 +140,10 @@ struct StatusPopoverView: View {
         selectionNamespace: pageRailSelectionNamespace,
         onSelect: selectPage,
       )
-      rangeControl
+      if selectedPage != .quota {
+        rangeControl
+          .transition(.move(edge: .top).combined(with: .opacity))
+      }
     }
     .padding(.horizontal, 11)
     .padding(.top, 11)
@@ -150,6 +154,7 @@ struct StatusPopoverView: View {
     VStack(alignment: .leading, spacing: 10) {
       errorBanner
       currentPage
+        .transition(.opacity)
     }
   }
 
@@ -331,7 +336,9 @@ struct StatusPopoverView: View {
             formatCompact: TokMonValueFormatter.formatCompact,
             formatCost: TokMonValueFormatter.formatCost,
             onToggleDetails: {
-              expandedRequestId = expandedRequestId == row.id ? nil : row.id
+              withAnimation(TokMonMotion.gentleSpring) {
+                expandedRequestId = expandedRequestId == row.id ? nil : row.id
+              }
             },
             onJumpToSession: {
               jumpToSession(source: row.source, sessionId: row.sessionId)
@@ -490,7 +497,9 @@ struct StatusPopoverView: View {
                   formatCompact: TokMonValueFormatter.formatCompact,
                   formatCost: TokMonValueFormatter.formatCost,
                   onToggleDetails: {
-                    expandedRequestId = expandedRequestId == row.id ? nil : row.id
+                    withAnimation(TokMonMotion.gentleSpring) {
+                      expandedRequestId = expandedRequestId == row.id ? nil : row.id
+                    }
                   },
                   onJumpToSession: nil,
                 )
@@ -1294,6 +1303,8 @@ private struct GlassRowButtonStyle: ButtonStyle {
           .fill(Color.clear)
           .shadow(color: TokMonGlass.ambientShadow, radius: 6, x: 0, y: 2)
       }
+      .animation(.easeInOut(duration: 0.2), value: isSelected)
+      .animation(.easeInOut(duration: 0.15), value: isHovered)
       .onHover { isHovered = $0 }
   }
 }
@@ -1461,6 +1472,7 @@ private struct SystemMenuPageRail: View {
         }
       }
     }
+    .animation(.easeInOut(duration: 0.2), value: selectedPage)
     .padding(3)
     .background {
       if #available(macOS 26.0, *) {
@@ -2365,6 +2377,7 @@ private struct RequestRowView: View {
           DetailLine(label: "Cache Read", value: formatCompact(Double(row.cacheRead)))
           DetailLine(label: "Reasoning", value: formatCompact(Double(row.reasoningTokens)))
         }
+        .transition(.move(edge: .top).combined(with: .opacity))
       }
     }
     .padding(14)

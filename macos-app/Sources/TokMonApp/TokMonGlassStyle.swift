@@ -138,6 +138,7 @@ private struct TokMonSelectionPillModifier: ViewModifier {
         .overlay {
           shape.strokeBorder(isSelected ? TokMonGlass.accent.opacity(0.45) : Color.black.opacity(0.08), lineWidth: 0.8)
         }
+        .animation(.easeInOut(duration: 0.18), value: isSelected)
     }
   }
 }

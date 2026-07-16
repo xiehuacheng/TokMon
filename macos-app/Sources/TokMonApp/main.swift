@@ -275,7 +275,7 @@ final class TokMonApplicationDelegate: NSObject, NSApplicationDelegate {
     let maxMainX = screenFrame.maxX - mainPanelWidth - 8
     let mainX = min(max(preferredMainX, minMainX), maxMainX)
     let x = mainX - sessionBubbleWidth - sessionBubbleGutter - statusPanelShadowPadding
-    let y = screenFrame.maxY - panelSize.height
+    let y = screen.visibleFrame.maxY - panelSize.height + 5
 
     return NSRect(origin: NSPoint(x: x, y: y), size: panelSize)
   }
