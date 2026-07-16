@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TokMon Web</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+        .header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 20px;
+            color: #58a6ff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .header-actions { display: flex; gap: 8px; }
+        .btn {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .btn:hover { background: #30363d; border-color: #8b949e; }
+        .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+        .btn-primary:hover { background: #2ea043; }
+        .container { padding: 24px; max-width: 1400px; margin: 0 auto; }
+        
+        /* Range selector */
+        .range-selector {
+            display: flex;
+            gap: 4px;
+            background: #161b22;
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+        .range-btn {
+            padding: 6px 16px;
+            border: none;
+            background: transparent;
+            color: #8b949e;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .range-btn.active { background: #238636; color: #fff; }
+        .range-btn:hover:not(.active) { color: #c9d1d9; background: #21262d; }
+
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        .card:hover { border-color: #58a6ff; }
+        .card-label { font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+        .card-value { font-size: 24px; font-weight: 600; color: #c9d1d9; }
+        .card-value.tokens { color: #58a6ff; }
+        .card-value.cost { color: #3fb950; }
+        .card-value.requests { color: #d29922; }
+        .card-value.cache { color: #a371f7; }
+
+        /* Charts */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 20px 0;
+        }
+        .chart-container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .chart-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #c9d1d9;
+            margin-bottom: 12px;
+        }
+        .chart-wrapper { position: relative; height: 250px; }
+        .chart-wrapper canvas { max-height: 250px; }
+
+        /* Heatmap */
+        .heatmap-container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: 40px repeat(24, 1fr);
+            gap: 2px;
+            margin-top: 8px;
+        }
+        .heatmap-label { font-size: 10px; color: #8b949e; display: flex; align-items: center; justify-content: center; }
+        .heatmap-cell {
+            aspect-ratio: 1;
+            border-radius: 2px;
+            background: #21262d;
+            min-width: 0;
+            transition: background 0.2s;
+        }
+        .heatmap-cell:hover { border: 1px solid #58a6ff; }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            font-size: 11px;
+            color: #8b949e;
+        }
+        .heatmap-legend-box { width: 12px; height: 12px; border-radius: 2px; }
+
+        /* Tables */
+        .table-container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+            overflow-x: auto;
+        }
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .search-box {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            width: 250px;
+        }
+        .search-box:focus { outline: none; border-color: #58a6ff; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #30363d;
+            color: #8b949e;
+            font-weight: 500;
+        }
+        td {
+            padding: 8px;
+            border-bottom: 1px solid #21262d;
+        }
+        tr:hover td { background: #21262d; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .badge-claude { background: #d29922; color: #0d1117; }
+        .badge-codex { background: #58a6ff; color: #0d1117; }
+        .badge-kimi { background: #a371f7; color: #fff; }
+        .badge-qwen { background: #3fb950; color: #0d1117; }
+        .badge-opencode { background: #f85149; color: #fff; }
+        .badge-default { background: #8b949e; color: #0d1117; }
+        .num { font-family: 'SF Mono', 'Fira Code', monospace; text-align: right; }
+
+        /* Distribution */
+        .dist-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 20px 0;
+        }
+        .dist-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0;
+            font-size: 13px;
+        }
+        .dist-bar-label { width: 120px; text-align: right; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .dist-bar-track { flex: 1; height: 20px; background: #21262d; border-radius: 4px; overflow: hidden; }
+        .dist-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+        .dist-bar-value { width: 80px; text-align: right; font-family: monospace; color: #c9d1d9; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #8b949e;
+        }
+        .empty-state h3 { color: #c9d1d9; margin-bottom: 8px; }
+
+        @media (max-width: 768px) {
+            .chart-grid, .dist-grid { grid-template-columns: 1fr; }
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⚡ TokMon Web</h1>
+        <div class="header-actions">
+            <div class="range-selector">
+                <button class="range-btn" data-range="today" onclick="setRange('today')">今天</button>
+                <button class="range-btn active" data-range="week" onclick="setRange('week')">本周</button>
+                <button class="range-btn" data-range="month" onclick="setRange('month')">本月</button>
+                <button class="range-btn" data-range="all" onclick="setRange('all')">全部</button>
+            </div>
+            <button class="btn btn-primary" onclick="scanNow()">🔄 刷新数据</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Summary -->
+        <div class="summary-grid" id="summary">
+            <div class="card"><div class="card-label">Total Tokens</div><div class="card-value tokens" id="s-tokens">-</div></div>
+            <div class="card"><div class="card-label">Requests</div><div class="card-value requests" id="s-requests">-</div></div>
+            <div class="card"><div class="card-label">Input Tokens</div><div class="card-value" id="s-input">-</div></div>
+            <div class="card"><div class="card-label">Output Tokens</div><div class="card-value" id="s-output">-</div></div>
+            <div class="card"><div class="card-label">Cache Created</div><div class="card-value cache" id="s-cache-created">-</div></div>
+            <div class="card"><div class="card-label">Cache Read</div><div class="card-value cache" id="s-cache-read">-</div></div>
+        </div>
+
+        <!-- Charts -->
+        <div class="chart-grid">
+            <div class="chart-container">
+                <div class="chart-title">📈 Token 趋势</div>
+                <div class="chart-wrapper"><canvas id="trendChart"></canvas></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">🍩 按来源分布</div>
+                <div class="chart-wrapper"><canvas id="sourceChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Heatmap -->
+        <div class="heatmap-container">
+            <div class="chart-title">🗓️ 活动热力图（时段 x 星期）</div>
+            <div class="heatmap-grid" id="heatmap"></div>
+            <div class="heatmap-legend">
+                <span>少</span>
+                <div class="heatmap-legend-box" style="background: #21262d"></div>
+                <div class="heatmap-legend-box" style="background: #0e4429"></div>
+                <div class="heatmap-legend-box" style="background: #006d32"></div>
+                <div class="heatmap-legend-box" style="background: #26a641"></div>
+                <div class="heatmap-legend-box" style="background: #39d353"></div>
+                <span>多</span>
+            </div>
+        </div>
+
+        <!-- Distribution -->
+        <div class="dist-grid">
+            <div class="chart-container">
+                <div class="chart-title">📊 按来源</div>
+                <div id="dist-source"></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">🤖 按模型</div>
+                <div id="dist-model"></div>
+            </div>
+        </div>
+
+        <!-- Requests -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="chart-title" style="margin:0">📋 请求明细</div>
+                <input type="text" class="search-box" id="search-requests" placeholder="搜索模型/session..." oninput="loadRequests()">
+            </div>
+            <table>
+                <thead><tr><th>时间</th><th>来源</th><th>模型</th><th>Session</th><th>Input</th><th>Output</th><th>Total</th></tr></thead>
+                <tbody id="requests-tbody"></tbody>
+            </table>
+        </div>
+
+        <!-- Sessions -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="chart-title" style="margin:0">💬 Sessions</div>
+                <input type="text" class="search-box" id="search-sessions" placeholder="搜索 session..." oninput="loadSessions()">
+            </div>
+            <table>
+                <thead><tr><th>Session</th><th>来源</th><th>Requests</th><th>Total Tokens</th><th>Input</th><th>Output</th><th>First Seen</th><th>Last Seen</th></tr></thead>
+                <tbody id="sessions-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    let currentRange = "week";
+    let trendChart, sourceChart;
+
+    function formatNum(n) {
+        if (n == null) return "-";
+        if (n >= 1e9) return (n/1e9).toFixed(1) + "B";
+        if (n >= 1e6) return (n/1e6).toFixed(1) + "M";
+        if (n >= 1e3) return (n/1e3).toFixed(1) + "K";
+        return n.toString();
+    }
+
+    function formatTs(ts) {
+        if (!ts) return "-";
+        const d = new Date(ts * 1000);
+        return d.toLocaleString("zh-CN", {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+    }
+
+    function badgeClass(source) {
+        const map = {claude: "badge-claude", codex: "badge-codex", kimi: "badge-kimi", qwen: "badge-qwen", opencode: "badge-opencode"};
+        return map[source] || "badge-default";
+    }
+
+    function setRange(range) {
+        currentRange = range;
+        document.querySelectorAll(".range-btn").forEach(b => b.classList.toggle("active", b.dataset.range === range));
+        loadAll();
+    }
+
+    async function loadAll() {
+        await Promise.all([loadSummary(), loadTrend(), loadHeatmap(), loadDistribution(), loadRequests(), loadSessions()]);
+    }
+
+    async function loadSummary() {
+        const r = await fetch(`/api/summary?range=${currentRange}`);
+        const d = await r.json();
+        document.getElementById("s-tokens").textContent = formatNum(d.total_tokens);
+        document.getElementById("s-requests").textContent = formatNum(d.total_requests);
+        document.getElementById("s-input").textContent = formatNum(d.total_input);
+        document.getElementById("s-output").textContent = formatNum(d.total_output);
+        document.getElementById("s-cache-created").textContent = formatNum(d.total_cache_created);
+        document.getElementById("s-cache-read").textContent = formatNum(d.total_cache_read);
+    }
+
+    async function loadTrend() {
+        const r = await fetch(`/api/trend?range=${currentRange}`);
+        const data = await r.json();
+        const labels = data.map(d => d.day);
+        const tokens = data.map(d => d.tokens);
+        const requests = data.map(d => d.requests);
+        if (trendChart) trendChart.destroy();
+        trendChart = new Chart(document.getElementById("trendChart"), {
+            type: "line",
+            data: {
+                labels,
+                datasets: [
+                    { label: "Tokens", data: tokens, borderColor: "#58a6ff", backgroundColor: "rgba(88,166,255,0.1)", fill: true, tension: 0.3 },
+                    { label: "Requests", data: requests, borderColor: "#d29922", backgroundColor: "rgba(210,153,34,0.1)", fill: true, tension: 0.3, yAxisID: "y1" },
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                scales: {
+                    x: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } },
+                    y: { ticks: { color: "#8b949e", callback: formatNum }, grid: { color: "#21262d" } },
+                    y1: { position: "right", ticks: { color: "#8b949e" }, grid: { display: false } },
+                },
+                plugins: { legend: { labels: { color: "#c9d1d9" } } },
+            }
+        });
+    }
+
+    async function loadHeatmap() {
+        const r = await fetch("/api/heatmap");
+        const data = await r.json();
+        const grid = document.getElementById("heatmap");
+        grid.innerHTML = "";
+        // Header row
+        grid.appendChild(Object.assign(document.createElement("div"), { className: "heatmap-label" }));
+        for (let h = 0; h < 24; h++) {
+            const label = Object.assign(document.createElement("div"), { className: "heatmap-label", textContent: h + ":00" });
+            grid.appendChild(label);
+        }
+        // Day rows
+        const dayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+        let maxVal = 0;
+        const vals = [];
+        for (const [key, val] of Object.entries(data)) {
+            const [h, dow] = key.split("-");
+            vals.push({ h: parseInt(h), dow: parseInt(dow), val: val.count });
+            if (val.count > maxVal) maxVal = val.count;
+        }
+        const colorScale = (v) => {
+            if (v === 0) return "#21262d";
+            const ratio = Math.min(v / Math.max(maxVal, 1), 1);
+            if (ratio < 0.25) return "#0e4429";
+            if (ratio < 0.5) return "#006d32";
+            if (ratio < 0.75) return "#26a641";
+            return "#39d353";
+        };
+        for (let dow = 0; dow < 7; dow++) {
+            grid.appendChild(Object.assign(document.createElement("div"), { className: "heatmap-label", textContent: dayNames[dow] }));
+            for (let h = 0; h < 24; h++) {
+                const entry = vals.find(v => v.h === h && v.dow === dow);
+                const cell = Object.assign(document.createElement("div"), {
+                    className: "heatmap-cell",
+                    style: { background: colorScale(entry ? entry.val : 0) },
+                    title: `${dayNames[dow]} ${h}:00 - ${entry ? entry.val : 0} 次`,
+                });
+                grid.appendChild(cell);
+            }
+        }
+    }
+
+    async function loadDistribution() {
+        const r = await fetch("/api/distribution");
+        const data = await r.json();
+        const colors = ["#58a6ff", "#3fb950", "#d29922", "#a371f7", "#f85149", "#3fb950", "#58a6ff"];
+        function renderBars(containerId, items, colorKey) {
+            const container = document.getElementById(containerId);
+            if (!items.length) { container.innerHTML = "<div style='color:#8b949e;padding:20px;text-align:center'>暂无数据</div>"; return; }
+            const maxVal = Math.max(...items.map(i => i.tokens || 0));
+            container.innerHTML = items.map((item, i) => {
+                const pct = maxVal > 0 ? (item.tokens / maxVal * 100) : 0;
+                return `<div class="dist-bar">
+                    <div class="dist-bar-label" title="${item[colorKey] || ''}">${item[colorKey] || 'unknown'}</div>
+                    <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${colors[i % colors.length]}"></div></div>
+                    <div class="dist-bar-value">${formatNum(item.tokens)}</div>
+                </div>`;
+            }).join("");
+        }
+        renderBars("dist-source", data.by_source, "source");
+        renderBars("dist-model", data.by_model, "model");
+    }
+
+    async function loadRequests() {
+        const search = document.getElementById("search-requests").value;
+        const r = await fetch(`/api/requests?range=${currentRange}&search=${encodeURIComponent(search)}`);
+        const data = await r.json();
+        const tbody = document.getElementById("requests-tbody");
+        if (!data.data.length) { tbody.innerHTML = "<tr><td colspan='7' style='text-align:center;color:#8b949e;padding:20px'>暂无数据，请点击「刷新数据」</td></tr>"; return; }
+        tbody.innerHTML = data.data.map(r => `<tr>
+            <td>${formatTs(r.timestamp)}</td>
+            <td><span class="badge ${badgeClass(r.source)}">${r.source}</span></td>
+            <td>${r.model || "-"}</td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.session_name || r.session_id || ''}">${r.session_name || r.session_id || "-"}</td>
+            <td class="num">${formatNum(r.input_tokens)}</td>
+            <td class="num">${formatNum(r.output_tokens)}</td>
+            <td class="num">${formatNum(r.total_tokens)}</td>
+        </tr>`).join("");
+    }
+
+    async function loadSessions() {
+        const search = document.getElementById("search-sessions").value;
+        const r = await fetch(`/api/sessions?range=${currentRange}&search=${encodeURIComponent(search)}`);
+        const data = await r.json();
+        const tbody = document.getElementById("sessions-tbody");
+        if (!data.data.length) { tbody.innerHTML = "<tr><td colspan='8' style='text-align:center;color:#8b949e;padding:20px'>暂无数据</td></tr>"; return; }
+        tbody.innerHTML = data.data.map(s => `<tr>
+            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.session_id}">${s.session_name || s.session_id || "-"}</td>
+            <td><span class="badge ${badgeClass(s.source)}">${s.source}</span></td>
+            <td class="num">${s.requests}</td>
+            <td class="num">${formatNum(s.total_tokens)}</td>
+            <td class="num">${formatNum(s.total_input)}</td>
+            <td class="num">${formatNum(s.total_output)}</td>
+            <td>${formatTs(s.first_seen)}</td>
+            <td>${formatTs(s.last_seen)}</td>
+        </tr>`).join("");
+    }
+
+    async function scanNow() {
+        const btn = document.querySelector(".btn-primary");
+        btn.textContent = "⏳ 扫描中...";
+        btn.disabled = true;
+        try {
+            const r = await fetch("/api/scan", { method: "POST" });
+            const d = await r.json();
+            alert(d.status === "ok" ? `扫描完成！新增 ${d.new_records} 条记录` : `扫描失败: ${d.message}`);
+            loadAll();
+        } catch (e) {
+            alert("扫描失败: " + e.message);
+        } finally {
+            btn.textContent = "🔄 刷新数据";
+            btn.disabled = false;
+        }
+    }
+
+    // Init
+    loadAll();
+    </script>
+</body>
+</html>
