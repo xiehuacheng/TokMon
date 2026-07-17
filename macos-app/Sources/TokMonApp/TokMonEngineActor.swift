@@ -32,6 +32,7 @@ actor TokMonEngineActor {
       modelPricing: uiState.modelPricing,
       kimiQuotaRefreshInterval: uiState.kimiQuotaRefreshInterval,
       launchAtLogin: uiState.launchAtLogin,
+      sourceColors: uiState.sourceColors,
       availableModels: models,
     )
   }
@@ -393,8 +394,17 @@ actor TokMonEngineActor {
       ),
       modelPricing: normalizedModelPricing(draft.modelPricing),
       kimiAPIKeyAccounts: existingState.kimiAPIKeyAccounts,
-      selectedKimiAPIKeyID: existingState.selectedKimiAPIKeyID
+      selectedKimiAPIKeyID: existingState.selectedKimiAPIKeyID,
+      sourceColors: normalizedSourceColors(draft.sourceColors)
     )
+  }
+
+  private func normalizedSourceColors(_ colors: [String: TokMonSourceColor]) -> [String: TokMonSourceColor] {
+    var result = TokMonSourceColor.defaultColors
+    for (source, color) in colors where TokMonSourceColor.defaultColors.keys.contains(source) {
+      result[source] = color
+    }
+    return result
   }
 
   private func normalizedModelPricing(_ pricing: [String: TokMonCostRates]) -> [String: TokMonCostRates] {

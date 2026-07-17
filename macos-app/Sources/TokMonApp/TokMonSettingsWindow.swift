@@ -40,9 +40,25 @@ struct TokMonSettingsWindow: View {
 
               Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
                 ForEach(sourceOptions, id: \.0) { value, label in
-                  sourcePathRow(value: value, label: label, path: sourcePathBinding(for: value), placeholder: sourcePlaceholder(for: value))
+                  sourceRow(
+                    value: value,
+                    label: label,
+                    path: sourcePathBinding(for: value),
+                    placeholder: sourcePlaceholder(for: value)
+                  )
                 }
               }
+
+              HStack(spacing: 14) {
+                Spacer()
+                  .frame(width: 128)
+                Button("Reset Colors to Defaults") {
+                  store.draft.sourceColors = TokMonSourceColor.defaultColors
+                }
+                .tokMonGlassButton()
+                Spacer()
+              }
+              .padding(.top, 6)
             }
 
             SettingsSection("Menu Bar") {
@@ -327,7 +343,7 @@ struct TokMonSettingsWindow: View {
     )
   }
 
-  private func sourcePathRow(
+  private func sourceRow(
     value: String,
     label: String,
     path: Binding<String>,
@@ -344,7 +360,269 @@ struct TokMonSettingsWindow: View {
         .lineLimit(1)
         .frame(width: 100, alignment: .trailing)
       TextField(placeholder, text: path)
-        .settingsTextField(width: 420)
+        .settingsTextField(width: 360)
+      SourceColorPicker(selection: sourceColorBinding(for: value))
+        .frame(width: 44, height: 22, alignment: .leading)
+    }
+  }
+
+  private struct SourceColorPicker: View {
+    @Binding var selection: Color
+    @State private var isPresented = false
+
+    var body: some View {
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(selection)
+        .overlay(
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onTapGesture {
+          isPresented = true
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+          SourceColorEditor(
+            color: $selection,
+            onDone: { isPresented = false }
+          )
+          .frame(width: 180)
+          .padding(12)
+        }
+    }
+  }
+
+  private struct SourceColorEditor: View {
+    @Binding var color: Color
+    let onDone: () -> Void
+
+    @State private var hue: Double
+    @State private var saturation: Double
+    @State private var brightness: Double
+    @State private var alpha: Double
+    @State private var wheelImage: NSImage?
+
+    init(
+      color: Binding<Color>,
+      onDone: @escaping () -> Void
+    ) {
+      self._color = color
+      self.onDone = onDone
+
+      let nsColor = NSColor(color.wrappedValue)
+      var h: CGFloat = 0
+      var s: CGFloat = 0
+      var b: CGFloat = 1
+      var a: CGFloat = 1
+      nsColor.usingColorSpace(.deviceRGB)?.getHue(
+        &h,
+        saturation: &s,
+        brightness: &b,
+        alpha: &a
+      )
+      self._hue = State(initialValue: Double(h))
+      self._saturation = State(initialValue: Double(s))
+      self._brightness = State(initialValue: Double(b))
+      self._alpha = State(initialValue: Double(a))
+    }
+
+    var body: some View {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack {
+          Text("Color")
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(.primary)
+          Spacer()
+          Button("Done") { onDone() }
+            .tokMonGlassButton()
+        }
+
+        HStack(spacing: 12) {
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(color)
+            .frame(width: 44, height: 44)
+            .overlay(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+
+          VStack(spacing: 10) {
+            colorWheel
+            brightnessSlider
+          }
+          .frame(width: 120)
+        }
+      }
+      .padding(12)
+    }
+
+    private var colorWheel: some View {
+      GeometryReader { geometry in
+        let size = geometry.size
+        ZStack {
+          Canvas { context, _ in
+            if let wheelImage {
+              context.draw(
+                Image(nsImage: wheelImage),
+                in: CGRect(origin: .zero, size: size)
+              )
+            }
+          }
+
+          Circle()
+            .fill(Color.white)
+            .frame(width: 8, height: 8)
+            .shadow(color: .black.opacity(0.4), radius: 1, x: 0, y: 0)
+            .position(indicatorPosition(in: size))
+        }
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .gesture(
+          DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+              updateHSV(from: value.location, in: size)
+            }
+        )
+        .onAppear {
+          regenerateWheelImage(size: size)
+        }
+        .onChange(of: size) { _, newSize in
+          regenerateWheelImage(size: newSize)
+        }
+      }
+      .aspectRatio(1, contentMode: .fit)
+    }
+
+    private var brightnessSlider: some View {
+      HStack(spacing: 8) {
+        Text("B")
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .foregroundStyle(.primary)
+          .frame(width: 14, alignment: .leading)
+        Slider(value: $brightness, in: 0...1)
+          .controlSize(.small)
+          .onChange(of: brightness) { _, _ in
+            updateColor()
+          }
+      }
+    }
+
+    private func updateHSV(from point: CGPoint, in size: CGSize) {
+      let radius = min(size.width, size.height) / 2
+      let center = CGPoint(x: size.width / 2, y: size.height / 2)
+      let dx = point.x - center.x
+      let dy = point.y - center.y
+      let distance = hypot(dx, dy)
+
+      var normalizedHue = atan2(dy, dx) / (2 * .pi)
+      if normalizedHue < 0 {
+        normalizedHue += 1
+      }
+
+      hue = normalizedHue
+      saturation = min(1, distance / radius)
+      updateColor()
+    }
+
+    private func indicatorPosition(in size: CGSize) -> CGPoint {
+      let radius = min(size.width, size.height) / 2
+      let center = CGPoint(x: size.width / 2, y: size.height / 2)
+      let angle = hue * 2 * .pi
+      let distance = min(radius, saturation * radius)
+      return CGPoint(
+        x: center.x + distance * cos(angle),
+        y: center.y + distance * sin(angle)
+      )
+    }
+
+    private func updateColor() {
+      let nsColor = NSColor(
+        hue: hue,
+        saturation: saturation,
+        brightness: brightness,
+        alpha: alpha
+      )
+      color = TokMonSourceColor(color: Color(nsColor)).swiftUIColor
+    }
+
+    private func regenerateWheelImage(size: CGSize) {
+      wheelImage = Self.makeWheelImage(
+        size: size,
+        scale: NSScreen.main?.backingScaleFactor ?? 2
+      )
+    }
+
+    private static func makeWheelImage(size: CGSize, scale: CGFloat) -> NSImage? {
+      guard size.width > 0, size.height > 0 else { return nil }
+
+      let pixelWidth = max(1, Int(ceil(size.width * scale)))
+      let pixelHeight = max(1, Int(ceil(size.height * scale)))
+
+      guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: pixelWidth,
+        pixelsHigh: pixelHeight,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: pixelWidth * 4,
+        bitsPerPixel: 32
+      ) else {
+        return nil
+      }
+
+      guard let pixels = rep.bitmapData else { return nil }
+
+      let radius = min(size.width, size.height) / 2
+      let centerX = size.width / 2
+      let centerY = size.height / 2
+
+      for py in 0..<pixelHeight {
+        let y = (CGFloat(py) + 0.5) / scale
+        let dy = y - centerY
+        for px in 0..<pixelWidth {
+          let x = (CGFloat(px) + 0.5) / scale
+          let dx = x - centerX
+          let distance = hypot(dx, dy)
+
+          let offset = (py * pixelWidth + px) * 4
+          if distance > radius {
+            pixels[offset + 3] = 0
+            continue
+          }
+
+          let wheelHue = (atan2(dy, dx) + .pi) / (2 * .pi)
+          let wheelSaturation = min(1, distance / radius)
+          let (r, g, b) = hsvToRGB(h: wheelHue, s: wheelSaturation, v: 1)
+
+          pixels[offset] = UInt8(max(0, min(255, r * 255)))
+          pixels[offset + 1] = UInt8(max(0, min(255, g * 255)))
+          pixels[offset + 2] = UInt8(max(0, min(255, b * 255)))
+          pixels[offset + 3] = 255
+        }
+      }
+
+      let image = NSImage(size: size)
+      image.addRepresentation(rep)
+      return image
+    }
+
+    private static func hsvToRGB(h: Double, s: Double, v: Double) -> (Double, Double, Double) {
+      let c = v * s
+      let sector = (h * 6).truncatingRemainder(dividingBy: 6)
+      let x = c * (1 - abs((sector.truncatingRemainder(dividingBy: 2)) - 1))
+      let m = v - c
+
+      switch Int(sector) {
+      case 0: return (c + m, x + m, m)
+      case 1: return (x + m, c + m, m)
+      case 2: return (m, c + m, x + m)
+      case 3: return (m, x + m, c + m)
+      case 4: return (x + m, m, c + m)
+      default: return (c + m, m, x + m)
+      }
     }
   }
 
@@ -357,6 +635,17 @@ struct TokMonSettingsWindow: View {
     case "qwen-code": return $store.draft.qwenCodePath
     default: return .constant("")
     }
+  }
+
+  private func sourceColorBinding(for value: String) -> Binding<Color> {
+    Binding(
+      get: {
+        store.draft.sourceColors[value]?.swiftUIColor ?? TokMonSourceColor.defaultColors[value]?.swiftUIColor ?? .secondary
+      },
+      set: { color in
+        store.draft.sourceColors[value] = TokMonSourceColor(color: color)
+      }
+    )
   }
 
   private func sourcePlaceholder(for value: String) -> String {
@@ -640,9 +929,20 @@ final class TokMonSettingsWindowController: NSObject, NSWindowDelegate {
   }
 
   private func present(_ window: NSWindow) {
+    positionWindowOnCurrentScreen(window)
     window.level = .modalPanel
     window.makeKeyAndOrderFront(nil)
     window.orderFrontRegardless()
+  }
+
+  private func positionWindowOnCurrentScreen(_ window: NSWindow) {
+    let mouseLocation = NSEvent.mouseLocation
+    let screens = NSScreen.screens
+    let targetScreen = screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main ?? screens.first
+    guard let screen = targetScreen else { return }
+    // Place a corner on the target screen so window.center() centers on that screen.
+    window.setFrameOrigin(screen.frame.origin)
+    window.center()
   }
 
   func containsEvent(_ event: NSEvent) -> Bool {

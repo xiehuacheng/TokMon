@@ -227,3 +227,23 @@ extension View {
     }
   }
 }
+
+extension TokMonSourceColor {
+  var swiftUIColor: Color {
+    Color(red: red, green: green, blue: blue, opacity: alpha)
+  }
+
+  init(color: Color) {
+    let nsColor = NSColor(color)
+    var r: CGFloat = 0
+    var g: CGFloat = 0
+    var b: CGFloat = 0
+    var a: CGFloat = 0
+    nsColor.usingColorSpace(.deviceRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+    self.init(red: Double(r), green: Double(g), blue: Double(b), alpha: Double(a))
+  }
+}
+
+func colorForSource(_ source: String, colors: [String: TokMonSourceColor]) -> Color {
+  colors[source]?.swiftUIColor ?? .secondary
+}

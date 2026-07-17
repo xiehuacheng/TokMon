@@ -102,6 +102,7 @@ struct TokMonSettingsDraft: Equatable {
   var modelPricing = TokMonUIState.default.modelPricing
   var kimiQuotaRefreshInterval: Int = TokMonUIState.default.kimiQuotaRefreshInterval
   var launchAtLogin: Bool = TokMonUIState.default.launchAtLogin
+  var sourceColors: [String: TokMonSourceColor] = TokMonSourceColor.defaultColors
   var availableModels: [TokMonModelOption] = []
 }
 

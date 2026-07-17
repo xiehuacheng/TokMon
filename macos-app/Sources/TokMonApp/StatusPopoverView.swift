@@ -332,7 +332,7 @@ struct StatusPopoverView: View {
             isExpanded: expandedRequestId == row.id,
             costRates: costRates(forModel: row.model),
             sourceLabel: labelForSource(row.source),
-            sourceColor: colorForSource(row.source),
+            sourceColor: colorForSource(row.source, colors: stats.snapshot.dashboardState?.sourceColors ?? TokMonSourceColor.defaultColors),
             formatCompact: TokMonValueFormatter.formatCompact,
             formatCost: TokMonValueFormatter.formatCost,
             onToggleDetails: {
@@ -394,7 +394,7 @@ struct StatusPopoverView: View {
             costRates: costRates(forSession: session),
             projectName: sessionProjectName(for: session, fallbackSource: session.source),
             firstPrompt: sessionFirstPrompt(for: session, fallbackSessionId: session.sessionId),
-            sourceColor: colorForSource(session.source),
+            sourceColor: colorForSource(session.source, colors: stats.snapshot.dashboardState?.sourceColors ?? TokMonSourceColor.defaultColors),
             formatCompact: TokMonValueFormatter.formatCompact,
             formatCost: TokMonValueFormatter.formatCost,
             onSelect: {
@@ -493,7 +493,7 @@ struct StatusPopoverView: View {
                   isExpanded: expandedRequestId == row.id,
                   costRates: costRates(forModel: row.model),
                   sourceLabel: labelForSource(row.source),
-                  sourceColor: colorForSource(row.source),
+                  sourceColor: colorForSource(row.source, colors: stats.snapshot.dashboardState?.sourceColors ?? TokMonSourceColor.defaultColors),
                   formatCompact: TokMonValueFormatter.formatCompact,
                   formatCost: TokMonValueFormatter.formatCost,
                   onToggleDetails: {
@@ -552,7 +552,7 @@ struct StatusPopoverView: View {
           id: model.id,
           title: model.model,
           value: formatMetricValue(modelValue(model, for: selectedSeries.key)),
-          color: colorForSource(model.source),
+          color: colorForSource(model.source, colors: stats.snapshot.dashboardState?.sourceColors ?? TokMonSourceColor.defaultColors),
         )
       }
   }
@@ -565,7 +565,7 @@ struct StatusPopoverView: View {
           id: source.id,
           title: labelForSource(source.source),
           value: formatMetricValue(sourceValue(source, for: selectedSeries.key)),
-          color: colorForSource(source.source),
+          color: colorForSource(source.source, colors: stats.snapshot.dashboardState?.sourceColors ?? TokMonSourceColor.defaultColors),
         )
       }
   }
@@ -873,23 +873,6 @@ struct StatusPopoverView: View {
 
   private func labelForSource(_ source: String) -> String {
     TokMonSourceName.label(for: source)
-  }
-
-  private func colorForSource(_ source: String) -> Color {
-    switch source {
-    case "claude-code":
-      TokMonGlass.accent
-    case "codex":
-      TokMonGlass.codexTeal
-    case "kimi-code":
-      TokMonGlass.kimiPurple
-    case "opencode":
-      TokMonGlass.opencodeAmber
-    case "qwen-code":
-      TokMonGlass.danger
-    default:
-      .secondary
-    }
   }
 
   private func splitTokMonSessionTitle(_ title: String) -> (projectName: String, firstPrompt: String)? {
@@ -1548,22 +1531,22 @@ private struct TokMonHudMetricGrid: View {
           }
           .transition(.tokMonSupportingMetrics)
         }
-      } else {
-        LazyVGrid(
-          columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 2),
-          alignment: .leading,
-          spacing: 7,
-        ) {
-          ForEach(metrics) { metric in
-            if metric.series.key == .total {
-              TotalTokensMetricTile(
-                metric: metric,
-                tokenDetails: tokenDetails,
-                isExpanded: false,
-                onToggleExpanded: onToggleTotalExpanded,
-                onSelect: onSelect,
-              )
-            } else {
+      } else if let totalMetric {
+        VStack(spacing: 7) {
+          HStack(spacing: 7) {
+            TotalTokensMetricTile(
+              metric: totalMetric,
+              tokenDetails: tokenDetails,
+              isExpanded: false,
+              onToggleExpanded: onToggleTotalExpanded,
+              onSelect: onSelect,
+            )
+            if let firstSupporting = supportingMetrics.first {
+              PrimaryMetricTile(metric: firstSupporting, hideDelta: false, onSelect: onSelect)
+            }
+          }
+          HStack(spacing: 7) {
+            ForEach(supportingMetrics.dropFirst()) { metric in
               PrimaryMetricTile(metric: metric, hideDelta: false, onSelect: onSelect)
             }
           }

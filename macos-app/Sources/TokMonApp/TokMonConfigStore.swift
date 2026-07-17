@@ -149,7 +149,8 @@ final class TokMonConfigStore: @unchecked Sendable {
       costRates: normalizedCostRates(from: object["costRates"]),
       modelPricing: normalizedModelPricing(from: object["modelPricing"]),
       kimiAPIKeyAccounts: normalizedKimiAPIKeyAccounts(from: object["kimiAPIKeyAccounts"]),
-      selectedKimiAPIKeyID: optionalStringValue(object["selectedKimiAPIKeyID"], default: nil)
+      selectedKimiAPIKeyID: optionalStringValue(object["selectedKimiAPIKeyID"], default: nil),
+      sourceColors: normalizedSourceColors(from: object["sourceColors"])
     )
   }
 
@@ -219,6 +220,24 @@ final class TokMonConfigStore: @unchecked Sendable {
       }
       return KimiAPIKeyAccount(id: id, label: label)
     }
+  }
+
+  private func normalizedSourceColors(from rawValue: Any?) -> [String: TokMonSourceColor] {
+    guard let object = rawValue as? [String: [String: Any]] else {
+      return TokMonSourceColor.defaultColors
+    }
+    var result = TokMonSourceColor.defaultColors
+    for (source, colorObject) in object {
+      guard TokMonSourceColor.defaultColors.keys.contains(source) else { continue }
+      guard let red = colorObject["red"] as? Double,
+            let green = colorObject["green"] as? Double,
+            let blue = colorObject["blue"] as? Double else {
+        continue
+      }
+      let alpha = colorObject["alpha"] as? Double ?? 1
+      result[source] = TokMonSourceColor(red: red, green: green, blue: blue, alpha: alpha)
+    }
+    return result
   }
 
   private func jsonObject(from data: Data) -> [String: Any]? {

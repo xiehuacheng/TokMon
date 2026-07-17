@@ -527,6 +527,7 @@ enum TokMonStatsSnapshotBuilder {
       costRates: uiState.costRates,
       modelPricing: uiState.modelPricing,
       updatedAt: isoTimestamp(now),
+      sourceColors: uiState.sourceColors,
     )
   }
 

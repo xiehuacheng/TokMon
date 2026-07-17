@@ -4,6 +4,30 @@ struct TokMonSourceConfig: Codable, Equatable {
   var path: String
 }
 
+struct TokMonSourceColor: Codable, Equatable, Hashable, Sendable {
+  var red: Double
+  var green: Double
+  var blue: Double
+  var alpha: Double
+
+  init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+    self.red = max(0, min(1, red))
+    self.green = max(0, min(1, green))
+    self.blue = max(0, min(1, blue))
+    self.alpha = max(0, min(1, alpha))
+  }
+
+  static let `default` = TokMonSourceColor(red: 0.2, green: 0.255, blue: 0.333)
+
+  static let defaultColors: [String: TokMonSourceColor] = [
+    "claude-code": TokMonSourceColor(red: 0.200, green: 0.255, blue: 0.333),
+    "codex": TokMonSourceColor(red: 0.280, green: 0.520, blue: 0.460),
+    "kimi-code": TokMonSourceColor(red: 0.550, green: 0.300, blue: 0.750),
+    "opencode": TokMonSourceColor(red: 0.780, green: 0.480, blue: 0.180),
+    "qwen-code": TokMonSourceColor(red: 0.624, green: 0.071, blue: 0.224),
+  ]
+}
+
 struct TokMonConfig: Codable, Equatable {
   var port: Int
   var sources: [String: TokMonSourceConfig]
@@ -165,6 +189,7 @@ struct TokMonUIState: Codable, Equatable {
   var modelPricing: [String: TokMonCostRates] = [:]
   var kimiAPIKeyAccounts: [KimiAPIKeyAccount] = []
   var selectedKimiAPIKeyID: String? = nil
+  var sourceColors: [String: TokMonSourceColor] = TokMonSourceColor.defaultColors
 
   static let `default` = TokMonUIState(
     source: [],
@@ -183,6 +208,7 @@ struct TokMonUIState: Codable, Equatable {
     launchAtLogin: false,
     costRates: .zero,
     modelPricing: [:],
+    sourceColors: TokMonSourceColor.defaultColors
   )
 }
 
@@ -959,6 +985,7 @@ struct TokMonDashboardState: Decodable {
   let costRates: TokMonCostRates
   let modelPricing: [String: TokMonCostRates]
   let updatedAt: String
+  let sourceColors: [String: TokMonSourceColor]
 
   enum CodingKeys: String, CodingKey {
     case source
@@ -978,6 +1005,7 @@ struct TokMonDashboardState: Decodable {
     case costRates
     case modelPricing
     case updatedAt
+    case sourceColors
   }
 
   init(
@@ -997,6 +1025,7 @@ struct TokMonDashboardState: Decodable {
     costRates: TokMonCostRates,
     modelPricing: [String: TokMonCostRates] = [:],
     updatedAt: String,
+    sourceColors: [String: TokMonSourceColor] = TokMonSourceColor.defaultColors,
   ) {
     self.source = source
     self.from = from
@@ -1014,6 +1043,7 @@ struct TokMonDashboardState: Decodable {
     self.costRates = costRates
     self.modelPricing = modelPricing
     self.updatedAt = updatedAt
+    self.sourceColors = sourceColors
   }
 
   init(from decoder: Decoder) throws {
@@ -1049,6 +1079,7 @@ struct TokMonDashboardState: Decodable {
     costRates = try container.decodeIfPresent(TokMonCostRates.self, forKey: .costRates) ?? .zero
     modelPricing = try container.decodeIfPresent([String: TokMonCostRates].self, forKey: .modelPricing) ?? [:]
     updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
+    sourceColors = try container.decodeIfPresent([String: TokMonSourceColor].self, forKey: .sourceColors) ?? TokMonSourceColor.defaultColors
   }
 
   var sourceLabel: String {

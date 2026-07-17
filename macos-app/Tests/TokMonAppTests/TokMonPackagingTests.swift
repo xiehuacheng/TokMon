@@ -267,7 +267,7 @@ import Testing
   #expect(view.contains("TokMonHudSectionHeader("))
   #expect(view.contains("HeaderIconButton(systemName: \"gearshape\""))
   #expect(view.contains("HeaderIconButton(systemName: \"power\""))
-  #expect(view.contains("columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 2)"))
+  #expect(view.contains("ForEach(supportingMetrics.dropFirst())"))
   #expect(view.contains("MetricDelta"))
   #expect(view.contains(".thinMaterial"))
   #expect(!view.contains(".pickerStyle(.segmented)"))
@@ -333,18 +333,10 @@ import Testing
     .appendingPathComponent("TokMonApp")
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
-  let colorFunction = view
-    .components(separatedBy: "private func colorForSource(_ source: String) -> Color")
-    .dropFirst()
-    .first?
-    .components(separatedBy: "private func heatmapColor")
-    .first ?? ""
 
-  #expect(colorFunction.contains("case \"claude-code\":\n      TokMonGlass.accent"))
-  #expect(colorFunction.contains("case \"codex\":\n      TokMonGlass.codexTeal"))
-  #expect(colorFunction.contains("case \"opencode\":\n      TokMonGlass.opencodeAmber"))
-  #expect(colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.danger"))
-  #expect(!colorFunction.contains("case \"qwen-code\":\n      TokMonGlass.warning"))
+  #expect(view.contains("colorForSource("))
+  #expect(view.contains("sourceColors"))
+  #expect(view.contains("TokMonSourceColor.defaultColors"))
 }
 
 @Test func statusPopoverExpandsTotalTokensCardForTokenDetails() throws {
@@ -505,12 +497,12 @@ import Testing
     .appendingPathComponent("StatusPopoverView.swift")
   let view = try String(contentsOf: viewURL, encoding: .utf8)
 
-  #expect(view.contains("ForEach(metrics) { metric in\n            if metric.series.key == .total {"))
-  #expect(view.contains("TotalTokensMetricTile(\n                metric: metric,"))
   #expect(view.contains("isExpanded: false"))
-  #expect(view.contains("} else {\n              PrimaryMetricTile("))
   #expect(view.contains("if isTotalExpanded {\n        if let totalMetric {"))
-  #expect(view.contains("} else {\n        LazyVGrid("))
+  #expect(view.contains("} else if let totalMetric {"))
+  #expect(view.contains("TotalTokensMetricTile(\n              metric: totalMetric,"))
+  #expect(view.contains("if let firstSupporting = supportingMetrics.first {"))
+  #expect(view.contains("ForEach(supportingMetrics.dropFirst()) { metric in"))
   #expect(view.contains("TotalTokensMetricTile("))
   #expect(!view.contains("if let totalMetric {\n        TotalTokensMetricTile("))
 }
@@ -1162,7 +1154,9 @@ import Testing
   #expect(models.contains("\"OpenCode\""))
   #expect(settings.contains("(\"opencode\", \"OpenCode\")"))
   #expect(settings.contains("(\"qwen-code\", \"Qwen Code\")"))
-  #expect(settings.contains("func sourcePathRow("))
+  #expect(settings.contains("func sourceRow("))
+  #expect(settings.contains("SourceColorPicker(selection: sourceColorBinding(for: value))"))
+  #expect(settings.contains("Reset Colors to Defaults"))
 }
 
 @Test func statusPopoverScrollViewCatchesWheelEventsAcrossTransparentGaps() throws {
