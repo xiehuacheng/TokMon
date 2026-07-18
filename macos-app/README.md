@@ -239,10 +239,15 @@ bash macos-app/scripts/build-dmg.sh
 7. **创建 GitHub Release**：
    - Release title：`TokMon vX.Y.Z`
    - Tag：`vX.Y.Z`
-   - 发布说明基于上一个版本的 tag 差异撰写，覆盖完整变更。
+   - 发布说明使用中文撰写。
+   - 发布说明按以下板块组织（无相关项时可留空或省略）：
+     - **新增功能**
+     - **优化**
+     - **修复**
+     - **其他**
+   - 基于上一个版本的 tag 差异撰写，覆盖完整变更。
    - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
    - 在发布说明中写明 DMG 的 SHA-256。
-   - 发布说明使用中文撰写。
 
 ## 注意事项
 
