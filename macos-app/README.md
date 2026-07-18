@@ -35,7 +35,7 @@
 
 1. 前往 [GitHub Releases](https://github.com/xiehuacheng/TokMon/releases) 下载最新版 `TokMon-X.Y.Z.dmg`。
 2. 打开 DMG，将 `TokMon.app` 拖到 `Applications`。
-3. 首次启动若出现 Gatekeeper 提示，是因为当前 `.app` 仅做本地 ad-hoc 签名、未经过 Apple 公证；按系统提示处理即可。
+3. 首次启动若出现 Gatekeeper 提示，是因为当前 `.app` 仅做本地 ad-hoc 签名、未经过 Apple 公证；系统会弹出安全性检查，请前往「系统设置 → 隐私与安全性 → 安全性」，点击「仍要打开」完成通过处理。
 
 ### 开发者：源码运行
 

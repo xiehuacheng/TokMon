@@ -12,7 +12,7 @@
 
 1. 下载 `TokMon-0.2.17.dmg`。
 2. 打开 DMG，将 `TokMon.app` 拖入 **Applications** 文件夹。
-3. 首次启动若出现 Gatekeeper 提示，是因为 `.app` 仅做了本地 ad-hoc 签名、未经过 Apple 公证；按系统提示处理即可。
+3. 首次启动若出现 Gatekeeper 提示，是因为 `.app` 仅做了本地 ad-hoc 签名、未经过 Apple 公证；系统会弹出安全性检查，请前往「系统设置 → 隐私与安全性 → 安全性」，点击「仍要打开」完成通过处理。
 
 ## Release 文件说明
 

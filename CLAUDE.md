@@ -96,6 +96,12 @@ docs/
    - 在发布说明中写明 DMG 的 SHA-256。
    - 发布说明、`release-notes.html` 的标题与正文均使用中文撰写；避免直接暴露英文 commit message。
 
+### 安装指引文案模板
+
+Release Notes 与 `macos-app/README.md` 中的 DMG 安装步骤，统一使用以下 Gatekeeper 说明：
+
+> 首次启动若出现 Gatekeeper 提示，是因为 `.app` 仅做了本地 ad-hoc 签名、未经过 Apple 公证；系统会弹出安全性检查，请前往「系统设置 → 隐私与安全性 → 安全性」，点击「仍要打开」完成通过处理。
+
 ## 代码风格与命名约定
 
 - Swift 文件按职责拆分放在 `macos-app/Sources/TokMonApp/`；新增文件遵循 `TokMon<Domain>.swift` / `<Feature>View.swift` 等命名风格（例如 `TokMonStatsStore.swift`、`StatusPopoverView.swift`、`TokMonSettingsWindow.swift`）。
