@@ -1,6 +1,24 @@
+**中文** | [English](./docs/README.en.md) | [日本語](./docs/README.ja.md)
+
 # TokMon
 
-TokMon 是一款 macOS 原生状态栏应用，用于统一查看 Claude Code、Codex、Kimi Code、Qwen Code 与 OpenCode 的 token usage。它以独立的 `.app` 形式交付，主界面是菜单栏 popover 与原生设置窗口。
+> 一个 macOS 状态栏 Token 统计应用
+
+![GitHub top language](https://img.shields.io/github/languages/top/xiehuacheng/tokmon) ![GitHub Repo stars](https://img.shields.io/github/stars/xiehuacheng/tokmon?style=social) ![GitHub forks](https://img.shields.io/github/forks/xiehuacheng/tokmon?style=social) ![GitHub License](https://img.shields.io/github/license/xiehuacheng/tokmon) ![GitHub Issues](https://img.shields.io/github/issues/xiehuacheng/tokmon) ![GitHub last commit](https://img.shields.io/github/last-commit/xiehuacheng/tokmon)
+
+## 目录
+
+- [界面预览](#界面预览)
+- [功能概览](#功能概览)
+- [系统要求](#系统要求)
+- [安装与下载](#安装与下载)
+- [快速开始](#快速开始)
+- [界面说明](#界面说明)
+- [支持的数据源](#支持的数据源)
+- [配置与数据](#配置与数据)
+- [项目结构](#项目结构)
+- [文档入口](#文档入口)
+- [许可证](#许可证)
 
 ## 界面预览
 
@@ -147,6 +165,6 @@ docs/
 - [`AGENTS.md`](AGENTS.md)：通用 agent 协作约定，适用于所有进入本仓库的 AI agent。
 - [`CLAUDE.md`](CLAUDE.md)：Claude Code 专用使用说明。
 
-## License
+## 许可证
 
 [MIT](LICENSE)
