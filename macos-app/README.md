@@ -245,6 +245,11 @@ bash macos-app/scripts/build-dmg.sh
      - **优化**
      - **修复**
      - **其他**
+   - **安装指引**：说明用户如何下载 `TokMon-X.Y.Z.dmg` 并安装到 `/Applications`。
+   - **Release 文件说明**：简要说明本次 Release 中各文件的作用，例如：
+     - `TokMon-X.Y.Z.dmg`：可直接下载安装的磁盘映像。
+     - `appcast.xml`：Sparkle 自动更新使用的订阅源，普通用户无需手动下载。
+     - `release-notes.html`：供 Sparkle 弹窗内嵌展示的更新日志网页。
    - 基于上一个版本的 tag 差异撰写，覆盖完整变更。
    - **必须上传两个资源**：`TokMon-X.Y.Z.dmg` 和 `appcast.xml`。
    - 在发布说明中写明 DMG 的 SHA-256。
