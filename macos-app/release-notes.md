@@ -8,17 +8,6 @@
 - **修复首页数据卡片偶发消失问题**：优化了 Tokens 页面指标卡片的布局方式，避免在滚动时出现顶部卡片消失的显示异常。
 - **修复设置窗口在多屏幕下的出现位置**：现在设置窗口会根据当前鼠标所在屏幕居中显示，避免在 A 屏幕打开后却在 B 屏幕显示的问题。
 
-## 安装指引
-
-1. 下载 `TokMon-0.2.17.dmg`。
-2. 打开 DMG，将 `TokMon.app` 拖入 **Applications** 文件夹。
-
-## Release 文件说明
-
-- `TokMon-0.2.17.dmg`：可直接下载安装的磁盘映像。
-- `appcast.xml`：Sparkle 自动更新使用的订阅源，普通用户无需手动下载。
-- `release-notes.html`：供 Sparkle 弹窗内嵌展示的更新日志网页。
-
 ## 校验值
 
 `TokMon-0.2.17.dmg` SHA-256:
@@ -30,6 +19,17 @@ Sparkle EdDSA 签名:
 ```
 kVlL9pYVB327DYK1YT1URJ5iIGtJAAIR7WLplwLyky/yQqoeL0SYJJFCR1myOg4njp7Vjp9qp7M+mvstD/gXDA==
 ```
+
+## 安装指引
+
+1. 下载 `TokMon-0.2.17.dmg`。
+2. 打开 DMG，将 `TokMon.app` 拖入 **Applications** 文件夹。
+
+## Release 文件说明
+
+- `TokMon-0.2.17.dmg`：可直接下载安装的磁盘映像。
+- `appcast.xml`：Sparkle 自动更新使用的订阅源，普通用户无需手动下载。
+- `release-notes.html`：供 Sparkle 弹窗内嵌展示的更新日志网页。
 
 ## 安全提示
 
