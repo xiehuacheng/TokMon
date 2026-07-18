@@ -98,7 +98,10 @@ docs/
 
 ### 安装指引文案模板
 
-Release Notes 与 `macos-app/README.md` 中的 DMG 安装步骤，统一使用以下 Gatekeeper 说明：
+Release Notes 与 `macos-app/README.md` 中的 DMG 安装说明按以下结构组织：
+
+1. **安装指引**：仅保留下载 DMG、将 `TokMon.app` 拖入 `Applications` 的步骤。
+2. **安全提示**：置于文档最下方，统一使用以下 Gatekeeper 说明：
 
 > 首次启动若出现 Gatekeeper 提示，是因为 `.app` 仅做了本地 ad-hoc 签名、未经过 Apple 公证；系统会弹出安全性检查，请前往「系统设置 → 隐私与安全性 → 安全性」，点击「仍要打开」完成通过处理。
 
